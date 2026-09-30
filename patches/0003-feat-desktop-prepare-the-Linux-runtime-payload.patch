@@ -1,0 +1,88 @@
+From 4e41ad15e4a07d872f9de45647f21684906ca08a Mon Sep 17 00:00:00 2001
+From: linux-port <linux-port@example.invalid>
+Date: Wed, 30 Sep 2026 19:20:39 +0800
+Subject: [PATCH 3/5] feat(desktop): prepare the Linux runtime payload
+
+Target selection replaced the macOS-versus-Windows binary choice, so a Linux
+package cannot be prepared with a Windows macOS payload.
+
+- prepare-runtime: map the target through desktopTargetPlatform, add the
+  Linux Electron binary name, and run the launcher preparation for Linux
+- prepare-dsh: resolve the Electron Node executable on Linux and select the
+  runtime file policy and Office engine by target platform, not host platform
+---
+ apps/desktop/scripts/prepare-dsh.ts     |  6 ++++--
+ apps/desktop/scripts/prepare-runtime.ts | 16 ++++++++++------
+ 2 files changed, 14 insertions(+), 8 deletions(-)
+
+diff --git a/apps/desktop/scripts/prepare-dsh.ts b/apps/desktop/scripts/prepare-dsh.ts
+index 442e017..43681ce 100644
+--- a/apps/desktop/scripts/prepare-dsh.ts
++++ b/apps/desktop/scripts/prepare-dsh.ts
+@@ -41,7 +41,9 @@ const STORE_ROOT = join(BUILD_ROOT, 'store')
+ const RUNTIME_ROOT = BUILD_PATHS.runtime
+ const PNPM_BUILD_STATE = BUILD_PATHS.dshPnpm
+ const PACKAGE_SET_ROOT = BUILD_PATHS.packageSet
+-const NODE = join(BUILD_PATHS.electron, process.platform === 'win32' ? 'electron.exe' : 'Electron.app/Contents/MacOS/Electron')
++// macOS nests the executable in the bundle; Windows and Linux keep it at the extracted root.
++const NODE = join(BUILD_PATHS.electron, process.platform === 'win32' ? 'electron.exe'
++  : process.platform === 'darwin' ? 'Electron.app/Contents/MacOS/Electron' : 'electron')
+ const PNPM = join(RUNTIME_ROOT, 'pnpm', 'bin', 'pnpm.mjs')
+ 
+ function manifestVersion(path: string, subject: string): string {
+@@ -130,7 +132,7 @@ async function main(): Promise<void> {
+     await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'runtime:install', () => runPnpm(['install', '--prod', '--frozen-lockfile', '--trust-lockfile']))
+     const packageSet = readDesktopCorePackageSet(BUILD_ROOT, release.version)
+     const targetName = resolveDesktopBuildTarget()
+-    const target = { platform: process.platform, arch: desktopTargetPlatform(targetName).arch }
++    const target = desktopTargetPlatform(targetName)
+     const modules = join(BUILD_ROOT, 'node_modules')
+     const officeManifest = JSON.parse(readFileSync(join(modules, '@deepseek-ai/libreoffice-kit/package.json'), 'utf8'))
+     const officeEngine = selectOfficeEngine(officeManifest, target)
+diff --git a/apps/desktop/scripts/prepare-runtime.ts b/apps/desktop/scripts/prepare-runtime.ts
+index 1b88f09..9245b3b 100644
+--- a/apps/desktop/scripts/prepare-runtime.ts
++++ b/apps/desktop/scripts/prepare-runtime.ts
+@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path'
+ import { parseArgs } from 'node:util'
+ import { downloadArtifact } from '@electron/get'
+ import extractZip from 'extract-zip'
+-import { resolveDesktopBuildTarget, resolveDesktopTargetBuildPaths } from './desktop-build-paths.mjs'
++import { desktopTargetPlatform, resolveDesktopBuildTarget, resolveDesktopTargetBuildPaths } from './desktop-build-paths.mjs'
+ import { preparePrimaryRuntime } from './prepare-primary-runtime.ts'
+ import { prepareDesktopCli } from './prepare-cli.ts'
+ import { prepareCommandLink } from './prepare-command-link.ts'
+@@ -31,15 +31,16 @@ function preparePnpm(): string {
+ async function main(): Promise<void> {
+   const { values } = parseArgs({ options: { 'defer-primary-runtime-smoke': { type: 'boolean', default: false } } })
+   const target = resolveDesktopBuildTarget()
+-  const platform = target.startsWith('mac-') ? 'darwin' : 'win32'
+-  const arch = target.endsWith('arm64') ? 'arm64' : 'x64'
++  const { platform, arch } = desktopTargetPlatform(target)
+   const require = createRequire(import.meta.url)
+   const { version } = require('electron/package.json') as { version: string }
+   const archive = await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'download:electron',
+     () => downloadArtifact({ version, platform, arch, artifactName: 'electron', cacheRoot: BUILD_PATHS.downloads }))
+   rmSync(BUILD_PATHS.electron, { recursive: true, force: true })
+   await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'extract:electron', () => extractZip(archive, { dir: BUILD_PATHS.electron }))
+-  const executable = join(BUILD_PATHS.electron, platform === 'win32' ? 'electron.exe' : 'Electron.app/Contents/MacOS/Electron')
++  // macOS nests the executable in the bundle; Windows and Linux keep it at the extracted root.
++  const executable = join(BUILD_PATHS.electron, platform === 'win32' ? 'electron.exe'
++    : platform === 'darwin' ? 'Electron.app/Contents/MacOS/Electron' : 'electron')
+   const nodeVersion = execFileSync(executable, ['-p', 'process.versions.node'], {
+     encoding: 'utf8', env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+   }).trim()
+@@ -55,8 +56,11 @@ async function main(): Promise<void> {
+     node: nodeVersion,
+     pnpm: pnpmVersion,
+   }, undefined, 2)}\n`)
+-  await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'prepare:cli',
+-    async () => prepareDesktopCli(join(RUNTIME_ROOT, 'cli'), platform))
++  // Linux stages the architecture-independent shell launcher; Windows and macOS copy their own launcher.
++  await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'prepare:cli', async () => {
++    if (platform === 'linux') prepareCommandLink(join(RUNTIME_ROOT, 'cli'), 'linux')
++    else prepareDesktopCli(join(RUNTIME_ROOT, 'cli'), platform)
++  })
+   if (macosMinimumVersion !== undefined) prepareCommandLink(join(RUNTIME_ROOT, 'cli'), arch, macosMinimumVersion)
+   cpSync(join(import.meta.dirname, '..', 'lib', 'command-manager-entry.js'), join(RUNTIME_ROOT, 'cli', 'command-manager.js'))
+   cpSync(join(import.meta.dirname, 'command-path.ps1'), join(RUNTIME_ROOT, 'cli', 'command-path.ps1'))

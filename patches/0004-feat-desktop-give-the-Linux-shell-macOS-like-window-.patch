@@ -1,0 +1,543 @@
+From beb03b396c125735ee2188bb9d9030006976fb9a Mon Sep 17 00:00:00 2001
+From: linux-port <linux-port@example.invalid>
+Date: Wed, 30 Sep 2026 19:20:39 +0800
+Subject: [PATCH 4/5] feat(desktop): give the Linux shell macOS-like window
+ behaviour
+
+Linux previously fell through the desktop policy gate and quit with its last
+window, so a package built for it could not start.
+
+- policy: allow Linux x64/arm64 instead of throwing; the mandatory-update
+  policy stays inert without a feed
+- lifecycle: keep the application and its tasks alive when the last window
+  closes, matching macOS, while Windows keeps exiting
+- window: reuse the window-controls overlay (the same mechanism Windows
+  uses) so the page owns the titlebar area; DSH_DESKTOP_LINUX_NATIVE_FRAME=1
+  restores the desktop frame
+- preloads: reserve the caption area and relay fullscreen state on Linux
+- menu/locale: give Linux its own quit label
+- tests: assert the new Linux behaviour
+---
+ apps/desktop/src/locale.ts                    |  2 +
+ apps/desktop/src/main.ts                      | 55 +++++++++++++++----
+ apps/desktop/src/preload-platform.ts          | 12 ++--
+ apps/desktop/src/preload-windows.ts           | 19 +++++--
+ apps/desktop/src/welcome-window.ts            | 12 +++-
+ apps/desktop/src/windows-layout.ts            | 19 ++++++-
+ apps/desktop/tests/main-startup.spec.ts       | 50 +++++++++++++++--
+ .../tests/preload-platform.client.spec.ts     |  8 ++-
+ .../tests/preload-windows.client.spec.ts      | 28 +++++++++-
+ apps/desktop/tests/welcome-window.spec.ts     | 24 +++++++-
+ 10 files changed, 195 insertions(+), 34 deletions(-)
+
+diff --git a/apps/desktop/src/locale.ts b/apps/desktop/src/locale.ts
+index 5d9d460..14a1bc7 100644
+--- a/apps/desktop/src/locale.ts
++++ b/apps/desktop/src/locale.ts
+@@ -39,6 +39,7 @@ export const en = {
+   showAllApplications: 'Show All',
+   quitApplication: 'Quit DeepSeek Harness',
+   openApplication: 'Open DeepSeek Harness',
++  showWindowMenu: 'Show Window',
+   quit: 'Quit',
+   cancel: 'Cancel',
+   quitTitle: 'Quit DeepSeek Harness?',
+@@ -210,6 +211,7 @@ export const zh = {
+   showAllApplications: '显示全部',
+   quitApplication: '退出 DeepSeek Harness',
+   openApplication: '打开 DeepSeek Harness',
++  showWindowMenu: '显示窗口',
+   quit: '退出',
+   cancel: '取消',
+   quitTitle: '退出 DeepSeek Harness？',
+diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
+index b4b8153..3b64696 100644
+--- a/apps/desktop/src/main.ts
++++ b/apps/desktop/src/main.ts
+@@ -1,5 +1,5 @@
+ import type { ProductEventMap, ProductEvent } from '@deepseek-ai/dsh-client-product-analytics/types'
+-import { WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
++import { usesTitleBarOverlay, WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
+ /** Electron shell: desktop project ownership, custom protocol, windows, and lifecycle. */
+ 
+ import { readFile, writeFile } from 'node:fs/promises'
+@@ -215,6 +215,14 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
+       titleBarOverlay: { height: WINDOWS_TITLEBAR_HEIGHT, color: chromeFallbackFill(),
+         symbolColor: nativeTheme.shouldUseDarkColors ? '#f9fafb' : '#0f1115' },
+     } : {}),
++    // The window-controls overlay is the closest Linux equivalent of the macOS hidden
++    // caption: the page owns the titlebar area and the window manager draws the controls.
++    // usesTitleBarOverlay() returns the frame to the desktop environment on its opt-out.
++    ...(process.platform === 'linux' && primary && usesTitleBarOverlay(process.platform, process.env) ? {
++      titleBarStyle: 'hidden' as const,
++      titleBarOverlay: { height: WINDOWS_TITLEBAR_HEIGHT, color: chromeFallbackFill(),
++        symbolColor: nativeTheme.shouldUseDarkColors ? '#f9fafb' : '#0f1115' },
++    } : {}),
+     // hiddenInset places traffic lights inside the sidebar; sidebar vibrancy
+     // needs a transparent window background to show through the page.
+     ...(process.platform === 'darwin' ? {
+@@ -240,7 +248,11 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
+     if (['http:', 'https:'].includes(new URL(url).protocol)) void shell.openExternal(url)
+     return { action: 'deny' }
+   })
+-  if (process.platform === 'darwin' || process.platform === 'win32') {
++  // A Linux window that keeps its own frame also keeps its controls in fullscreen, so the
++  // relay follows exactly the windows whose caption comes from the overlay.
++  const overlayCaption = process.platform === 'win32'
++    || (process.platform === 'linux' && primary && usesTitleBarOverlay(process.platform, process.env))
++  if (process.platform === 'darwin' || overlayCaption) {
+     // Fullscreen hides native window controls; overlays drop their caption clearance.
+     const sendFullscreen = (): void => {
+       if (!window.isDestroyed()) window.webContents.send(DESKTOP_IPC.windowFullscreen, window.isFullScreen())
+@@ -437,6 +449,10 @@ async function main(): Promise<void> {
+     navigation = next
+     return next.promise
+   }
++  // The Platform identity models only Windows and macOS: `desktopClientHeaders` reports every
++  // non-Windows platform as the macOS desktop client. A Linux build therefore sends the macOS
++  // identity rather than claiming to be Windows; widen this together with the shared account
++  // package once it defines a Linux identity.
+   const platformView = new DesktopPlatformView(join(app.getAppPath(), 'lib', 'preload-platform-account.cjs'),
+     () => locale.id === 'zh-CN' ? 'zh_CN' : 'en_US', process.platform === 'win32' ? 'win32' : 'darwin')
+   const backend = new DesktopBackendController((onFailure) => {
+@@ -964,10 +980,18 @@ async function main(): Promise<void> {
+         quitWithoutConfirmation()
+       } },
+     ] : [],
++    // Windows returns through its tray and macOS through the Dock; Linux has neither, so the
++    // application menu carries the explicit way back to a window that was closed to keep the
++    // Host and its tasks running.
++    ...process.platform === 'linux' ? [
++      { type: 'separator' as const },
++      { label: currentDesktopLocale().messages.showWindowMenu, click: () => { focusPrimaryWindow() } },
++    ] : [],
+     { type: 'separator' },
+     ...hideCommands,
+     { role: 'quit', ...(darwin ? { label: currentDesktopLocale().messages.quitApplication }
+-      : process.platform === 'win32' ? { label: currentDesktopLocale().messages.exitApplication } : {}) },
++      : process.platform === 'win32' ? { label: currentDesktopLocale().messages.exitApplication }
++        : { label: currentDesktopLocale().messages.quit }) },
+   ]
+   const devToolsItems: MenuItemConstructorOptions[] = [
+     { role: 'toggleDevTools', visible: false },
+@@ -1184,9 +1208,9 @@ async function main(): Promise<void> {
+       window.once('closed', () => {
+         if (welcomeWindow === window) welcomeWindow = undefined
+         if (enteredWorkspace || recovery.active) return
+-        // Nothing runs before the workspace opens. macOS keeps the Dock convention and drops the
+-        // unused main window so the next activation rebuilds the welcome; elsewhere the close quits.
+-        if (process.platform === 'darwin') mainWindow?.destroy()
++        // Nothing runs before the workspace opens. macOS and Linux keep running without a window
++        // and drop the unused main window so the next activation rebuilds the welcome; Windows quits.
++        if (process.platform !== 'win32') mainWindow?.destroy()
+         else app.quit()
+       })
+       if (isQuitting() || recovery.active || enteredWorkspace) window.close()
+@@ -1235,7 +1259,10 @@ async function main(): Promise<void> {
+     if (!hasVisibleWindows) focusPrimaryWindow()
+   })
+   app.on('window-all-closed', () => {
+-    if (process.platform !== 'darwin') app.quit()
++    // Windows exits with its last window. macOS and Linux keep the application and the Host
++    // alive so running tasks continue, and the window returns from the application menu or
++    // from a later launch routed through the single-instance lock.
++    if (process.platform === 'win32') app.quit()
+   })
+   if (process.platform !== 'win32') powerMonitor.on('shutdown', () => { sessionEnding = true })
+   const finishQuit = (): void => {
+@@ -1288,16 +1315,24 @@ async function main(): Promise<void> {
+     ? ('dshMandatoryUpdatePolicy' in manifest ? manifest.dshMandatoryUpdatePolicy : undefined)
+     : developmentPolicy === undefined ? undefined : JSON.parse(developmentPolicy) as unknown
+   const policyConfig = resolveDesktopPolicyConfig(policyInput, !app.isPackaged)
+-  if (policyConfig !== undefined) {
++  // The mandatory-update policy describes Windows and macOS builds: its identity and the
++  // `x-client-platform` header it reports have no Linux value, and the release feeds publish no
++  // Linux artifacts. A Linux build therefore skips the policy instead of failing the launch or
++  // identifying itself as macOS. Architectures outside x64/arm64 still fail on every platform.
++  const policyPlatform = process.platform === 'win32' || process.platform === 'darwin' ? process.platform : undefined
++  if (policyConfig !== undefined && !['x64', 'arm64'].includes(process.arch)) throw new Error('desktop policy: unsupported architecture')
++  if (policyConfig !== undefined && policyPlatform === undefined && process.platform !== 'linux') {
++    throw new Error('desktop policy: unsupported platform')
++  }
++  if (policyConfig !== undefined && policyPlatform !== undefined) {
+     if (policyConfig.authentication === 'feishu-test') {
+       policyAuth = new DesktopPolicyTestAuth(policyConfig.origin, policyConfig.allowedAuthOrigins, locale,
+         () => mandatoryUI?.confirmationWindow ?? currentDialogWindow(),
+         (event) => { console.info(`desktop policy authentication: ${event}`); updateJournal?.action(`policy-login-${event}`) })
+     }
+-    if (!['win32', 'darwin'].includes(process.platform) || !['x64', 'arm64'].includes(process.arch)) throw new Error('desktop policy: unsupported platform')
+     let wasBlocking = false
+     mandatoryPolicy = new DesktopMandatoryUpdatePolicy(policyConfig, {
+-      platform: process.platform as 'win32' | 'darwin', arch: process.arch as 'x64' | 'arm64',
++      platform: policyPlatform, arch: process.arch as 'x64' | 'arm64',
+       bundledDshVersion: app.isPackaged ? readDesktopRuntime(resources.dsh).release.version : app.getVersion(),
+     }, (state) => {
+       if (state.error !== 'authentication-required') policyAuthenticationQueued = false
+diff --git a/apps/desktop/src/preload-platform.ts b/apps/desktop/src/preload-platform.ts
+index 1e197b0..710bb71 100644
+--- a/apps/desktop/src/preload-platform.ts
++++ b/apps/desktop/src/preload-platform.ts
+@@ -2,6 +2,7 @@
+ 
+ import { ipcRenderer } from 'electron'
+ import { DESKTOP_IPC } from './ipc.ts'
++import { usesTitleBarOverlay } from './windows-layout.ts'
+ 
+ /**
+  * Sets `data-platform` (e.g. `darwin`) on `<html>`, deferring to DOMContentLoaded
+@@ -17,13 +18,14 @@ export function markDocumentPlatform(): void {
+ }
+ 
+ /**
+- * Mirrors the window's macOS and Windows fullscreen state onto `<html data-fullscreen>` so
+- * CSS drops the clearance for hidden native window controls. The main
+- * process sends the state on every transition and after each load.
++ * Mirrors the window's macOS, Windows, and overlay Linux fullscreen state onto
++ * `<html data-fullscreen>` so CSS drops the clearance for hidden native window
++ * controls. The main process sends the state on every transition and after each load.
+  */
+ export function syncWindowFullscreen(): void {
+-  // The main process sends this IPC only on macOS and Windows; other platforms need no listener.
+-  if (process.platform !== 'darwin' && process.platform !== 'win32') return
++  // The main process sends this IPC only to windows whose native controls are replaced:
++  // macOS, Windows, and a Linux window using the overlay. Other platforms need no listener.
++  if (process.platform !== 'darwin' && !usesTitleBarOverlay(process.platform, process.env)) return
+   ipcRenderer.on(DESKTOP_IPC.windowFullscreen, (_event, fullscreen: boolean) => {
+     const root = document.documentElement as HTMLElement | null
+     if (root === null) return
+diff --git a/apps/desktop/src/preload-windows.ts b/apps/desktop/src/preload-windows.ts
+index 5b9ed75..20c2b7d 100644
+--- a/apps/desktop/src/preload-windows.ts
++++ b/apps/desktop/src/preload-windows.ts
+@@ -1,12 +1,17 @@
+-import { WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
+-/** Synchronizes Windows context menus and caption colors with the application document. */
++import { usesTitleBarOverlay, WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
++/** Synchronizes the overlay context menu and caption colors with the application document. */
+ import { ipcRenderer } from 'electron'
+ import { DESKTOP_IPC } from './ipc.ts'
+ import { installWindowsMenu } from './preload-menu.ts'
+ 
+-/** Install the Windows-only titlebar marker and observe application language and palette changes. */
++/**
++ * Install the overlay titlebar marker and observe application language and palette changes.
++ * Linux reserves the same caption area through the shared client rule, but its shell serves
++ * neither the Windows in-page menu nor the overlay palette channel, so only Windows measures
++ * the palette and reports it.
++ */
+ export function syncWindowsAppearance(): void {
+-  if (process.platform !== 'win32') return
++  if (!usesTitleBarOverlay(process.platform, process.env)) return
+   const mark = (): void => {
+     const root = document.documentElement
+     root.dataset.windowsTitlebar = ''
+@@ -14,6 +19,12 @@ export function syncWindowsAppearance(): void {
+   }
+   // The root can be absent before the HTML parser creates it.
+   if ((document.documentElement as HTMLElement | null) !== null) mark()
++  if (process.platform !== 'win32') {
++    if ((document.documentElement as HTMLElement | null) === null) {
++      window.addEventListener('DOMContentLoaded', mark, { once: true })
++    }
++    return
++  }
+   const install = (): void => {
+     mark()
+     const root = document.documentElement
+diff --git a/apps/desktop/src/welcome-window.ts b/apps/desktop/src/welcome-window.ts
+index 61fda9e..5c5ca4d 100644
+--- a/apps/desktop/src/welcome-window.ts
++++ b/apps/desktop/src/welcome-window.ts
+@@ -3,9 +3,10 @@ import type { SignInAttemptId } from '@deepseek-ai/dsh-deepseek-account/types'
+ 
+ import { join } from 'node:path'
+ import { fileURLToPath } from 'node:url'
+-import { app, BrowserWindow, ipcMain, type BrowserWindowConstructorOptions, type IpcMainInvokeEvent } from 'electron'
++import { app, BrowserWindow, ipcMain, nativeTheme, type BrowserWindowConstructorOptions, type IpcMainInvokeEvent } from 'electron'
+ import type { DesktopLocale } from './locale.ts'
+ import { WELCOME_IPC, type WelcomeOperations } from './welcome-api.ts'
++import { usesTitleBarOverlay } from './windows-layout.ts'
+ 
+ /**
+  * Resolve the fixed-size welcome window's native material and controls.
+@@ -36,6 +37,15 @@ export function welcomeWindowOptions(platform: NodeJS.Platform, locale: DesktopL
+       titleBarOverlay: { color: '#00000000', symbolColor: '#0F1115', height: 42 },
+       backgroundMaterial: 'acrylic',
+     } as const : {}),
++    // Linux reuses the Windows window-controls overlay: the welcome document owns the same
++    // caption strip, and the caption follows the system palette because the shell has no
++    // native material to sample there. usesTitleBarOverlay() restores the desktop frame on
++    // its opt-out, where the environment draws the window controls itself.
++    ...(platform === 'linux' && usesTitleBarOverlay(platform, process.env) ? {
++      titleBarStyle: 'hidden',
++      titleBarOverlay: { color: nativeTheme.shouldUseDarkColors ? '#1b1b1c' : '#FFFFFF',
++        symbolColor: nativeTheme.shouldUseDarkColors ? '#f9fafb' : '#0F1115', height: 42 },
++    } as const : {}),
+     webPreferences: {
+       preload: fileURLToPath(new URL('./preload-welcome.cjs', import.meta.url)),
+       additionalArguments: [`--dsh-welcome-locale=${locale.id}`],
+diff --git a/apps/desktop/src/windows-layout.ts b/apps/desktop/src/windows-layout.ts
+index 0ba4ad5..a3a103a 100644
+--- a/apps/desktop/src/windows-layout.ts
++++ b/apps/desktop/src/windows-layout.ts
+@@ -1,4 +1,19 @@
+-/** Shared geometry for the Windows main-window caption. */
++/** Shared geometry and platform policy for the window-controls overlay caption. */
+ 
+-/** Windows application titlebar height in device-independent pixels. */
++/** Overlay caption height in device-independent pixels for Windows and Linux. */
+ export const WINDOWS_TITLEBAR_HEIGHT = 40
++
++/**
++ * Whether this platform replaces the native caption with the window-controls overlay.
++ * Windows always uses the overlay; Linux uses the same mechanism unless its desktop
++ * environment keeps drawing a frame, selected by `DSH_DESKTOP_LINUX_NATIVE_FRAME=1`.
++ * The main process and the preloads read the same answer so the caption reservation,
++ * the fullscreen relay, and the native window options cannot disagree.
++ * @param platform - operating system reported by the main process or a preload.
++ * @param environment - matching process environment.
++ * @returns true when the window controls come from the overlay.
++ */
++export function usesTitleBarOverlay(platform: NodeJS.Platform, environment: NodeJS.ProcessEnv): boolean {
++  if (platform === 'win32') return true
++  return platform === 'linux' && environment.DSH_DESKTOP_LINUX_NATIVE_FRAME !== '1'
++}
+diff --git a/apps/desktop/tests/main-startup.spec.ts b/apps/desktop/tests/main-startup.spec.ts
+index b6b6fd4..fd4d1d1 100644
+--- a/apps/desktop/tests/main-startup.spec.ts
++++ b/apps/desktop/tests/main-startup.spec.ts
+@@ -693,7 +693,7 @@ describe('desktop main startup', () => {
+     }
+   })
+ 
+-  it.each(['darwin', 'win32', 'linux'] as const)('limits native titlebar styling to macOS on %s', async (platform) => {
++  it.each(['darwin', 'win32', 'linux'] as const)('applies the platform window caption on %s', async (platform) => {
+     vi.spyOn(process, 'platform', 'get').mockReturnValue(platform)
+     await import('../src/main.ts')
+     await harness.preparing.promise
+@@ -709,12 +709,28 @@ describe('desktop main startup', () => {
+         { role: 'toggleDevTools', visible: false, accelerator: 'F12' },
+       ])
+     } else {
+-      expect(window.options).not.toHaveProperty('titleBarStyle')
++      // Linux uses the same overlay caption as Windows; only the palette sync stays Windows-only.
++      expect(window.options).toMatchObject({ titleBarStyle: 'hidden', titleBarOverlay: { height: WINDOWS_TITLEBAR_HEIGHT } })
+       expect(window.options).not.toHaveProperty('vibrancy')
+     }
+     expect(harness.hosts).toHaveLength(0)
+   })
+ 
++  it('keeps the desktop frame and its fullscreen state on an opted-out Linux window', async () => {
++    vi.stubEnv('DSH_DESKTOP_LINUX_NATIVE_FRAME', '1')
++    vi.spyOn(process, 'platform', 'get').mockReturnValue('linux')
++    await import('../src/main.ts')
++    await harness.preparing.promise
++    const window = harness.windows[0]!
++    expect(window.options).not.toHaveProperty('titleBarStyle')
++    expect(window.options).not.toHaveProperty('titleBarOverlay')
++    // The desktop environment keeps drawing the controls in fullscreen, so the page keeps
++    // its caption clearance and the shell relays nothing.
++    window.emit('enter-full-screen')
++    window.webContents.emit('did-finish-load')
++    expect(window.webContents.send.mock.calls.filter(([channel]) => channel === DESKTOP_IPC.windowFullscreen)).toHaveLength(0)
++  })
++
+   it('serves packaged shell documents instead of rejecting the shell origin', async () => {
+     const { serveWebDocument } = await import('../src/web-document.ts')
+     vi.mocked(serveWebDocument).mockResolvedValue(new Response('shell document'))
+@@ -750,14 +766,18 @@ describe('desktop main startup', () => {
+     expect(sent()).toHaveLength(relayed)
+   })
+ 
+-  it.each(['linux'] as const)('registers no fullscreen relay on %s', async (platform) => {
++  it.each(['linux'] as const)('relays the %s overlay fullscreen state on transitions and after each load', async (platform) => {
+     vi.spyOn(process, 'platform', 'get').mockReturnValue(platform)
+     await import('../src/main.ts')
+     await harness.preparing.promise
+     const window = harness.windows[0]!
++    const sent = () => window.webContents.send.mock.calls.filter(([channel]) => channel === DESKTOP_IPC.windowFullscreen)
++    expect(sent()).toHaveLength(0)
++    window.fullscreen = true
+     window.emit('enter-full-screen')
++    expect(sent().at(-1)).toEqual([DESKTOP_IPC.windowFullscreen, true])
+     window.webContents.emit('did-finish-load')
+-    expect(window.webContents.send.mock.calls.filter(([channel]) => channel === DESKTOP_IPC.windowFullscreen)).toHaveLength(0)
++    expect(sent().at(-1)).toEqual([DESKTOP_IPC.windowFullscreen, true])
+   })
+ 
+   it('covers the macOS vibrancy reattach gap with an opaque base while minimized or hidden', async () => {
+@@ -883,7 +903,10 @@ describe('desktop main startup', () => {
+     const application = template[0]!.submenu as MenuItemConstructorOptions[]
+     expect(application.filter(item => item.visible !== false).map(describeItem)).toEqual(platform === 'darwin'
+       ? ['about', 'separator', en.checkUpdatesMenu, en.cliCommandMenu, 'separator', 'hide', 'hideOthers', 'unhide', 'separator', 'quit']
+-      : ['about', 'separator', en.checkUpdatesMenu, 'separator', 'quit'])
++      : ['about', 'separator', en.checkUpdatesMenu, 'separator', en.showWindowMenu, 'separator', 'quit'])
++    // Linux has no tray or Dock, so its quit entry carries the localized short label.
++    expect(application.find(item => item.role === 'quit')!.label)
++      .toBe(platform === 'darwin' ? en.quitApplication : en.quit)
+     expect(harness.menu.setApplicationMenu).toHaveBeenCalledOnce()
+   })
+ 
+@@ -1188,6 +1211,23 @@ describe('desktop main startup', () => {
+     expect(window.show).toHaveBeenCalledOnce()
+   })
+ 
++  it('keeps the Host running when the last Linux window closes and reopens it from the application menu', async () => {
++    vi.stubGlobal('process', { ...process, platform: 'linux', arch: 'x64', resourcesPath: 'desktop-test-resources' })
++    await readyWorkspace()
++    // Windows exits on window-all-closed; macOS and Linux keep the Host and its tasks alive.
++    harness.app.emit('window-all-closed')
++    expect(harness.app.quit).not.toHaveBeenCalled()
++    const template = harness.menu.buildFromTemplate.mock.calls
++      .map(call => call[0])
++      .find(items => items.some(item => item.role === 'editMenu'))!
++    const showWindow = (template[0]!.submenu as MenuItemConstructorOptions[])
++      .find(item => item.label === en.showWindowMenu)!
++    const window = harness.windows[0]!
++    window.show.mockClear()
++    ;(showWindow.click as () => void)()
++    expect(window.show).toHaveBeenCalledOnce()
++  })
++
+   it('skips the confirmation during a macOS shutdown but asks again once a cancelled shutdown returns focus', async () => {
+     vi.stubGlobal('process', { ...process, platform: 'darwin', arch: 'arm64', resourcesPath: 'desktop-test-resources' })
+     const host = await readyWorkspace()
+diff --git a/apps/desktop/tests/preload-platform.client.spec.ts b/apps/desktop/tests/preload-platform.client.spec.ts
+index 5b876ab..8e86ae8 100644
+--- a/apps/desktop/tests/preload-platform.client.spec.ts
++++ b/apps/desktop/tests/preload-platform.client.spec.ts
+@@ -9,16 +9,18 @@ vi.mock('electron', () => ({ ipcRenderer: { on } }))
+ afterEach(() => {
+   delete document.documentElement.dataset.fullscreen
+   vi.restoreAllMocks()
++  vi.unstubAllEnvs()
+   on.mockClear()
+ })
+ 
+-it.each(['linux'] as const)('subscribes no fullscreen channel on %s', (platform) => {
+-  vi.spyOn(process, 'platform', 'get').mockReturnValue(platform)
++it('subscribes no fullscreen channel when Linux keeps its native frame', () => {
++  vi.stubEnv('DSH_DESKTOP_LINUX_NATIVE_FRAME', '1')
++  vi.spyOn(process, 'platform', 'get').mockReturnValue('linux')
+   syncWindowFullscreen()
+   expect(on).not.toHaveBeenCalled()
+ })
+ 
+-it.each(['darwin', 'win32'] as const)('mirrors the sent fullscreen state onto html[data-fullscreen] on %s', (platform) => {
++it.each(['darwin', 'win32', 'linux'] as const)('mirrors the sent fullscreen state onto html[data-fullscreen] on %s', (platform) => {
+   vi.spyOn(process, 'platform', 'get').mockReturnValue(platform)
+   syncWindowFullscreen()
+   expect(on).toHaveBeenCalledExactlyOnceWith(DESKTOP_IPC.windowFullscreen, expect.any(Function))
+diff --git a/apps/desktop/tests/preload-windows.client.spec.ts b/apps/desktop/tests/preload-windows.client.spec.ts
+index e59b7eb..12612e9 100644
+--- a/apps/desktop/tests/preload-windows.client.spec.ts
++++ b/apps/desktop/tests/preload-windows.client.spec.ts
+@@ -4,8 +4,9 @@ import { DESKTOP_IPC } from '../src/ipc.ts'
+ import { syncWindowsAppearance } from '../src/preload-windows.ts'
+ 
+ const send = vi.hoisted(() => vi.fn())
++const menu = vi.hoisted(() => ({ install: vi.fn(() => ({ update: vi.fn(), dispose: vi.fn() })) }))
+ vi.mock('electron', () => ({ ipcRenderer: { send } }))
+-vi.mock('../src/preload-menu.ts', () => ({ installWindowsMenu: () => ({ update: vi.fn(), dispose: vi.fn() }) }))
++vi.mock('../src/preload-menu.ts', () => ({ installWindowsMenu: menu.install }))
+ 
+ afterEach(() => {
+   window.dispatchEvent(new Event('pagehide'))
+@@ -14,13 +15,34 @@ afterEach(() => {
+   document.documentElement.lang = 'en'
+   document.body.removeAttribute('data-ds-dark-theme')
+   vi.restoreAllMocks()
++  vi.unstubAllEnvs()
+   send.mockClear()
++  menu.install.mockClear()
+ })
+ 
+-it.each(['darwin', 'linux'] as const)('does not install Windows controls on %s', (platform) => {
+-  vi.spyOn(process, 'platform', 'get').mockReturnValue(platform)
++it('does not install overlay controls on darwin', () => {
++  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
+   syncWindowsAppearance()
+   expect(document.documentElement.hasAttribute('data-windows-titlebar')).toBe(false)
++  expect(menu.install).not.toHaveBeenCalled()
++  expect(send).not.toHaveBeenCalled()
++})
++
++it('reserves the Linux overlay caption without the Windows menu or palette channel', () => {
++  vi.spyOn(process, 'platform', 'get').mockReturnValue('linux')
++  syncWindowsAppearance()
++  expect(document.documentElement.hasAttribute('data-windows-titlebar')).toBe(true)
++  expect(document.documentElement.style.getPropertyValue('--dsh-windows-titlebar-height')).toBe('40px')
++  expect(menu.install).not.toHaveBeenCalled()
++  expect(send).not.toHaveBeenCalled()
++})
++
++it('leaves an opted-out Linux native frame untouched', () => {
++  vi.stubEnv('DSH_DESKTOP_LINUX_NATIVE_FRAME', '1')
++  vi.spyOn(process, 'platform', 'get').mockReturnValue('linux')
++  syncWindowsAppearance()
++  expect(document.documentElement.hasAttribute('data-windows-titlebar')).toBe(false)
++  expect(menu.install).not.toHaveBeenCalled()
+   expect(send).not.toHaveBeenCalled()
+ })
+ 
+diff --git a/apps/desktop/tests/welcome-window.spec.ts b/apps/desktop/tests/welcome-window.spec.ts
+index 6d2807c..9e07b0e 100644
+--- a/apps/desktop/tests/welcome-window.spec.ts
++++ b/apps/desktop/tests/welcome-window.spec.ts
+@@ -1,16 +1,18 @@
+ import { join } from 'node:path'
+-import { beforeEach, describe, expect, it, vi } from 'vitest'
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+ import { resolveDesktopLocale } from '../src/locale.ts'
+ import { needsWelcome, WELCOME_IPC } from '../src/welcome-api.ts'
+ 
+ const electron = vi.hoisted(() => ({
+   create: vi.fn<(options: unknown) => ReturnType<typeof createWindow>>(),
+   root: '/desktop-app',
++  nativeTheme: { shouldUseDarkColors: false },
+   handlers: new Map<string, (event: unknown, value?: unknown, attributes?: unknown) => Promise<unknown>>(),
+ }))
+ vi.mock('electron', () => ({
+   app: { getAppPath: () => electron.root },
+   BrowserWindow: vi.fn(function (options: unknown) { return electron.create(options) }),
++  nativeTheme: electron.nativeTheme,
+   ipcMain: {
+     handle: (name: string, handler: (event: unknown, value?: unknown, attributes?: unknown) => Promise<unknown>) => {
+       if (electron.handlers.has(name)) throw new Error(`duplicate IPC handler: ${name}`)
+@@ -39,6 +41,8 @@ function createWindow() {
+ 
+ beforeEach(() => { electron.create.mockReset(); electron.handlers.clear() })
+ 
++afterEach(() => { vi.unstubAllEnvs() })
++
+ const operations = {
+   analyticsEnabled: async () => true,
+   takeNotice: async () => undefined,
+@@ -72,9 +76,27 @@ describe('desktop welcome window', () => {
+       expect(options.backgroundColor).toBe('#FFFFFF')
+       expect(options.vibrancy).toBeUndefined()
+       expect(options.backgroundMaterial).toBeUndefined()
++      // Linux reuses the Windows overlay caption with the light system palette here.
++      expect(options.titleBarStyle).toBe('hidden')
++      expect(options.titleBarOverlay).toMatchObject({ height: 42, color: '#FFFFFF', symbolColor: '#0F1115' })
+     }
+   })
+ 
++  it('follows the dark system palette for the Linux overlay caption', () => {
++    electron.nativeTheme.shouldUseDarkColors = true
++    try {
++      const options = welcomeWindowOptions('linux', resolveDesktopLocale('en'))
++      expect(options.titleBarOverlay).toMatchObject({ color: '#1b1b1c', symbolColor: '#f9fafb' })
++    } finally { electron.nativeTheme.shouldUseDarkColors = false }
++  })
++
++  it('keeps the desktop frame on an opted-out Linux welcome window', () => {
++    vi.stubEnv('DSH_DESKTOP_LINUX_NATIVE_FRAME', '1')
++    const options = welcomeWindowOptions('linux', resolveDesktopLocale('en'))
++    expect(options).not.toHaveProperty('titleBarStyle')
++    expect(options).not.toHaveProperty('titleBarOverlay')
++  })
++
+   it('waits for its local document and blocks renderer navigation', async () => {
+     const window = createWindow()
+     const loaded = Promise.withResolvers<undefined>()

@@ -1,0 +1,423 @@
+From 0a274f9ea6fcab7e5cdcd7ce7ddba24cfa21d3b1 Mon Sep 17 00:00:00 2001
+From: linux-port <linux-port@example.invalid>
+Date: Wed, 30 Sep 2026 19:20:39 +0800
+Subject: [PATCH 2/5] feat(desktop): install the dsh command on Linux
+
+The macOS shell installs an exact-path command link and Windows uses its own
+path manager, but Linux had no host-side implementation at all.
+
+- cli/dsh-linux: POSIX launcher that resolves the packaged resources, reuses
+  the Electron binary as the Node runtime, and refuses a transient AppImage
+  mount with an actionable message
+- command installation/management: Linux branch on ~/.local/bin/dsh with the
+  existing ownership semantics (report a conflict, keep a restorable backup,
+  never overwrite silently)
+- prepare-cli / prepare-command-link: accept Linux and mark the launcher
+  executable (the previous code only chmod'ed on macOS)
+- tests: exercise the Linux launcher layout on Linux hosts
+---
+ apps/desktop/cli/dsh-linux                   | 63 ++++++++++++++
+ apps/desktop/scripts/prepare-cli.ts          |  9 +-
+ apps/desktop/scripts/prepare-command-link.ts | 21 ++++-
+ apps/desktop/src/command-installation.ts     | 12 ++-
+ apps/desktop/src/command-management.ts       |  7 ++
+ apps/desktop/src/command-manager-entry.ts    | 42 ++++++++-
+ apps/desktop/tests/cli-launcher.spec.ts      | 90 +++++++++++++++++---
+ 7 files changed, 217 insertions(+), 27 deletions(-)
+ create mode 100644 apps/desktop/cli/dsh-linux
+
+diff --git a/apps/desktop/cli/dsh-linux b/apps/desktop/cli/dsh-linux
+new file mode 100644
+index 0000000..36c9a6d
+--- /dev/null
++++ b/apps/desktop/cli/dsh-linux
+@@ -0,0 +1,63 @@
++#!/bin/sh
++# deepseek-harness linux launcher
++# Run the installed CLI without changing the invoking shell or working directory.
++set -e
++launcher=$0
++while [ -L "$launcher" ]; do
++  directory=$(CDPATH= cd -- "$(dirname -- "$launcher")" && pwd -P)
++  target=$(readlink "$launcher")
++  case "$target" in
++    /*) launcher=$target ;;
++    *) launcher=$directory/$target ;;
++  esac
++done
++# DSH_DESKTOP_RESOURCES names the resources directory explicitly, for extracted trees and diagnostics.
++if [ -n "${DSH_DESKTOP_RESOURCES:-}" ]; then
++  resources=$DSH_DESKTOP_RESOURCES
++else
++  resources=$(CDPATH= cd -- "$(dirname -- "$launcher")/../../.." && pwd -P)
++fi
++root=$(CDPATH= cd -- "$resources/.." && pwd -P)
++case "$root" in
++  */.mount_*)
++    # An AppImage mount disappears with the application, so a command that points into it cannot survive.
++    echo "dsh: this launcher runs from a transient AppImage mount." >&2
++    echo "dsh: install the deb package, or extract the AppImage to a stable directory and set DSH_DESKTOP_RESOURCES." >&2
++    exit 1
++    ;;
++esac
++host=$resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js
++if [ ! -f "$host" ]; then
++  echo "dsh: the DeepSeek Harness Desktop payload is missing under $resources" >&2
++  exit 1
++fi
++# Electron reuses the application binary as its Node runtime; the packaged name depends on the builder.
++executable=${DSH_DESKTOP_EXECUTABLE:-}
++if [ -z "$executable" ] || [ ! -x "$executable" ]; then
++  executable=
++  for name in deepseek-harness 'DeepSeek Harness' dsh-desktop; do
++    if [ -z "$executable" ] && [ -f "$root/$name" ] && [ -x "$root/$name" ]; then
++      executable=$root/$name
++    fi
++  done
++fi
++if [ -z "$executable" ]; then
++  # The Electron binary is the largest executable file beside resources; helpers and libraries are excluded.
++  size=0
++  for entry in "$root"/*; do
++    if [ ! -f "$entry" ] || [ ! -x "$entry" ]; then continue; fi
++    case "${entry##*/}" in
++      chrome-sandbox|chrome_crashpad_handler|*.so|*.so.*|*.pak|*.bin|*.dat) continue ;;
++    esac
++    candidate=$(wc -c < "$entry" 2>/dev/null | tr -d ' ' || echo 0)
++    if [ "${candidate:-0}" -gt "$size" ]; then
++      executable=$entry
++      size=$candidate
++    fi
++  done
++fi
++if [ -z "$executable" ] || [ ! -x "$executable" ]; then
++  echo "dsh: cannot locate the DeepSeek Harness executable under $root; set DSH_DESKTOP_EXECUTABLE." >&2
++  exit 1
++fi
++ELECTRON_RUN_AS_NODE=1 exec "$executable" --expose-internals "$host" "$@"
+diff --git a/apps/desktop/scripts/prepare-cli.ts b/apps/desktop/scripts/prepare-cli.ts
+index d2b9e14..cb257f7 100644
+--- a/apps/desktop/scripts/prepare-cli.ts
++++ b/apps/desktop/scripts/prepare-cli.ts
+@@ -8,10 +8,11 @@ import { join } from 'node:path'
+  * @param destination - Physical runtime/cli directory prepared for the application.
+  * @param platform - Target Desktop operating system.
+  */
+-export function prepareDesktopCli(destination: string, platform: 'darwin' | 'win32'): void {
+-  const name = platform === 'win32' ? 'dsh.cmd' : 'dsh'
+-  const command = join(destination, 'bin', name)
++export function prepareDesktopCli(destination: string, platform: 'darwin' | 'linux' | 'win32'): void {
++  const name = platform === 'win32' ? 'dsh.cmd' : platform === 'linux' ? 'dsh-linux' : 'dsh'
++  const command = join(destination, 'bin', platform === 'win32' ? 'dsh.cmd' : 'dsh')
+   mkdirSync(join(destination, 'bin'), { recursive: true })
+   copyFileSync(join(import.meta.dirname, '..', 'cli', name), command)
+-  if (platform === 'darwin') chmodSync(command, 0o755)
++  // The Windows batch file is invoked through cmd; every other launcher is executed directly.
++  if (platform !== 'win32') chmodSync(command, 0o755)
+ }
+diff --git a/apps/desktop/scripts/prepare-command-link.ts b/apps/desktop/scripts/prepare-command-link.ts
+index 0ee9ed2..9a646dd 100644
+--- a/apps/desktop/scripts/prepare-command-link.ts
++++ b/apps/desktop/scripts/prepare-command-link.ts
+@@ -1,8 +1,9 @@
+-/** Build the macOS helper for exact-path command symlink installation. */
++/** Build the macOS helper for exact-path command symlink installation, or stage the Linux launcher. */
+ 
+ import { execFileSync } from 'node:child_process'
+ import { mkdirSync } from 'node:fs'
+ import { join } from 'node:path'
++import { prepareDesktopCli } from './prepare-cli.ts'
+ 
+ /**
+  * Compile the command-link helper before signing Desktop resources.
+@@ -10,12 +11,24 @@ import { join } from 'node:path'
+  * @param arch - Desktop architecture, independent of the build host architecture.
+  * @param minimumVersion - Minimum macOS version declared by Electron.
+  */
+-export function prepareCommandLink(destination: string, arch: 'arm64' | 'x64', minimumVersion: string): void {
+-  if (process.platform !== 'darwin' || !/^\d+\.\d+(?:\.\d+)?$/u.test(minimumVersion)) {
++export function prepareCommandLink(destination: string, arch: 'arm64' | 'x64', minimumVersion: string): void
++/**
++ * Stage the Linux command launcher, which needs no helper: Linux link(2) keeps the symbolic-link inode.
++ * @param destination - Physical runtime/cli directory.
++ * @param target - The Linux target.
++ */
++export function prepareCommandLink(destination: string, target: 'linux'): void
++export function prepareCommandLink(destination: string, archOrTarget: 'arm64' | 'x64' | 'linux', minimumVersion?: string): void {
++  if (archOrTarget === 'linux') {
++    // The launcher is architecture-independent shell, so any build host can stage it.
++    prepareDesktopCli(destination, 'linux')
++    return
++  }
++  if (process.platform !== 'darwin' || minimumVersion === undefined || !/^\d+\.\d+(?:\.\d+)?$/u.test(minimumVersion)) {
+     throw new Error('desktop command link: a macOS host and Electron minimum version are required')
+   }
+   mkdirSync(destination, { recursive: true })
+   execFileSync('clang', ['-std=c11', '-O2', '-Wall', '-Wextra', '-Werror',
+-    '-arch', arch === 'arm64' ? 'arm64' : 'x86_64', '-mmacosx-version-min=' + minimumVersion,
++    '-arch', archOrTarget === 'arm64' ? 'arm64' : 'x86_64', '-mmacosx-version-min=' + minimumVersion,
+     join(import.meta.dirname, '..', 'cli', 'link-entry.c'), '-o', join(destination, 'link-entry')], { stdio: 'inherit' })
+ }
+diff --git a/apps/desktop/src/command-installation.ts b/apps/desktop/src/command-installation.ts
+index 3e181ae..837c426 100644
+--- a/apps/desktop/src/command-installation.ts
++++ b/apps/desktop/src/command-installation.ts
+@@ -12,7 +12,8 @@ import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
+ export interface FileCommandInstallation {
+   readonly destination: string
+   readonly launcher: string
+-  readonly linkHelper: string
++  /** macOS linkat helper; only macOS needs it, because its Node link() follows symbolic links. */
++  readonly linkHelper?: string
+ }
+ 
+ type Entry = { readonly kind: 'symlink'; readonly fingerprint: string; readonly target: string }
+@@ -158,8 +159,13 @@ async function restoreEntry(options: FileCommandInstallation, source: string, de
+ 
+ async function linkEntry(options: FileCommandInstallation, source: string, destination: string): Promise<void> {
+   // macOS Node link() follows symlinks; linkat preserves their identity and refuses occupied destinations.
+-  if (process.platform === 'darwin') await promisify(execFile)(options.linkHelper, [source, destination])
+-  else await link(source, destination)
++  if (process.platform === 'darwin') {
++    if (options.linkHelper === undefined) throw new CommandInstallationError('EIO', 'The macOS command-link helper is unavailable.')
++    await promisify(execFile)(options.linkHelper, [source, destination])
++  } else {
++    // Linux link(2) keeps the symbolic-link inode, so the destination names the launcher without a helper.
++    await link(source, destination)
++  }
+ }
+ 
+ async function withdraw(options: FileCommandInstallation, destination: string, expected: Entry): Promise<string | undefined> {
+diff --git a/apps/desktop/src/command-management.ts b/apps/desktop/src/command-management.ts
+index 34c7848..0933e1b 100644
+--- a/apps/desktop/src/command-management.ts
++++ b/apps/desktop/src/command-management.ts
+@@ -66,6 +66,8 @@ function parseState(value: unknown, platform: NodeJS.Platform): CommandState {
+   return {
+     fingerprint: value.fingerprint, managed: value.managed, available: value.available,
+     destination, launcher,
++    // A foreign entry at the destination is reported as an occupied path, never silently replaced:
++    // the dialog warns before installing, and the worker preserves the previous entry as a backup.
+     occupied: platform === 'win32' ? typeof value.activeCommand === 'string' : value.kind !== 'missing',
+     ...typeof value.target === 'string' ? { target: value.target } : {},
+     ...typeof value.activeCommand === 'string' ? { activeCommand: value.activeCommand } : {},
+@@ -141,6 +143,8 @@ export class DesktopCommandManager {
+     let stdout: string
+     try {
+       if (elevated) {
++        // Only macOS installs into a system directory (/usr/local/bin). Linux installs under the user's home
++        // and Windows delegates to command-path.ps1, so neither platform reaches an authorization prompt.
+         const appleScript = 'on run argv\nset cmd to "/usr/bin/env -i " & quoted form of (item 1 of argv) & " " & quoted form of (item 2 of argv) & " " & quoted form of (item 3 of argv) & " " & quoted form of (item 4 of argv)\ndo shell script cmd with administrator privileges\nend run'
+         stdout = (await promisify(execFile)('/usr/bin/osascript', ['-e', appleScript, node, entry, operation, expected ?? ''],
+           { maxBuffer: 65536 })).stdout
+@@ -171,6 +175,9 @@ export class DesktopCommandManager {
+ 
+   private async inspect(): Promise<CommandState> {
+     const state = await this.worker('inspect')
++    // macOS only: /usr/local/bin may yield to another dsh earlier in PATH. Linux keeps the entry in the
++    // user's own ~/.local/bin and reports the observed entry alone; see the Linux port notes for the
++    // PATH-shadow lookup that must ship with locale copy and command-manager-flow fixtures together.
+     if (process.platform !== 'darwin') return state
+     try {
+       return { ...state, ...await shellCommand() }
+diff --git a/apps/desktop/src/command-manager-entry.ts b/apps/desktop/src/command-manager-entry.ts
+index edfd61c..6947735 100644
+--- a/apps/desktop/src/command-manager-entry.ts
++++ b/apps/desktop/src/command-manager-entry.ts
+@@ -1,6 +1,8 @@
+-/** Private command-management worker; macOS mutation targets are fixed before elevation. */
++/** Private command-management worker; mutation targets are fixed per platform before any user decision. */
+ 
+ import { spawn } from 'node:child_process'
++import { readFile } from 'node:fs/promises'
++import { homedir } from 'node:os'
+ import { dirname, join, resolve } from 'node:path'
+ import { fileURLToPath } from 'node:url'
+ import { CommandInstallationError, inspectFileCommand, installFileCommand, removeFileCommand } from './command-installation.ts'
+@@ -8,9 +10,33 @@ import { CommandInstallationError, inspectFileCommand, installFileCommand, remov
+ const [operation, expected] = process.argv.slice(2)
+ const fingerprint = expected ?? ''
+ const resources = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
++/** Present in the packaged Linux launcher; absent when a packaging run staged another platform's script. */
++const LINUX_LAUNCHER_MARKER = 'deepseek-harness linux launcher'
+ // This dedicated worker writes public command ownership metadata, not user secrets.
++// Linux installs under the invoking user's home, so it keeps that user's umask.
+ if (process.platform === 'darwin') process.umask(0o022)
+ 
++/**
++ * Refuse a Linux install that could not survive, before any command entry is created.
++ * @param launcher - Packaged Linux command launcher.
++ */
++async function assertLinuxLauncher(launcher: string): Promise<void> {
++  const appImage = process.env.APPIMAGE
++  if (appImage !== undefined && appImage !== '') {
++    throw new CommandInstallationError('EUNSUPPORTED',
++      'Command installation is unavailable from an AppImage mount; install the deb package or extract the AppImage to a stable directory.')
++  }
++  let head: string
++  try { head = (await readFile(launcher, 'utf8')).slice(0, 4096) } catch (error) {
++    if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new CommandInstallationError('ENOENT', 'The installed launcher is unavailable.')
++    throw error
++  }
++  if (!head.includes(LINUX_LAUNCHER_MARKER)) {
++    throw new CommandInstallationError('EUNSUPPORTED',
++      'The packaged Linux command launcher is missing; the Desktop packaging run did not stage the Linux launcher.')
++  }
++}
++
+ try {
+   if (!['inspect', 'install', 'remove'].includes(operation ?? '')) throw new CommandInstallationError('EINVAL', 'Invalid command-management operation.')
+   if (operation !== 'inspect' && !/^[a-f0-9]{64}$/u.test(fingerprint)) throw new CommandInstallationError('EINVAL', 'Missing command confirmation.')
+@@ -33,8 +59,20 @@ try {
+     })
+     child.stdin.end(JSON.stringify({ operation, expected, directory: join(resources, 'runtime', 'cli', 'bin') }))
+     process.exitCode = await exited ?? 1
++  } else if (process.platform === 'linux') {
++    // The user's own PATH prefix, not a system directory. A foreign entry is reported as an occupied path
++    // and the dialog asks before installing, so it is never replaced silently: installing renames it to
++    // `.dsh-command-backup-<uuid>` beside the command and records that fingerprint in
++    // `.dsh-desktop-command.json`. Uninstalling renames the unchanged backup back to `~/.local/bin/dsh`,
++    // or reports `preservedBackup` when another installer has taken the command over since.
++    const launcher = join(resources, 'runtime', 'cli', 'bin', 'dsh')
++    if (operation === 'install') await assertLinuxLauncher(launcher)
++    const options = { destination: join(homedir(), '.local', 'bin', 'dsh'), launcher }
++    const state = operation === 'inspect' ? await inspectFileCommand(options)
++      : operation === 'install' ? await installFileCommand(options, fingerprint) : await removeFileCommand(options, fingerprint)
++    process.stdout.write(JSON.stringify({ ok: true, state }) + '\n')
+   } else {
+-    throw new CommandInstallationError('EUNSUPPORTED', 'Command installation is supported on macOS and Windows.')
++    throw new CommandInstallationError('EUNSUPPORTED', 'Command installation is supported on Linux, macOS and Windows.')
+   }
+ } catch (error) {
+   // osascript preserves stdout only when the command exits successfully; the response owns operation failures.
+diff --git a/apps/desktop/tests/cli-launcher.spec.ts b/apps/desktop/tests/cli-launcher.spec.ts
+index 67e38da..7893202 100644
+--- a/apps/desktop/tests/cli-launcher.spec.ts
++++ b/apps/desktop/tests/cli-launcher.spec.ts
+@@ -1,6 +1,6 @@
+ /** Installed launcher scripts preserve terminal invocation through a minimal runtime fixture. */
+ 
+-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
++import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
+ import { copyFileSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
+ import { rm } from 'node:fs/promises'
+ import { tmpdir } from 'node:os'
+@@ -8,6 +8,21 @@ import { dirname, join, relative } from 'node:path'
+ import { expect, it, onTestFinished } from 'vitest'
+ import { prepareDesktopCli } from '../scripts/prepare-cli.ts'
+ 
++/** Write the packaged Host CLI that reports how the launcher invoked it. */
++function writeHostCli(resources: string): void {
++  const entry = join(resources, 'app.asar', 'dsh', 'node_modules', '@deepseek-ai', 'dsh-desktop-host', 'lib', 'cli.js')
++  mkdirSync(dirname(entry), { recursive: true })
++  writeFileSync(join(dirname(entry), 'package.json'), '{"type":"module"}\n')
++  writeFileSync(entry, [
++    'const chunks = []',
++    'for await (const chunk of process.stdin) chunks.push(chunk)',
++    "process.stdout.write(JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), value: process.env.DSH_CLI_TEST_VALUE, nodeMode: process.env.ELECTRON_RUN_AS_NODE, input: Buffer.concat(chunks).toString('hex') }))",
++    "process.stderr.write('separate stderr\\n')",
++    'process.exitCode = 23',
++    '',
++  ].join('\n'))
++}
++
+ function fixture() {
+   const root = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-cli-launcher-')))
+   const children: ChildProcessWithoutNullStreams[] = []
+@@ -20,25 +35,18 @@ function fixture() {
+     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+   })
+   const application = join(root, 'Application 中文 with spaces.app')
+-  const platform = process.platform === 'win32' ? 'win32' : 'darwin'
++  const platform = process.platform === 'win32' ? 'win32' : process.platform === 'linux' ? 'linux' : 'darwin'
+   const resources = join(application, ...platform === 'darwin' ? ['Contents', 'Resources'] : ['resources'])
+   const cli = join(resources, 'runtime', 'cli')
+   prepareDesktopCli(cli, platform)
+-  const electron = join(application, ...platform === 'darwin' ? ['Contents', 'MacOS', 'DeepSeek Harness'] : ['DeepSeek Harness.exe'])
++  // macOS nests the executable in Contents/MacOS; Windows and Linux keep it beside the resources directory.
++  const electron = platform === 'win32' ? join(application, 'DeepSeek Harness.exe')
++    : platform === 'linux' ? join(application, 'DeepSeek Harness')
++      : join(application, 'Contents', 'MacOS', 'DeepSeek Harness')
+   mkdirSync(dirname(electron), { recursive: true })
+   if (platform === 'win32') copyFileSync(process.execPath, electron)
+   else symlinkSync(process.execPath, electron)
+-  const entry = join(resources, 'app.asar', 'dsh', 'node_modules', '@deepseek-ai', 'dsh-desktop-host', 'lib', 'cli.js')
+-  mkdirSync(dirname(entry), { recursive: true })
+-  writeFileSync(join(dirname(entry), 'package.json'), '{"type":"module"}\n')
+-  writeFileSync(entry, [
+-    'const chunks = []',
+-    'for await (const chunk of process.stdin) chunks.push(chunk)',
+-    "process.stdout.write(JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), value: process.env.DSH_CLI_TEST_VALUE, nodeMode: process.env.ELECTRON_RUN_AS_NODE, input: Buffer.concat(chunks).toString('hex') }))",
+-    "process.stderr.write('separate stderr\\n')",
+-    'process.exitCode = 23',
+-    '',
+-  ].join('\n'))
++  writeHostCli(resources)
+   const command = join(cli, 'bin', platform === 'win32' ? 'dsh.cmd' : 'dsh')
+   function start(args: string[], executable = command) {
+     // cmd fixture inputs contain no metacharacters; POSIX cases exercise literal expansion characters separately.
+@@ -62,6 +70,30 @@ function fixture() {
+   return { root, command, start }
+ }
+ 
++/**
++ * Lay out the Linux application tree the deb and directory builds share.
++ * @param options - Mount directory prefix and the launcher branch under test.
++ * @returns The application directory, its resources and the installed command.
++ */
++function linuxFixture(options: { mount?: boolean, payload?: boolean, executableName?: string, sandboxDecoy?: boolean } = {}) {
++  const root = realpathSync(mkdtempSync(join(tmpdir(), options.mount === true ? '.mount_dsh-cli-' : 'dsh-cli-linux-')))
++  onTestFinished(() => rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }))
++  const application = join(root, 'Application 中文 with spaces')
++  const resources = join(application, 'resources')
++  const cli = join(resources, 'runtime', 'cli')
++  prepareDesktopCli(cli, 'linux')
++  mkdirSync(application, { recursive: true })
++  symlinkSync(process.execPath, join(application, options.executableName ?? 'DeepSeek Harness'))
++  if (options.sandboxDecoy === true) writeFileSync(join(application, 'chrome-sandbox'), '#!/bin/sh\nexit 9\n', { mode: 0o755 })
++  if (options.payload !== false) writeHostCli(resources)
++  return { application, resources, command: join(cli, 'bin', 'dsh') }
++}
++
++/** Run one launcher invocation to completion and collect its streams. */
++function runCommand(command: string, args: string[], environment: NodeJS.ProcessEnv = {}) {
++  return spawnSync(command, args, { encoding: 'utf8', env: { ...process.env, ...environment } })
++}
++
+ it('preserves common arguments, cwd, environment, binary input, stderr and exit status', async () => {
+   const f = fixture()
+   const args = ['plugin', '--profile', 'desktop', 'hello world', '中文 🚀', '']
+@@ -85,3 +117,33 @@ it.skipIf(process.platform === 'win32')('resolves chained command symlinks witho
+   expect(await run.closed, run.stderr()).toBe(23)
+   expect(JSON.parse(run.stdout())).toMatchObject({ args, cwd: f.root, nodeMode: '1' })
+ })
++
++it.runIf(process.platform === 'linux')('runs a stable payload through DSH_DESKTOP_RESOURCES from an AppImage mount', () => {
++  const stable = linuxFixture()
++  const mount = linuxFixture({ mount: true, payload: false })
++  const run = runCommand(mount.command, ['plugin', 'hello world'], { DSH_DESKTOP_RESOURCES: stable.resources })
++  expect(run.status, run.stderr).toBe(23)
++  expect(JSON.parse(run.stdout)).toMatchObject({ args: ['plugin', 'hello world'], nodeMode: '1' })
++})
++
++it.runIf(process.platform === 'linux')('refuses to start from a transient AppImage mount', () => {
++  const mount = linuxFixture({ mount: true })
++  const run = runCommand(mount.command, ['plugin'])
++  expect(run.status).toBe(1)
++  expect(run.stdout).toBe('')
++  expect(run.stderr).toContain('transient AppImage mount')
++})
++
++it.runIf(process.platform === 'linux')('reports a missing Desktop payload', () => {
++  const f = linuxFixture({ payload: false })
++  const run = runCommand(f.command, [])
++  expect(run.status).toBe(1)
++  expect(run.stderr).toContain('payload is missing')
++})
++
++it.runIf(process.platform === 'linux')('falls back to the largest executable beside the resources directory', () => {
++  const f = linuxFixture({ executableName: 'renamed-binary', sandboxDecoy: true })
++  const run = runCommand(f.command, [])
++  expect(run.status, run.stderr).toBe(23)
++  expect(JSON.parse(run.stdout)).toMatchObject({ nodeMode: '1' })
++})
