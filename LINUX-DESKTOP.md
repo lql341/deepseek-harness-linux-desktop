@@ -1,5 +1,8 @@
 # DeepSeek Harness Desktop — Linux（mac-like）移植补丁集
 
+> 本文档对应的 Linux x64 路径已在本机实际编译、打包并启动验证。验证产物为 AppImage
+> 和 deb；当前主机缺少 `libfuse.so.2`，AppImage 使用自解压运行模式完成启动检查。
+
 > 基线：上游 `deepseek-ai/deepseek-harness` tag **`dsh-v0.2.0-rc.2`**（commit `639ed0153972`）。
 > 目标：在 Linux x64 上得到与 macOS 版**行为一致**的 Electron 桌面壳，产物为 AppImage + deb。
 > 性质：非官方补丁集。上游 README 明确写有 “Linux is not a supported Desktop release target”，
@@ -136,17 +139,15 @@ pnpm --dir apps/desktop run package:linux:x64
 - Linux 侧新增测试：CLI launcher 的 Linux fixture 已补；PATH 提示文案与 `~/.local/bin`
   不在 PATH 时的警告未做。
 
-## 7. 本补丁集**没有**验证过什么
+## 7. 本补丁集仍未验证什么
 
-补丁在 macOS 上编写，只做了语法级自检（`node --experimental-strip-types --check`），
-**没有**在 Linux 上编译、打包、运行过。预期需要现场修的小问题：
+本机已经完成 Linux x64 编译、runtime 准备、AppImage/deb 打包和基础启动验证。以下项目仍需要在目标桌面环境或安装后的系统上确认：
 
-- 原生包的实际包名/版本在 pnpm 解析后可能与补丁假设不同；
-- Node / Python 便携归档的下载地址与校验值；
-- electron-builder 的 linux 目标在你这版工具链上的行为；
-- 桌面环境相关的窗口控件观感。
+- 桌面环境相关的窗口控件观感；
+- 安装 deb 后的 XDG 深链注册，以及安装后的 `dsh` 命令 PATH 行为；
+- 桌面测试套件在 Linux 上的基线差异。
 
-几条**必查**项（都在 Linux 上才能确认）：
+本次验证覆盖的运行时检查与仍建议确认的项目：
 
 1. `@electron/get` 拉到的 `electron-v44-linux-x64.zip` 解包后，根目录二进制是否确实叫 `electron`
    （`prepare-runtime.ts` 的 Linux 分支按此假设；改名只影响这一处）。
@@ -155,9 +156,7 @@ pnpm --dir apps/desktop run package:linux:x64
    `sherpa-onnx-linux-x64`，且没有 darwin/win32 残留。
 3. `prepare:dsh` 的 `runtime:materialize-modules` 之后，WASM 引擎的 `prebuilds.json` 是否在位，
    以及 `officePackageDirectories` 是否把 `libreoffice-kit-wasm` 目录正确加进 `asarUnpack`。
-4. `prepare:primary-runtime` 的 smoke 会真跑 Linux 的 node/pnpm/python——这是运行时唯一的真验证。
-5. `link(2)` 语义：Linux 上 `cli/dsh-linux` 的安装/修复/卸载、外来同名命令的冲突确认与备份还原。
-6. `~/.local/bin` 是否在你的 PATH 里（不在的话装上也不会生效，本期不额外提示）。
-7. 桌面测试套件：`cli-launcher.spec.ts` 等文件原本按"非 win32 即 darwin"搭 fixture，仓库也从未把
+4. `~/.local/bin` 是否在你的 PATH 里（不在的话装上也不会生效，本期不额外提示）。
+5. 桌面测试套件：`cli-launcher.spec.ts` 等文件原本按"非 win32 即 darwin"搭 fixture，仓库也从未把
    Linux 当发布目标，所以在 Linux 主机上跑测试**可能存在基线失败**。建议先在未打补丁的 tag 上跑一遍
    留基线，再对比补丁后的失败集合。

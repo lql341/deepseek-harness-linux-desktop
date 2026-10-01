@@ -8,14 +8,13 @@ Upstream ships macOS and Windows only — its own `apps/desktop/README.md` state
 `linux-x64` target must be rejected. This repository is the set of diffs that opens that
 path up.
 
-> **Status: patches only, unverified on Linux.**
-> The patches were written against the upstream tag and checked on macOS (syntax level,
-> plus tree-hash verification that they apply cleanly). They have **never been compiled,
-> packaged, or run on Linux**. Budget for a few small fixups on the first build — the
-> [failure triage](#7-failure-triage) table lists the ones to expect.
+> **Status: Linux x64 verified locally.**
+> The six-patch series applies cleanly to the upstream tag and has been compiled, packaged,
+> and smoke-tested on Linux x86_64. The verified build produced both an AppImage and a deb;
+> the AppImage was also started from its self-extracting mode because this host does not have
+> `libfuse.so.2`.
 
-Base: upstream tag **`dsh-v0.2.0-rc.2`** (commit `639ed0153972`), 5 patches, 33 files,
-+798 / −119.
+Base: upstream tag **`dsh-v0.2.0-rc.2`** (commit `639ed0153972`), 6 patches.
 
 ---
 
@@ -97,7 +96,7 @@ export SRC="${SRC:-$HOME/src/deepseek-harness}"
 sh "$PATCH_REPO/apply.sh" "$SRC"
 
 # --- prove the patches landed ---------------------------------------------
-[ "$(git -C "$SRC" rev-parse HEAD^{tree})" = "0c006d75f9a36f3e428f51364b59bf3e63770484" ] \
+[ "$(git -C "$SRC" rev-parse HEAD^{tree})" = "80bf70a93174843c435dca070e8777f812389f75" ] \
   || { echo "FAIL: patched tree hash mismatch"; exit 1; }
 [ -f "$SRC/apps/desktop/.env.linux" ] || { echo "FAIL: .env.linux missing"; exit 1; }
 
@@ -139,7 +138,7 @@ sh "$PATCH_REPO/apply.sh" "$SRC"
 ```
 
 `apply.sh` clones upstream at tag `dsh-v0.2.0-rc.2`, creates branch `linux-desktop`, runs
-`git am` on all 5 patches, and copies `.env.linux.example` to `.env.linux` (the packaging
+`git am` on all 6 patches, and copies `.env.linux.example` to `.env.linux` (the packaging
 code requires that file and aborts without it).
 
 Success conditions — all four must hold:
@@ -148,7 +147,7 @@ Success conditions — all four must hold:
 git -C "$SRC" log --oneline | head -1
 #   expect: "docs(desktop): describe the Linux build and its known limits"
 git -C "$SRC" rev-parse HEAD^{tree}
-#   expect: 0c006d75f9a36f3e428f51364b59bf3e63770484
+#   expect: 80bf70a93174843c435dca070e8777f812389f75
 git -C "$SRC" status --porcelain      # expect: empty
 test -f "$SRC/apps/desktop/.env.linux" && echo env-ok
 ```
@@ -283,18 +282,23 @@ With the default version these are
 Verified:
 
 - The series applies cleanly on `dsh-v0.2.0-rc.2`; after `git am` the resulting tree hash is
-  `0c006d75f9a36f3e428f51364b59bf3e63770484`, with no leftover changes.
+  `80bf70a93174843c435dca070e8777f812389f75`, with no leftover changes.
 - `apply.sh` ran end to end under a C locale with no git identity configured: fresh shallow
-  clone → 5 patches → `.env.linux` created → exit 0.
+  clone → 6 patches → `.env.linux` created → exit 0.
 - Every changed file passes a syntax check; all native dependencies were resolved against the
   npm registry (Linux variants exist, `node-pty` ships `linux-x64/arm64` prebuilds).
+- `check:package` passed, and the official Linux build passed runtime preparation, Office
+  document round-trip, and Electron packaging stages.
+- The resulting artifacts were `deepseek-harness-0.2.0-rc.2-linux-x86_64.AppImage` and
+  `deepseek-harness-0.2.0-rc.2-linux-amd64.deb`; the deb metadata and contents were inspected.
+- The packaged application started successfully and exposed its local `dsh web` endpoint.
 
-Not verified (needs a Linux host):
+Not verified in this environment:
 
-- `pnpm install`, `check:package`, compilation and type checking.
 - Electron's `titleBarOverlay` appearance per desktop environment; window drag/resize and
   caption sizing in both themes.
-- `landlock-run` unpacking and the bash sandbox, `deb` metadata, XDG deep-link association.
+- XDG deep-link association after installing the deb; the deb itself was inspected but not
+  installed system-wide.
 - The desktop test suite, which upstream never ran on Linux and which may have pre-existing
   failures there. Run it once on the unpatched tag to get a baseline before comparing.
 

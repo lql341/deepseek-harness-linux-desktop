@@ -1,0 +1,136 @@
+From a7f05d2145a04f8775d4c544605f4d3ad2e479a2 Mon Sep 17 00:00:00 2001
+From: Codex <codex@localhost>
+Date: Thu, 1 Oct 2026 21:55:38 +0800
+Subject: [PATCH] fix(desktop): complete Linux packaging type declarations
+
+---
+ .../desktop-auto-update-environment.d.mts     | 12 +++++++++++-
+ .../desktop/scripts/desktop-build-paths.d.mts |  2 +-
+ .../scripts/desktop-package-environment.d.mts |  4 ++--
+ apps/desktop/scripts/desktop-upload-plan.ts   | 19 ++++++++++++-------
+ 4 files changed, 26 insertions(+), 11 deletions(-)
+
+diff --git a/apps/desktop/scripts/desktop-auto-update-environment.d.mts b/apps/desktop/scripts/desktop-auto-update-environment.d.mts
+index 00ebf8c..d71021c 100644
+--- a/apps/desktop/scripts/desktop-auto-update-environment.d.mts
++++ b/apps/desktop/scripts/desktop-auto-update-environment.d.mts
+@@ -1,11 +1,14 @@
+ /** Environment variable that selects the Desktop update deployment. */
+ export const DESKTOP_AUTO_UPDATE_ENV: 'DSH_DESKTOP_AUTO_UPDATE_ENV'
+ 
++/** Environment variable that opts a Linux build into a generic AppImage update feed. */
++export const DESKTOP_LINUX_UPDATE_ORIGIN: 'DSH_DESKTOP_LINUX_UPDATE_ORIGIN'
++
+ /** Supported Desktop update deployment. */
+ export type DesktopAutoUpdateEnvironment = 'test' | 'production'
+ 
+ /** Directory name of one supported Desktop release target. */
+-export type DesktopAutoUpdateTarget = 'mac-arm64' | 'mac-x64' | 'win-x64'
++export type DesktopAutoUpdateTarget = 'mac-arm64' | 'mac-x64' | 'win-x64' | 'linux-x64'
+ 
+ /** Public updater URL and object prefixes for one release target. */
+ export interface DesktopAutoUpdateConfig {
+@@ -76,6 +79,13 @@ export function resolveDesktopAutoUpdateConfig(
+   arch: string,
+ ): DesktopAutoUpdateConfig
+ 
++/** Resolve optional generic-feed settings for a packaging run. */
++export function resolveDesktopPackagingUpdateConfig(
++  env: NodeJS.ProcessEnv,
++  platform: NodeJS.Platform,
++  arch: string,
++): (DesktopAutoUpdateConfig & { readonly environment: DesktopAutoUpdateEnvironment | 'linux' }) | undefined
++
+ /**
+  * Resolve the public updater URL and private COS destination for one upload target.
+  * @param env - Upload environment.
+diff --git a/apps/desktop/scripts/desktop-build-paths.d.mts b/apps/desktop/scripts/desktop-build-paths.d.mts
+index 9a8e408..d366e9e 100644
+--- a/apps/desktop/scripts/desktop-build-paths.d.mts
++++ b/apps/desktop/scripts/desktop-build-paths.d.mts
+@@ -43,7 +43,7 @@ export function desktopTargetBuildPaths(target: DesktopAutoUpdateTarget): Deskto
+  * @returns Platform and architecture of the prepared payload.
+  */
+ export function desktopTargetPlatform(target: DesktopAutoUpdateTarget): {
+-  readonly platform: 'darwin' | 'win32'
++  readonly platform: 'darwin' | 'win32' | 'linux'
+   readonly arch: 'arm64' | 'x64'
+ }
+ 
+diff --git a/apps/desktop/scripts/desktop-package-environment.d.mts b/apps/desktop/scripts/desktop-package-environment.d.mts
+index b0d7bc2..c158004 100644
+--- a/apps/desktop/scripts/desktop-package-environment.d.mts
++++ b/apps/desktop/scripts/desktop-package-environment.d.mts
+@@ -8,7 +8,7 @@
+  * @returns Isolated environment with file-owned release settings.
+  */
+ export function loadDesktopPackageEnvironment(
+-  platform: 'win32' | 'darwin',
++  platform: 'win32' | 'darwin' | 'linux',
+   environment?: NodeJS.ProcessEnv,
+   appRoot?: string,
+ ): NodeJS.ProcessEnv
+@@ -22,6 +22,6 @@ export function loadDesktopPackageEnvironment(
+  */
+ export function validateDesktopPackageEnvironment(
+   environment: NodeJS.ProcessEnv,
+-  target: { platform: 'win32' | 'darwin', arch: string },
++  target: { platform: 'win32' | 'darwin' | 'linux', arch: string },
+   options?: { unsigned?: boolean, prepareOnly?: boolean },
+ ): void
+diff --git a/apps/desktop/scripts/desktop-upload-plan.ts b/apps/desktop/scripts/desktop-upload-plan.ts
+index 439a4fa..ff0585f 100644
+--- a/apps/desktop/scripts/desktop-upload-plan.ts
++++ b/apps/desktop/scripts/desktop-upload-plan.ts
+@@ -21,6 +21,7 @@ const TARGETS = {
+   'mac-arm64': { platform: 'darwin', arch: 'arm64', os: 'mac' },
+   'mac-x64': { platform: 'darwin', arch: 'x64', os: 'mac' },
+   'win-x64': { platform: 'win32', arch: 'x64', os: 'win' },
++  'linux-x64': { platform: 'linux', arch: 'x64', os: 'linux' },
+ } as const satisfies Record<DesktopPackageTargetName, {
+   readonly platform: NodeJS.Platform
+   readonly arch: string
+@@ -40,7 +41,7 @@ export interface DesktopUploadArtifact {
+ 
+ /** A validated installer or update upload, with any channel metadata ordered last. */
+ export interface DesktopUploadPlan {
+-  readonly environment: 'test' | 'production'
++  readonly environment: 'test' | 'production' | 'linux'
+   readonly target: DesktopPackageTargetName
+   readonly version: string
+   /** Update feed directory URL, or the single installer URL for a fixed download. */
+@@ -194,7 +195,9 @@ export async function createDesktopUploadPlan(
+     throw new Error(`desktop upload: desktop version ${desktopVersion} does not match current dsh version ${dshVersion}`)
+   }
+ 
+-  const update = resolveDesktopUploadConfig(environment, target.platform, target.arch)
++  const update = target.platform === 'linux'
++    ? undefined
++    : resolveDesktopUploadConfig(environment, target.platform, target.arch)
+   const buildRecord = await jsonFile(
+     join(artifactsRoot, desktopBuildRecordFilename(targetName)),
+     `${targetName} package completion record`,
+@@ -209,13 +212,15 @@ export async function createDesktopUploadPlan(
+     throw new Error(`desktop upload: ${targetName} package completion record holds ${recordedVersion}, which is not a build of dsh ${dshVersion}: ${
+       error instanceof Error ? error.message : String(error)}`)
+   }
+-  if (buildRecord.schemaVersion !== 1
+-    || buildRecord.target !== targetName
+-    || buildRecord.environment !== update.environment
+-    || buildRecord.publicUrl !== update.publicUrl) {
+-    throw new Error(`desktop upload: ${targetName} package completion record for ${buildVersion} does not match the ${update.environment} update destination`)
++  if (buildRecord.schemaVersion !== 1 || buildRecord.target !== targetName
++    || (update !== undefined && (buildRecord.environment !== update.environment || buildRecord.publicUrl !== update.publicUrl))) {
++    throw new Error(`desktop upload: ${targetName} package completion record for ${buildVersion} does not match the update destination`)
+   }
+ 
++  // Linux has no COS upload path in this series. The package itself is still validated by the
++  // packaging command; upload-target remains limited to the first-party macOS/Windows feeds.
++  if (update === undefined) throw new Error('desktop upload: Linux targets do not support COS upload plans')
++
+   const metadataFilename = desktopUpdateMetadataFilename(buildVersion, target.platform)
+   const metadataPath = join(artifactsRoot, metadataFilename)
+   let metadataValue: unknown
+-- 
+2.47.3
+
