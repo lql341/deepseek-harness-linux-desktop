@@ -1,0 +1,38 @@
+From a1b3fd765bf1597545cd576f7535858d46ed2458 Mon Sep 17 00:00:00 2001
+From: Codex <codex@localhost>
+Date: Thu, 1 Oct 2026 23:07:15 +0800
+Subject: [PATCH] fix(desktop): use a Debian-safe Linux executable name
+
+---
+ apps/desktop/scripts/electron-builder-config.mjs | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/apps/desktop/scripts/electron-builder-config.mjs b/apps/desktop/scripts/electron-builder-config.mjs
+index 35125c5..ad3eca9 100644
+--- a/apps/desktop/scripts/electron-builder-config.mjs
++++ b/apps/desktop/scripts/electron-builder-config.mjs
+@@ -238,9 +238,9 @@ export function createElectronBuilderConfig(
+     },
+     linux: {
+       icon: fileURLToPath(new URL('../resources/icon.png', import.meta.url)),
+-      // The same product name the macOS bundle and the Windows executable carry; electron-builder
+-      // quotes it inside the desktop entry's Exec argument.
+-      executableName: 'DeepSeek Harness',
++      // Keep the display name separate from the Unix executable name. Debian's
++      // update-alternatives rejects names containing spaces.
++      executableName: 'deepseek-harness',
+       category: 'Development',
+       // Feeds the desktop entry Comment and the deb Description; the manifest's own description
+       // describes the shell implementation rather than the product.
+@@ -249,7 +249,7 @@ export function createElectronBuilderConfig(
+       maintainer: 'DeepSeek Harness',
+       target: ['AppImage', 'deb'],
+       desktop: {
+-        // Name, Comment, and Icon come from productName, description, and executableName above.
++        // Name, Comment, and Icon come from productName, description, and the Linux icon above.
+         // electron-builder re-emits MimeType from the top-level protocols entry, so the dsh:// deep
+         // link stays registered even though this entry states the same value.
+         entry: { MimeType: 'x-scheme-handler/dsh;' },
+-- 
+2.47.3
+

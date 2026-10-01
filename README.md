@@ -9,12 +9,12 @@ Upstream ships macOS and Windows only — its own `apps/desktop/README.md` state
 path up.
 
 > **Status: Linux x64 verified locally.**
-> The six-patch series applies cleanly to the upstream tag and has been compiled, packaged,
+> The seven-patch series applies cleanly to the upstream tag and has been compiled, packaged,
 > and smoke-tested on Linux x86_64. The verified build produced both an AppImage and a deb;
 > the AppImage was also started from its self-extracting mode because this host does not have
 > `libfuse.so.2`.
 
-Base: upstream tag **`dsh-v0.2.0-rc.2`** (commit `639ed0153972`), 6 patches.
+Base: upstream tag **`dsh-v0.2.0-rc.2`** (commit `639ed0153972`), 7 patches.
 
 ---
 
@@ -138,7 +138,7 @@ sh "$PATCH_REPO/apply.sh" "$SRC"
 ```
 
 `apply.sh` clones upstream at tag `dsh-v0.2.0-rc.2`, creates branch `linux-desktop`, runs
-`git am` on all 6 patches, and copies `.env.linux.example` to `.env.linux` (the packaging
+`git am` on all 7 patches, and copies `.env.linux.example` to `.env.linux` (the packaging
 code requires that file and aborts without it).
 
 Success conditions — all four must hold:
@@ -282,15 +282,17 @@ With the default version these are
 Verified:
 
 - The series applies cleanly on `dsh-v0.2.0-rc.2`; after `git am` the resulting tree hash is
-  `80bf70a93174843c435dca070e8777f812389f75`, with no leftover changes.
+  `bb2f6aacd6657cd732935ce7d97bc707839e190c`, with no leftover changes.
 - `apply.sh` ran end to end under a C locale with no git identity configured: fresh shallow
-  clone → 6 patches → `.env.linux` created → exit 0.
+  clone → 7 patches → `.env.linux` created → exit 0.
 - Every changed file passes a syntax check; all native dependencies were resolved against the
   npm registry (Linux variants exist, `node-pty` ships `linux-x64/arm64` prebuilds).
 - `check:package` passed, and the official Linux build passed runtime preparation, Office
   document round-trip, and Electron packaging stages.
 - The resulting artifacts were `deepseek-harness-0.2.0-rc.2-linux-x86_64.AppImage` and
   `deepseek-harness-0.2.0-rc.2-linux-amd64.deb`; the deb metadata and contents were inspected.
+- The Linux installer uses the Debian-safe executable name `deepseek-harness`; its generated
+  `postinst` registers that name with `update-alternatives` instead of using the display name.
 - The packaged application started successfully and exposed its local `dsh web` endpoint.
 
 Not verified in this environment:

@@ -120,9 +120,8 @@ pnpm --dir apps/desktop run package:linux:x64
   （`x-client-platform: darwin`）。原因：共享账号包只定义了 `darwin`/`win32`，省略则退化成
   `web`。这会让服务端把你的客户端当成 macOS 客户端——若在意统计/服务端策略，需要先在上游
   共享包里定义 Linux 身份再改这一处。
-- **安装器元数据**：`executableName` 带空格（`DeepSeek Harness`），electron-builder 26.15.3 会给
-  `.desktop` 的 `Exec=` 加引号，但 `Icon=DeepSeek Harness` 在部分桌面环境可能取不到图标；
-  deb 的 `maintainer` 目前是 `DeepSeek Harness` 占位，建议换成你自己。
+- **安装器元数据**：Linux 可执行名使用 Debian 兼容的 `deepseek-harness`，展示名称仍为
+  `DeepSeek Harness`；deb 的 `maintainer` 目前是 `DeepSeek Harness` 占位，建议换成你自己。
 - **两处已知观感差异**：welcome 窗口的标题栏配色只在创建时跟随系统主题（Linux 没有 Windows 的
   palette 通道）；`<html data-windows-titlebar>` 这个属性名沿用了 Windows 叫法（改名会牵动
   packages/client 的 CSS 与测试，故保留）。
