@@ -475,13 +475,18 @@ jobs:
           pnpm run check:ci:linux-primary 2>&1 | tee linux-gates.log
 
       - name: Build the Landlock launcher for this architecture
+        continue-on-error: true
         working-directory: ${{ env.UPSTREAM_DIR }}
         run: |
+          # Upstream's sandbox workflow installs musl-tools for the static launcher.
+          sudo apt-get update -q
+          sudo apt-get install -yq musl-tools
           pnpm --dir native/system run build:ts
           pnpm --dir native/system run build:native
 
       - name: Sandbox confinement e2e (real kernel, bwrap and Landlock legs)
         id: sandbox
+        if: always()
         continue-on-error: true
         working-directory: ${{ env.UPSTREAM_DIR }}
         env:
@@ -503,6 +508,7 @@ jobs:
 
       - name: Keyless agent smoke (real Loader, production bash tool)
         id: keyless
+        if: always()
         continue-on-error: true
         working-directory: ${{ env.UPSTREAM_DIR }}
         env:
@@ -537,3 +543,69 @@ jobs:
           [ "${{ steps.sandbox.outcome }}" = success ] || { echo "FAIL: sandbox confinement e2e"; failed=1; }
           [ "${{ steps.keyless.outcome }}" = success ] || { echo "FAIL: keyless agent smoke"; failed=1; }
           exit "$failed"
+
+  linux-gates-baseline:
+    # Attribution, not verification: the same gate on the unpatched base tag, so every failure
+    # in the patched run can be classified as ours or as pre-existing on this runner.
+    name: same gate on the unpatched base tag (attribution)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    continue-on-error: true
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/share/swift /opt/ghc /usr/local/lib/android \
+            /usr/local/share/boost /opt/hostedtoolcache/CodeQL || true
+          df -h / | tail -1
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Clone the base tag without any patch
+        run: |
+          git clone --branch "$BASE_TAG" --depth 1 \
+            https://github.com/deepseek-ai/deepseek-harness.git "$UPSTREAM_DIR"
+          git -C "$UPSTREAM_DIR" log --oneline -1
+          git -C "$UPSTREAM_DIR" status --porcelain
+
+      - name: Install dependencies and prepare bubblewrap
+        working-directory: ${{ env.UPSTREAM_DIR }}
+        run: |
+          pnpm install --frozen-lockfile &
+          install_pid=$!
+          bash scripts/prepare-ci-bubblewrap.sh &
+          sandbox_pid=$!
+          install_status=0
+          wait "$install_pid" || install_status=$?
+          sandbox_status=0
+          wait "$sandbox_pid" || sandbox_status=$?
+          if [ "$install_status" -ne 0 ]; then exit "$install_status"; fi
+          exit "$sandbox_status"
+
+      - name: Baseline Linux primary gate (unpatched)
+        id: baseline
+        continue-on-error: true
+        working-directory: ${{ env.UPSTREAM_DIR }}
+        env:
+          NO_COLOR: 1
+        run: |
+          set -o pipefail
+          pnpm run check:ci:linux-primary 2>&1 | tee linux-gates-baseline.log
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-gates-baseline-logs
+          path: upstream/linux-gates-baseline.log
+          if-no-files-found: warn
+
+      - name: Baseline summary
+        if: always()
+        run: |
+          echo "unpatched base tag gate: ${{ steps.baseline.outcome }}"
+          tail -20 upstream/linux-gates-baseline.log 2>/dev/null || true
