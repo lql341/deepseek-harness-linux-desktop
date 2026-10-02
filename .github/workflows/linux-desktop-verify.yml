@@ -464,12 +464,26 @@ jobs:
           if [ "$install_status" -ne 0 ]; then exit "$install_status"; fi
           exit "$sandbox_status"
 
+      - name: Install Playwright browsers
+        # The web snapshot gates launch a real browser; upstream installs these before the gate.
+        working-directory: ${{ env.UPSTREAM_DIR }}
+        run: pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install chromium webkit
+
       - name: Upstream Linux primary gate
         id: gate
         continue-on-error: true
         working-directory: ${{ env.UPSTREAM_DIR }}
         env:
           NO_COLOR: 1
+          # Upstream runs this aggregate serially. Without it the oxlint contract gate deletes its
+          # temporary client file while the typecheck gate is reading it (TS6053), and a four-core
+          # runner turns the heavy suites into timeouts.
+          DSH_GATE_CONCURRENCY: '1'
+          DSH_COVERAGE_MAX_WORKERS: '1'
+          DSH_E2E_MAX_WORKERS: '1'
+          DSH_OXLINT_THREADS: '2'
+          DSH_PUBLINT_CONCURRENCY: '1'
+          DSH_SNAPSHOT_MAX_CONCURRENCY: '1'
         run: |
           set -o pipefail
           pnpm run check:ci:linux-primary 2>&1 | tee linux-gates.log
@@ -587,12 +601,23 @@ jobs:
           if [ "$install_status" -ne 0 ]; then exit "$install_status"; fi
           exit "$sandbox_status"
 
+      - name: Install Playwright browsers
+        working-directory: ${{ env.UPSTREAM_DIR }}
+        run: pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install chromium webkit
+
       - name: Baseline Linux primary gate (unpatched)
         id: baseline
         continue-on-error: true
         working-directory: ${{ env.UPSTREAM_DIR }}
         env:
           NO_COLOR: 1
+          # Identical posture to the patched run, so the two are comparable.
+          DSH_GATE_CONCURRENCY: '1'
+          DSH_COVERAGE_MAX_WORKERS: '1'
+          DSH_E2E_MAX_WORKERS: '1'
+          DSH_OXLINT_THREADS: '2'
+          DSH_PUBLINT_CONCURRENCY: '1'
+          DSH_SNAPSHOT_MAX_CONCURRENCY: '1'
         run: |
           set -o pipefail
           pnpm run check:ci:linux-primary 2>&1 | tee linux-gates-baseline.log
