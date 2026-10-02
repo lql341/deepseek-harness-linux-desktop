@@ -118,6 +118,10 @@ else
     ls -la "$ART" 2>/dev/null
     echo; echo "-- launcher --"; ls -l "$APP/DeepSeek Harness" 2>/dev/null || echo "launcher missing"
     echo; echo "-- asar --"; ls -l "$APP/resources/app.asar" 2>/dev/null || echo "app.asar missing"
+    # The dsh payload is asar-unpacked: app.asar is an archive file, not a directory.
+    echo; echo "-- bundled dsh payload --"
+    test -f "$APP/resources/app.asar.unpacked/dsh/package.json" \
+      && echo "app.asar.unpacked/dsh/package.json present" || echo "MISSING app.asar.unpacked/dsh/package.json"
     echo; echo "-- linux native packages --"
     for p in node-pty sharp-linux koffi-linux ripgrep-linux node-addon-system-linux sherpa-onnx-linux libreoffice-kit-wasm; do
       printf '%-32s' "$p"
@@ -131,7 +135,7 @@ else
 
   step "L3 headless runtime smoke"
   BIN="$APP/DeepSeek Harness"; [ -x "$BIN" ] || BIN="$APP/deepseek-harness"
-  HOSTCLI="$APP/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js"
+  HOSTCLI="$APP/resources/app.asar.unpacked/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js"
   if [ -x "$BIN" ] && [ -f "$HOSTCLI" ]; then
     ELECTRON_RUN_AS_NODE=1 "$BIN" --expose-internals "$HOSTCLI" --version >"$LOGROOT/32-runtime-smoke.log" 2>&1
     if [ $? -eq 0 ]; then pass "bundled runtime responds"; else fail "bundled runtime smoke (see 32-runtime-smoke.log)"; fi

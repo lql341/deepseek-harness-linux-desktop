@@ -166,11 +166,15 @@ jobs:
           DSH_DESKTOP_TARGET_ARCH: x64
 
       - name: Inspect the unpacked application
+        # The bundled dsh payload is asar-unpacked, so its files live under
+        # resources/app.asar.unpacked/dsh. app.asar itself is an archive *file*, not a
+        # directory, so a probe of app.asar/dsh/... can only ever report MISSING.
         working-directory: ${{ env.UPSTREAM_DIR }}
         run: |
           set -uo pipefail
           ARTIFACTS="apps/desktop/.desktop-build/targets/linux-x64/artifacts"
           APP="$ARTIFACTS/linux-unpacked"
+          FAILED=0
           {
             echo "== artifact directory =="
             ls -la "$ARTIFACTS" || true
@@ -179,25 +183,60 @@ jobs:
             ls -la "$APP" | head -30 || true
             echo
             echo "== launcher =="
-            ls -l "$APP/DeepSeek Harness" 2>/dev/null || ls -l "$APP"/deepseek-harness 2>/dev/null || echo "MISSING launcher"
+            LAUNCHER="$APP/DeepSeek Harness"
+            [ -x "$LAUNCHER" ] || LAUNCHER="$APP/deepseek-harness"
+            if [ -x "$LAUNCHER" ]; then
+              ls -l "$LAUNCHER"
+            else
+              echo "MISSING launcher (no executable launcher in $APP)"; FAILED=1
+            fi
             echo
             echo "== bundled runtime present =="
-            test -f "$APP/resources/app.asar" && echo "app.asar present" || echo "MISSING app.asar"
-            test -f "$APP/resources/app.asar/dsh/package.json" && echo "app.asar/dsh/package.json present" || echo "MISSING app.asar/dsh"
+            if [ -f "$APP/resources/app.asar" ]; then
+              echo "app.asar present"
+            else
+              echo "MISSING app.asar"; FAILED=1
+            fi
+            if [ -f "$APP/resources/app.asar.unpacked/dsh/package.json" ]; then
+              echo "app.asar.unpacked/dsh/package.json present"
+            else
+              echo "MISSING app.asar.unpacked/dsh/package.json"; FAILED=1
+            fi
             echo
             echo "== Linux native packages in the unpacked tree =="
             for p in node-pty sharp-linux koffi-linux ripgrep-linux node-addon-system-linux sherpa-onnx-linux libreoffice-kit-wasm; do
               printf '%-32s' "$p"
-              find "$APP/resources" -maxdepth 6 -name "*${p}*" -print -quit 2>/dev/null | grep -q . && echo "present" || echo "MISSING"
+              if find "$APP/resources" -maxdepth 6 -name "*${p}*" -print -quit 2>/dev/null | grep -q .; then
+                echo "present"
+              else
+                echo "MISSING"; FAILED=1
+              fi
             done
             echo
-            echo "== darwin/windows leftovers (should be empty) =="
-            find "$APP/resources" -maxdepth 6 \( -name "*-darwin-*" -o -name "*-win32-*" -o -name "*.dll" -o -name "*.exe" \) 2>/dev/null | head -20 || true
+            echo "== foreign-platform files outside the bundled pnpm payload (must be empty) =="
+            FOREIGN=$(find "$APP/resources" -maxdepth 6 \
+              \( -name "*-darwin-*" -o -name "*-win32-*" -o -name "*.dll" -o -name "*.exe" \) \
+              2>/dev/null | grep -v '/resources/runtime/pnpm/' | head -20 || true)
+            if [ -n "$FOREIGN" ]; then
+              echo "$FOREIGN"; echo "UNEXPECTED foreign-platform files in the application payload"; FAILED=1
+            else
+              echo "(none)"
+            fi
+            echo
+            # resources/runtime/pnpm is a verbatim copy of the published pnpm package
+            # (prepare-runtime.ts cpSyncs the whole package directory), so it carries its
+            # own cross-platform vendored helpers on every platform. The shipped macOS
+            # build contains exactly the same files; they are informational, not leakage.
+            echo "== the same names inside the bundled pnpm payload (expected, informational) =="
+            find "$APP/resources/runtime/pnpm" -maxdepth 6 \
+              \( -name "*-darwin-*" -o -name "*-win32-*" -o -name "*.dll" -o -name "*.exe" \) \
+              2>/dev/null | head -10 || true
             echo
             echo "== linux node-pty prebuild =="
             find "$APP/resources" -path "*node-pty*prebuilds*" -maxdepth 8 2>/dev/null | head -10 || true
           } > inspection.log 2>&1
           cat inspection.log
+          exit "$FAILED"
 
       - name: Headless runtime smoke (no display needed)
         working-directory: ${{ env.UPSTREAM_DIR }}
@@ -206,16 +245,25 @@ jobs:
           APP="apps/desktop/.desktop-build/targets/linux-x64/artifacts/linux-unpacked"
           BIN="$APP/DeepSeek Harness"
           [ -x "$BIN" ] || BIN="$APP/deepseek-harness"
-          HOST_CLI="$APP/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js"
+          # The payload is asar-unpacked (see the inspection step above).
+          HOST_CLI="$APP/resources/app.asar.unpacked/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js"
+          rc=0
           {
             echo "SMOKE: binary=$BIN"
             echo "SMOKE: host cli=$HOST_CLI"
-            if [ ! -x "$BIN" ]; then echo "SMOKE RESULT: FAIL (no launcher)"; exit 0; fi
-            if [ ! -f "$HOST_CLI" ]; then echo "SMOKE RESULT: FAIL (no bundled host cli)"; exit 0; fi
-            ELECTRON_RUN_AS_NODE=1 "$BIN" --expose-internals "$HOST_CLI" --version 2>&1 | tail -20
-            echo "SMOKE RESULT: exit=${PIPESTATUS[0]}"
+            if [ ! -x "$BIN" ]; then echo "SMOKE RESULT: FAIL (no launcher)"; rc=1; fi
+            if [ ! -f "$HOST_CLI" ]; then echo "SMOKE RESULT: FAIL (no bundled host cli)"; rc=1; fi
+            if [ "$rc" -eq 0 ]; then
+              ELECTRON_RUN_AS_NODE=1 "$BIN" --expose-internals "$HOST_CLI" --version 2>&1 | tail -20
+              status=${PIPESTATUS[0]}
+              echo "SMOKE RESULT: exit=$status"
+              if [ "$status" -ne 0 ]; then rc=1; fi
+            fi
           } > smoke.log 2>&1
           cat smoke.log
+          # A failed smoke must fail the job: the previous revision exited 0 from inside
+          # the group, so a missing payload still reported a green step.
+          exit "$rc"
 
       - name: GUI smoke under Xvfb (best effort)
         working-directory: ${{ env.UPSTREAM_DIR }}
