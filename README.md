@@ -9,14 +9,15 @@ Upstream ships macOS and Windows only — its own `apps/desktop/README.md` state
 path up.
 
 > **Status: Linux x64 verified on ubuntu-24.04 (GitHub Actions) and locally.**
-> The eleven-patch series applies cleanly to the upstream tag and has been compiled, packaged,
+> The twelve-patch series applies cleanly to the upstream tag and has been compiled, packaged,
 > and smoke-tested on Ubuntu 24.04 x86_64. The verified build produced both an AppImage and a
 > deb; the AppImage was also started from its self-extracting mode because the authors' host
-> does not have `libfuse.so.2`. `patches/0009`–`0011` fix what the first real Linux runs
+> does not have `libfuse.so.2`. `patches/0009`–`0012` fix what the first real Linux runs
 > surfaced: a `TS2339` failure in the typecheck, a `dsh` launcher that could never find its
-> payload, and an upload-plan error message that dropped the environment name.
+> payload, an upload-plan error message that dropped the environment name, and four style /
+> repository-reference errors that upstream's own Linux gate rejects.
 
-Base: upstream tag **`dsh-v0.2.0-rc.2`** (commit `639ed0153972`), 11 patches.
+Base: upstream tag **`dsh-v0.2.0-rc.2`** (commit `639ed0153972`), 12 patches.
 
 ---
 
@@ -98,7 +99,7 @@ export SRC="${SRC:-$HOME/src/deepseek-harness}"
 sh "$PATCH_REPO/apply.sh" "$SRC"
 
 # --- prove the patches landed ---------------------------------------------
-[ "$(git -C "$SRC" rev-parse HEAD^{tree})" = "afb9af5fce4f383a49facd29c75671a0def0fcb1" ] \
+[ "$(git -C "$SRC" rev-parse HEAD^{tree})" = "5103892b735d996d9180605f73e5477bc84a894f" ] \
   || { echo "FAIL: patched tree hash mismatch"; exit 1; }
 [ -f "$SRC/apps/desktop/.env.linux" ] || { echo "FAIL: .env.linux missing"; exit 1; }
 
@@ -140,7 +141,7 @@ sh "$PATCH_REPO/apply.sh" "$SRC"
 ```
 
 `apply.sh` clones upstream at tag `dsh-v0.2.0-rc.2`, creates branch `linux-desktop`, runs
-`git am` on all 11 patches, and copies `.env.linux.example` to `.env.linux` (the packaging
+`git am` on all 12 patches, and copies `.env.linux.example` to `.env.linux` (the packaging
 code requires that file and aborts without it).
 
 Success conditions — all four must hold:
@@ -149,7 +150,7 @@ Success conditions — all four must hold:
 git -C "$SRC" log --oneline | head -1
 #   expect: "fix(desktop): declare the Linux installer config fields"
 git -C "$SRC" rev-parse HEAD^{tree}
-#   expect: afb9af5fce4f383a49facd29c75671a0def0fcb1
+#   expect: 5103892b735d996d9180605f73e5477bc84a894f
 git -C "$SRC" status --porcelain      # expect: empty
 test -f "$SRC/apps/desktop/.env.linux" && echo env-ok
 ```
@@ -284,9 +285,9 @@ With the default version these are
 Verified:
 
 - The series applies cleanly on `dsh-v0.2.0-rc.2`; after `git am` the resulting tree hash is
-  `afb9af5fce4f383a49facd29c75671a0def0fcb1`, with no leftover changes.
+  `5103892b735d996d9180605f73e5477bc84a894f`, with no leftover changes.
 - `apply.sh` ran end to end under a C locale with no git identity configured: fresh shallow
-  clone → 11 patches → `.env.linux` created → exit 0.
+  clone → 12 patches → `.env.linux` created → exit 0.
 - Every changed file passes a syntax check; all native dependencies were resolved against the
   npm registry (Linux variants exist, `node-pty` ships `linux-x64/arm64` prebuilds).
 - `check:package` passed, and the official Linux build passed runtime preparation, Office
@@ -300,7 +301,7 @@ Verified:
   and `/usr/bin/deepseek-harness` resolves through the expected alternatives entry.
 - The packaged application started successfully and exposed its local `dsh web` endpoint.
 - **GitHub Actions on `ubuntu-24.04`** (workflow `Linux desktop verification`, dispatch run
-  `37000258154`, 2026-10-02): clean clone → 11 patches → `pnpm install --frozen-lockfile` →
+  `37000258154`, 2026-10-02): clean clone → 12 patches → `pnpm install --frozen-lockfile` →
   `pnpm run typecheck` → `apps/desktop` build → `check:package` → `package:linux:x64:dir` →
   artifact inspection → headless runtime smoke → Xvfb GUI smoke → AppImage + deb → deb
   install/exercise/uninstall → AppImage boot → desktop suite baseline, every step green.
@@ -322,6 +323,24 @@ Verified:
   not built on Linux. The two other files that failed before — `cli-launcher.spec.ts`
   (our launcher regression, fixed by `patches/0010`) and `desktop-upload-plan.spec.ts`
   (`patches/0011`) — now pass.
+- **Upstream's own Linux gate**, `pnpm run check:ci:linux-primary` (run `37042752808`, serial and
+  with Playwright browsers): 78 of 80 gates pass on the patched tree, against 79 of 80 on the
+  unpatched base tag under identical settings. Neither remaining failure is ours:
+  `web browser snapshot` fails the same way on the unpatched tag on this runner (the browsers
+  install, the runner lacks their system libraries), and one flaky test in
+  `scripts/persistence-schema.spec.ts` — a file the series never touches — passed on the
+  base-tag run and varied 0/1/8 failures across runs. `patches/0012` fixed the two gate
+  failures that were ours: four oxlint style errors and a commit-hash reference that
+  `verify-repository-references` rejects.
+- **Sandbox confinement on a real kernel**: the bwrap leg (2 files) and the Landlock leg
+  (2 files) both pass, and each leg is asserted to have *run* rather than self-skipped — the
+  Landlock files force the bwrap rung off, so each proves exactly one mechanism.
+- **A keyless agent turn**: `apps/cli/tests/profiles/headless/tests/keyless-smoke.e2e.ts`
+  boots the real Loader tree with no API key, runs the production `bash` tool, asserts the
+  `tool/call` → `tool/result` round trip (`CLI_TOOL_ROUND_TRIP`) and that the turn is persisted
+  as zstd JSONL. Together with `scripts/smoke-runtime.ts` this covers the toolchain on Linux:
+  PTY, FFI (koffi), sharp, ripgrep, glob, the bundled pnpm and Python, and real
+  DOCX/XLSX/PPTX→PDF conversion through the bundled Office engine with `PATH` emptied.
 - The first real Linux typecheck failed the whole repository (`pnpm run typecheck`, exit 2) on
   `apps/desktop/tests/installer-packaging.spec.ts` with three `TS2339`s — `Property 'linux'`
   and `Property 'deb'` do not exist on `DesktopElectronBuilderConfig`. The hand-written
@@ -366,7 +385,7 @@ Not verified in this environment:
 ## 10. Layout, license, attribution
 
 ```
-patches/0001..0011*.patch   git format-patch series, applied in file-name order
+patches/0001..0012*.patch   git format-patch series, applied in file-name order
 apply.sh                    clone upstream at the base tag, apply the series, create .env.linux
 LINUX-DESKTOP.md            long-form guide: per-file notes, verified facts, open items
 LICENSE                     MIT (upstream DeepSeek + this patch set)

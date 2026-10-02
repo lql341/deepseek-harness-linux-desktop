@@ -159,6 +159,28 @@ pnpm --dir apps/desktop run package:linux:x64
 `apps/desktop/tests/macos-notarization-proxy.spec.ts` 守的是 macOS 专属功能
 （`proxy recovery requires macOS`），其 `flock` 插件在 Linux 上不构建 —— 属预期的基线差异。
 
+**上游自己的 Linux 门禁**（`pnpm run check:ci:linux-primary`，run `37042752808`；串行 + 装好
+Playwright 浏览器）：打过补丁 78/80 通过，未打补丁的上游 tag 同样设置下 79/80。剩下两项都不是
+本补丁集引入的：
+
+- `web browser snapshot`：在**未打补丁**的 tag 上同样失败 —— 浏览器装上了，但 runner 缺它们依赖的
+  系统库（`Host system is missing dependencies to run browsers`）。
+- `scripts/persistence-schema.spec.ts` 里 1 个 flaky 用例（该文件本补丁集从未改动）：基线那轮通过，
+  多次运行的失败数在 0/1/8 之间波动。
+
+`patches/0012` 修掉了其中**属于我们**的两处门禁失败：4 个 oxlint 风格错误（单引号、内联类型分号）
+和 `apps/desktop/LINUX.md` 里的 commit-hash 引用（`verify-repository-references` 只接受 tag/长期链接）。
+
+**沙箱与 agent 工具调用**（同样在 CI 里真实执行）：
+
+- 沙箱两条腿分别**真跑**（不是自跳过）：bwrap 腿 2 个文件通过、Landlock 腿 2 个文件通过 —— Landlock
+  用例会强制关掉 bwrap 档位，所以每条腿各自证明一种机制。
+- 无凭据 agent 回合：`apps/cli/tests/profiles/headless/tests/keyless-smoke.e2e.ts` 启动**真 Loader**、
+  跑**生产 bash 工具**，断言 `tool/call → tool/result`（`CLI_TOOL_ROUND_TRIP`）并把回合以 zstd JSONL
+  落盘。
+- 打包链自带的运行时冒烟另外覆盖了：PTY、FFI(koffi)、sharp、ripgrep、glob、随包 pnpm 与 Python，
+  以及把 `PATH` 清空后用随包 Office 引擎做真实的 DOCX/XLSX/PPTX→PDF 转换。
+
 本次验证覆盖的运行时检查与仍建议确认的项目（标 ✅ 的在上述 ubuntu-24.04 CI 中已确认）：
 
 1. ✅ `@electron/get` 拉到的 `electron-v44-linux-x64.zip` 解包后，根目录二进制是否确实叫 `electron`
