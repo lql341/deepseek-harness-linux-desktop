@@ -144,11 +144,20 @@ pnpm --dir apps/desktop run package:linux:x64
 
 ## 7. 本补丁集仍未验证什么
 
-本机已经完成 Linux x64 编译、runtime 准备、AppImage/deb 打包和基础启动验证。以下项目仍需要在目标桌面环境或安装后的系统上确认：
+本机已经完成 Linux x64 编译、runtime 准备、AppImage/deb 打包和基础启动验证；ubuntu-24.04 CI
+另外把 **deb 安装/运行/卸载**、**AppImage 无 FUSE 启动**和**桌面测试套件基线**也跑完了。
+以下项目仍需要在目标桌面环境上确认：
 
 - 桌面环境相关的窗口控件观感；
-- 安装 deb 后的 XDG 深链注册，以及安装后的 `dsh` 命令 PATH 行为；
-- 桌面测试套件在 Linux 上的基线差异。
+- 托盘/通知等在真实桌面会话里的表现（CI 只覆盖打包后的运行时，不覆盖正在运行的桌面）。
+
+已在 CI 中确认：安装 deb 后 `xdg-mime query default x-scheme-handler/dsh` 返回
+`deepseek-harness.desktop`，`/usr/bin/deepseek-harness` 经 `update-alternatives` 指向
+`/opt/DeepSeek Harness/deepseek-harness`，命令管理器装出的 `~/.local/bin/dsh` 可直接跑
+`dsh --version`（输出 `0.2.0-rc.2`），卸载后无残留。桌面测试套件在 Linux 上
+**128 个文件 123 个通过**（1357 passed / 58 skipped），唯一失败的
+`apps/desktop/tests/macos-notarization-proxy.spec.ts` 守的是 macOS 专属功能
+（`proxy recovery requires macOS`），其 `flock` 插件在 Linux 上不构建 —— 属预期的基线差异。
 
 本次验证覆盖的运行时检查与仍建议确认的项目（标 ✅ 的在上述 ubuntu-24.04 CI 中已确认）：
 

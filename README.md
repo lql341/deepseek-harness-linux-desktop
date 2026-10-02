@@ -300,10 +300,28 @@ Verified:
   and `/usr/bin/deepseek-harness` resolves through the expected alternatives entry.
 - The packaged application started successfully and exposed its local `dsh web` endpoint.
 - **GitHub Actions on `ubuntu-24.04`** (workflow `Linux desktop verification`, dispatch run
-  `36982274054`): clean clone → 9 patches → `pnpm install --frozen-lockfile` →
+  `37000258154`, 2026-10-02): clean clone → 11 patches → `pnpm install --frozen-lockfile` →
   `pnpm run typecheck` → `apps/desktop` build → `check:package` → `package:linux:x64:dir` →
-  artifact inspection → headless runtime smoke → Xvfb GUI smoke → AppImage + deb, every step
-  green.
+  artifact inspection → headless runtime smoke → Xvfb GUI smoke → AppImage + deb → deb
+  install/exercise/uninstall → AppImage boot → desktop suite baseline, every step green.
+- **The deb works end to end on the runner.** `apt-get install` reports `Status: install ok
+  installed`; `update-alternatives` points `/usr/bin/deepseek-harness` at
+  `/opt/DeepSeek Harness/deepseek-harness`; `xdg-mime query default x-scheme-handler/dsh`
+  answers `deepseek-harness.desktop`; the installed binary runs as Electron 44 / Node 24;
+  `resources/runtime/cli/bin/dsh --version` prints `0.2.0-rc.2`; the packaged command manager
+  installs `~/.local/bin/dsh` and `dsh --version` works from `PATH`; removal and
+  `apt-get remove` both leave nothing behind. (`patches/0010` is what makes the launcher
+  reachable at all — before it, every run printed `dsh: the … payload is missing`.)
+- **The AppImage boots without FUSE.** `--appimage-extract-and-run` (also the Ubuntu 23.10+
+  path) serves `dsh web: http://127.0.0.1:<port>` for the full 40 s window with no
+  `desktop policy: unsupported platform` rejection; the artifact is an ELF 64-bit x86-64
+  executable.
+- **Desktop suite baseline on Linux**: 123 of 128 files pass (1357 tests passed, 58 skipped).
+  The single failing file is `apps/desktop/tests/macos-notarization-proxy.spec.ts`, which
+  guards a macOS-only feature (`proxy recovery requires macOS`) and whose `flock` helper is
+  not built on Linux. The two other files that failed before — `cli-launcher.spec.ts`
+  (our launcher regression, fixed by `patches/0010`) and `desktop-upload-plan.spec.ts`
+  (`patches/0011`) — now pass.
 - The first real Linux typecheck failed the whole repository (`pnpm run typecheck`, exit 2) on
   `apps/desktop/tests/installer-packaging.spec.ts` with three `TS2339`s — `Property 'linux'`
   and `Property 'deb'` do not exist on `DesktopElectronBuilderConfig`. The hand-written
@@ -327,8 +345,8 @@ Not verified in this environment:
 - Electron's `titleBarOverlay` appearance per desktop environment; window drag/resize and
   caption sizing in both themes.
 - End-to-end handling of a `dsh://` deep link by a running desktop session.
-- The desktop test suite, which upstream never ran on Linux and which may have pre-existing
-  failures there. Run it once on the unpatched tag to get a baseline before comparing.
+- Desktop integration itself (tray, notifications, window controls in a real session); the
+  suite above covers the packaged runtime, not a running desktop.
 
 ## 9. Known limits
 
