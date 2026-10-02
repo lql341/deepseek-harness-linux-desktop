@@ -293,6 +293,87 @@ jobs:
           DSH_DESKTOP_TARGET_PLATFORM: linux
           DSH_DESKTOP_TARGET_ARCH: x64
 
+      - name: Install the deb and exercise the installed command
+        # Everything a real host does: install, register the deep link, run the GUI binary as a
+        # Node runtime, run the staged launcher, install `dsh` the way the app does, use it from
+        # PATH, remove it, uninstall.
+        working-directory: ${{ env.UPSTREAM_DIR }}
+        run: |
+          set -euo pipefail
+          ART="apps/desktop/.desktop-build/targets/linux-x64/artifacts"
+          DEB=$(ls "$ART"/*.deb | head -1)
+          PACKAGE=$(dpkg-deb -f "$DEB" Package)
+          ls -l "$DEB"
+          sudo apt-get install -y "$PWD/$DEB"
+          dpkg -s "$PACKAGE" | sed -n '1,8p'
+          APP_DIR=$(dpkg -L "$PACKAGE" | sed -n 's#^\(/opt/[^/]*\)/resources/app\.asar$#\1#p' | head -1)
+          echo "DEB-E2E: installed under $APP_DIR"
+          test -d "$APP_DIR"
+
+          echo "== what the package put on PATH =="
+          ls -l /usr/bin/deepseek-harness
+          readlink "$(command -v deepseek-harness)" || true
+
+          echo "== desktop entry and dsh:// registration =="
+          ls /usr/share/applications/
+          xdg-mime query default x-scheme-handler/dsh
+          HANDLER=$(xdg-mime query default x-scheme-handler/dsh)
+          test -n "$HANDLER" || { echo "DEB-E2E: dsh:// is not registered"; exit 1; }
+
+          echo "== the installed binary really is an Electron runtime =="
+          ELECTRON_RUN_AS_NODE=1 /usr/bin/deepseek-harness -p 'process.versions.node + " node / electron " + process.versions.electron'
+
+          echo "== the staged launcher must reach the payload inside app.asar =="
+          "$APP_DIR/resources/runtime/cli/bin/dsh" --version
+
+          echo "== install ~/.local/bin/dsh the way the app does, then run it from PATH =="
+          MANAGER="$APP_DIR/resources/runtime/cli/command-manager.js"
+          STATE=$(ELECTRON_RUN_AS_NODE=1 /usr/bin/deepseek-harness "$MANAGER" inspect)
+          echo "$STATE"
+          FINGERPRINT=$(printf '%s' "$STATE" | python3 -c 'import json,sys;print(json.load(sys.stdin)["state"]["fingerprint"])')
+          test -n "$FINGERPRINT"
+          ELECTRON_RUN_AS_NODE=1 /usr/bin/deepseek-harness "$MANAGER" install "$FINGERPRINT"
+          ls -l "$HOME/.local/bin/dsh"
+          PATH="$HOME/.local/bin:$PATH" dsh --version
+
+          echo "== remove it again =="
+          ELECTRON_RUN_AS_NODE=1 /usr/bin/deepseek-harness "$MANAGER" remove "$FINGERPRINT"
+          test ! -e "$HOME/.local/bin/dsh"
+
+          echo "== uninstall the package =="
+          sudo apt-get remove -y "$PACKAGE"
+          test ! -e /usr/bin/deepseek-harness
+          test ! -d "$APP_DIR"
+          echo "DEB-E2E: OK"
+
+      - name: AppImage smoke (no FUSE: --appimage-extract-and-run)
+        working-directory: ${{ env.UPSTREAM_DIR }}
+        run: |
+          set -euo pipefail
+          ART="apps/desktop/.desktop-build/targets/linux-x64/artifacts"
+          APPIMAGE=$(ls "$ART"/*.AppImage | head -1)
+          ls -l "$APPIMAGE"
+          file "$APPIMAGE" || true
+          echo "== the runner ships no libfuse, so this is also the Ubuntu 23.10+ path =="
+          ./"$APPIMAGE" --appimage-version || true
+          set +e
+          timeout 40 xvfb-run -a ./"$APPIMAGE" --appimage-extract-and-run --no-sandbox --enable-logging > appimage-smoke.log 2>&1
+          echo "APPIMAGE exit=$? (124 = it ran the full 40s)"
+          set -e
+          head -25 appimage-smoke.log || true
+          grep -q "transient AppImage mount" appimage-smoke.log && { echo "the shell refused the AppImage mount"; exit 1; }
+          grep -qi "unsupported platform" appimage-smoke.log && { echo "desktop policy rejected the platform"; exit 1; }
+          grep -q "dsh web: http" appimage-smoke.log || { echo "the AppImage never served its endpoint"; exit 1; }
+          echo "APPIMAGE-SMOKE: OK"
+
+      - name: Desktop test suite on Linux (informational baseline)
+        # Upstream never ran this suite on Linux; record the baseline instead of gating on it.
+        working-directory: ${{ env.UPSTREAM_DIR }}
+        continue-on-error: true
+        run: |
+          pnpm exec vitest run apps/desktop > desktop-tests.log 2>&1 || echo "DESKTOP-TESTS: failures recorded (no Linux baseline upstream)"
+          tail -60 desktop-tests.log
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -302,6 +383,8 @@ jobs:
             upstream/smoke.log
             upstream/gui-smoke.log
             upstream/package-formats.log
+            upstream/appimage-smoke.log
+            upstream/desktop-tests.log
           if-no-files-found: warn
 
       - uses: actions/upload-artifact@v4
