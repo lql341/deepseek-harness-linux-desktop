@@ -381,7 +381,10 @@ jobs:
         working-directory: ${{ env.UPSTREAM_DIR }}
         continue-on-error: true
         run: |
-          pnpm exec vitest run apps/desktop > desktop-tests.log 2>&1 || echo "DESKTOP-TESTS: failures recorded (no Linux baseline upstream)"
+          # The repository's own `test` script builds the native system addon first; running
+          # vitest alone fails macos-notarization-proxy on "flock addon is not built".
+          { pnpm run build:native-system && pnpm exec vitest run apps/desktop; } > desktop-tests.log 2>&1 \
+            || echo "DESKTOP-TESTS: failures recorded (no Linux baseline upstream)"
           tail -60 desktop-tests.log
 
       - uses: actions/upload-artifact@v4

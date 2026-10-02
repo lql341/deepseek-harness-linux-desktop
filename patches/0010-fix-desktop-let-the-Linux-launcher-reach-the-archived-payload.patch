@@ -1,4 +1,4 @@
-From b25a88f97bcc015531dfbb7b03155ef0bac9ba43 Mon Sep 17 00:00:00 2001
+From e9ef5d14b71cb7e4724237c55f264c658c76da86 Mon Sep 17 00:00:00 2001
 From: Codex <codex@localhost>
 Date: Fri, 2 Oct 2026 17:19:35 +0800
 Subject: [PATCH] fix(desktop): let the Linux launcher reach the archived dsh
@@ -19,24 +19,25 @@ app.asar, so the suite never exercised the real layout. Check the archive itself
 Electron runtime report a missing entry point, and add a regression case that lays app.asar
 out as a file and asserts the launcher hands the archive path to the runtime.
 ---
- apps/desktop/cli/dsh-linux              |  7 +++++--
+ apps/desktop/cli/dsh-linux              |  8 ++++++--
  apps/desktop/tests/cli-launcher.spec.ts | 12 ++++++++++++
- 2 files changed, 17 insertions(+), 2 deletions(-)
+ 2 files changed, 18 insertions(+), 2 deletions(-)
 
 diff --git a/apps/desktop/cli/dsh-linux b/apps/desktop/cli/dsh-linux
-index 36c9a6d..47f6e6a 100644
+index 36c9a6d..1c818ae 100644
 --- a/apps/desktop/cli/dsh-linux
 +++ b/apps/desktop/cli/dsh-linux
-@@ -26,11 +26,14 @@ case "$root" in
+@@ -26,11 +26,15 @@ case "$root" in
      exit 1
      ;;
  esac
 -host=$resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js
 -if [ ! -f "$host" ]; then
-+# app.asar is an archive file, so a shell test cannot see the payload inside it: check the
-+# archive itself and let the Electron runtime report a missing entry point.
++# app.asar is an archive file, so a shell test cannot see the payload inside it: check that the
++# archive itself is there (-e, because staged trees and test fixtures may use a directory) and
++# let the Electron runtime report a missing entry point.
 +archive=$resources/app.asar
-+if [ ! -f "$archive" ]; then
++if [ ! -e "$archive" ]; then
    echo "dsh: the DeepSeek Harness Desktop payload is missing under $resources" >&2
    exit 1
  fi

@@ -9,14 +9,14 @@ Upstream ships macOS and Windows only — its own `apps/desktop/README.md` state
 path up.
 
 > **Status: Linux x64 verified on ubuntu-24.04 (GitHub Actions) and locally.**
-> The nine-patch series applies cleanly to the upstream tag and has been compiled, packaged,
+> The eleven-patch series applies cleanly to the upstream tag and has been compiled, packaged,
 > and smoke-tested on Ubuntu 24.04 x86_64. The verified build produced both an AppImage and a
 > deb; the AppImage was also started from its self-extracting mode because the authors' host
-> does not have `libfuse.so.2`. `patches/0009` fixes a `TS2339` failure that the first real
-> Linux typecheck surfaced, and the bundled-runtime smoke now reads the payload from inside
-> `app.asar` through the shipped Electron binary.
+> does not have `libfuse.so.2`. `patches/0009`–`0011` fix what the first real Linux runs
+> surfaced: a `TS2339` failure in the typecheck, a `dsh` launcher that could never find its
+> payload, and an upload-plan error message that dropped the environment name.
 
-Base: upstream tag **`dsh-v0.2.0-rc.2`** (commit `639ed0153972`), 9 patches.
+Base: upstream tag **`dsh-v0.2.0-rc.2`** (commit `639ed0153972`), 11 patches.
 
 ---
 
@@ -98,7 +98,7 @@ export SRC="${SRC:-$HOME/src/deepseek-harness}"
 sh "$PATCH_REPO/apply.sh" "$SRC"
 
 # --- prove the patches landed ---------------------------------------------
-[ "$(git -C "$SRC" rev-parse HEAD^{tree})" = "922bcf8ef7e2667793918843a8ad949f84cf5188" ] \
+[ "$(git -C "$SRC" rev-parse HEAD^{tree})" = "afb9af5fce4f383a49facd29c75671a0def0fcb1" ] \
   || { echo "FAIL: patched tree hash mismatch"; exit 1; }
 [ -f "$SRC/apps/desktop/.env.linux" ] || { echo "FAIL: .env.linux missing"; exit 1; }
 
@@ -140,7 +140,7 @@ sh "$PATCH_REPO/apply.sh" "$SRC"
 ```
 
 `apply.sh` clones upstream at tag `dsh-v0.2.0-rc.2`, creates branch `linux-desktop`, runs
-`git am` on all 9 patches, and copies `.env.linux.example` to `.env.linux` (the packaging
+`git am` on all 11 patches, and copies `.env.linux.example` to `.env.linux` (the packaging
 code requires that file and aborts without it).
 
 Success conditions — all four must hold:
@@ -149,7 +149,7 @@ Success conditions — all four must hold:
 git -C "$SRC" log --oneline | head -1
 #   expect: "fix(desktop): declare the Linux installer config fields"
 git -C "$SRC" rev-parse HEAD^{tree}
-#   expect: 922bcf8ef7e2667793918843a8ad949f84cf5188
+#   expect: afb9af5fce4f383a49facd29c75671a0def0fcb1
 git -C "$SRC" status --porcelain      # expect: empty
 test -f "$SRC/apps/desktop/.env.linux" && echo env-ok
 ```
@@ -284,9 +284,9 @@ With the default version these are
 Verified:
 
 - The series applies cleanly on `dsh-v0.2.0-rc.2`; after `git am` the resulting tree hash is
-  `922bcf8ef7e2667793918843a8ad949f84cf5188`, with no leftover changes.
+  `afb9af5fce4f383a49facd29c75671a0def0fcb1`, with no leftover changes.
 - `apply.sh` ran end to end under a C locale with no git identity configured: fresh shallow
-  clone → 9 patches → `.env.linux` created → exit 0.
+  clone → 11 patches → `.env.linux` created → exit 0.
 - Every changed file passes a syntax check; all native dependencies were resolved against the
   npm registry (Linux variants exist, `node-pty` ships `linux-x64/arm64` prebuilds).
 - `check:package` passed, and the official Linux build passed runtime preparation, Office
@@ -348,7 +348,7 @@ Not verified in this environment:
 ## 10. Layout, license, attribution
 
 ```
-patches/0001..0009*.patch   git format-patch series, applied in file-name order
+patches/0001..0011*.patch   git format-patch series, applied in file-name order
 apply.sh                    clone upstream at the base tag, apply the series, create .env.linux
 LINUX-DESKTOP.md            long-form guide: per-file notes, verified facts, open items
 LICENSE                     MIT (upstream DeepSeek + this patch set)

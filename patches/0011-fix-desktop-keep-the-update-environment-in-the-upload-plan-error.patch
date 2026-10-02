@@ -1,0 +1,33 @@
+From 106194d4feff9b682c09d110b128c1ba1d284f4a Mon Sep 17 00:00:00 2001
+From: Codex <codex@localhost>
+Date: Fri, 2 Oct 2026 19:16:46 +0800
+Subject: [PATCH] fix(desktop): keep the update environment in the upload-plan
+ error
+
+Adding the linux-x64 upload target made the update destination optional, and the wording
+lost the environment name while it was being made optional. The upstream test pins that text:
+
+    expected [Function] to throw error matching /completion record.*test/u
+    received 'desktop upload: mac-x64 package completion record for 1.2.3 does not match the update destination'
+
+Report the environment again (falling back to "expected" for Linux, which has no feed).
+---
+ apps/desktop/scripts/desktop-upload-plan.ts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/apps/desktop/scripts/desktop-upload-plan.ts b/apps/desktop/scripts/desktop-upload-plan.ts
+index ff0585f..61b2b44 100644
+--- a/apps/desktop/scripts/desktop-upload-plan.ts
++++ b/apps/desktop/scripts/desktop-upload-plan.ts
+@@ -214,7 +214,7 @@ export async function createDesktopUploadPlan(
+   }
+   if (buildRecord.schemaVersion !== 1 || buildRecord.target !== targetName
+     || (update !== undefined && (buildRecord.environment !== update.environment || buildRecord.publicUrl !== update.publicUrl))) {
+-    throw new Error(`desktop upload: ${targetName} package completion record for ${buildVersion} does not match the update destination`)
++    throw new Error(`desktop upload: ${targetName} package completion record for ${buildVersion} does not match the ${update?.environment ?? 'expected'} update destination`)
+   }
+ 
+   // Linux has no COS upload path in this series. The package itself is still validated by the
+-- 
+2.54.0 (Apple Git-157)
+
