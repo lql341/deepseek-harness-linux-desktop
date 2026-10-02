@@ -346,7 +346,7 @@ jobs:
           test ! -d "$APP_DIR"
           echo "DEB-E2E: OK"
 
-      - name: AppImage smoke (no FUSE: --appimage-extract-and-run)
+      - name: "AppImage smoke (no FUSE: --appimage-extract-and-run)"
         working-directory: ${{ env.UPSTREAM_DIR }}
         run: |
           set -euo pipefail
