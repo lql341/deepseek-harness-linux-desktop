@@ -9,12 +9,12 @@ Upstream ships macOS and Windows only — its own `apps/desktop/README.md` state
 path up.
 
 > **Status: Linux x64 verified locally.**
-> The seven-patch series applies cleanly to the upstream tag and has been compiled, packaged,
+> The eight-patch series applies cleanly to the upstream tag and has been compiled, packaged,
 > and smoke-tested on Linux x86_64. The verified build produced both an AppImage and a deb;
 > the AppImage was also started from its self-extracting mode because this host does not have
 > `libfuse.so.2`.
 
-Base: upstream tag **`dsh-v0.2.0-rc.2`** (commit `639ed0153972`), 7 patches.
+Base: upstream tag **`dsh-v0.2.0-rc.2`** (commit `639ed0153972`), 8 patches.
 
 ---
 
@@ -96,7 +96,7 @@ export SRC="${SRC:-$HOME/src/deepseek-harness}"
 sh "$PATCH_REPO/apply.sh" "$SRC"
 
 # --- prove the patches landed ---------------------------------------------
-[ "$(git -C "$SRC" rev-parse HEAD^{tree})" = "80bf70a93174843c435dca070e8777f812389f75" ] \
+[ "$(git -C "$SRC" rev-parse HEAD^{tree})" = "d9ac693689b84c9524b24f612d26be822128221e" ] \
   || { echo "FAIL: patched tree hash mismatch"; exit 1; }
 [ -f "$SRC/apps/desktop/.env.linux" ] || { echo "FAIL: .env.linux missing"; exit 1; }
 
@@ -138,7 +138,7 @@ sh "$PATCH_REPO/apply.sh" "$SRC"
 ```
 
 `apply.sh` clones upstream at tag `dsh-v0.2.0-rc.2`, creates branch `linux-desktop`, runs
-`git am` on all 7 patches, and copies `.env.linux.example` to `.env.linux` (the packaging
+`git am` on all 8 patches, and copies `.env.linux.example` to `.env.linux` (the packaging
 code requires that file and aborts without it).
 
 Success conditions — all four must hold:
@@ -147,7 +147,7 @@ Success conditions — all four must hold:
 git -C "$SRC" log --oneline | head -1
 #   expect: "docs(desktop): describe the Linux build and its known limits"
 git -C "$SRC" rev-parse HEAD^{tree}
-#   expect: 80bf70a93174843c435dca070e8777f812389f75
+#   expect: d9ac693689b84c9524b24f612d26be822128221e
 git -C "$SRC" status --porcelain      # expect: empty
 test -f "$SRC/apps/desktop/.env.linux" && echo env-ok
 ```
@@ -216,7 +216,7 @@ without it, artifacts carry the upstream product version.
 xvfb-run -a "$ARTIFACTS/linux-unpacked/DeepSeek Harness"
 
 # Or install the deb (also what makes the dsh command usable, see §9):
-sudo apt install ./"$ARTIFACTS"/deepseek-harness-*-linux-x64.deb
+sudo apt install "$ARTIFACTS"/deepseek-harness-*-linux-amd64.deb
 dpkg -L deepseek-harness | grep -E '/(bin|opt)/'    # find the installed executable
 # then launch it from the desktop menu, or run the path printed above (quote it: it contains a space)
 ```
@@ -251,15 +251,15 @@ Everything is written under `apps/desktop/.desktop-build/targets/linux-x64/`:
 | Path | Contents |
 |---|---|
 | `artifacts/linux-unpacked/` | unpacked application (from `:dir`); executable `DeepSeek Harness` |
-| `artifacts/deepseek-harness-<version>-linux-x64.AppImage` | AppImage |
-| `artifacts/deepseek-harness-<version>-linux-x64.deb` | Debian package |
+| `artifacts/deepseek-harness-<version>-linux-x86_64.AppImage` | AppImage |
+| `artifacts/deepseek-harness-<version>-linux-amd64.deb` | Debian package |
 | `runtime/` | prepared Electron + pnpm + launcher for this target |
 | `dsh/` | the bundled `dsh` runtime tree that becomes `app.asar/dsh` |
 | `package-set/`, `downloads/` | intermediate package set and downloaded archives |
 | `packaging-runs/` | per-run logs and the release record |
 
 With the default version these are
-`deepseek-harness-0.2.0-rc.2-linux-x64.AppImage` and `…-linux-x64.deb`.
+`deepseek-harness-0.2.0-rc.2-linux-x86_64.AppImage` and `…-linux-amd64.deb`.
 
 ## 7. Failure triage
 
@@ -282,9 +282,9 @@ With the default version these are
 Verified:
 
 - The series applies cleanly on `dsh-v0.2.0-rc.2`; after `git am` the resulting tree hash is
-  `bb2f6aacd6657cd732935ce7d97bc707839e190c`, with no leftover changes.
+  `d9ac693689b84c9524b24f612d26be822128221e`, with no leftover changes.
 - `apply.sh` ran end to end under a C locale with no git identity configured: fresh shallow
-  clone → 7 patches → `.env.linux` created → exit 0.
+  clone → 8 patches → `.env.linux` created → exit 0.
 - Every changed file passes a syntax check; all native dependencies were resolved against the
   npm registry (Linux variants exist, `node-pty` ships `linux-x64/arm64` prebuilds).
 - `check:package` passed, and the official Linux build passed runtime preparation, Office
@@ -292,15 +292,17 @@ Verified:
 - The resulting artifacts were `deepseek-harness-0.2.0-rc.2-linux-x86_64.AppImage` and
   `deepseek-harness-0.2.0-rc.2-linux-amd64.deb`; the deb metadata and contents were inspected.
 - The Linux installer uses the Debian-safe executable name `deepseek-harness`; its generated
-  `postinst` registers that name with `update-alternatives` instead of using the display name.
+  `postinst` registers that name with `update-alternatives` instead of using the display name,
+  and removes the legacy `/usr/bin/DeepSeek Harness` symlink during upgrades.
+- The deb installed successfully on Debian/Ubuntu via `apt`; dpkg reports `install ok installed`
+  and `/usr/bin/deepseek-harness` resolves through the expected alternatives entry.
 - The packaged application started successfully and exposed its local `dsh web` endpoint.
 
 Not verified in this environment:
 
 - Electron's `titleBarOverlay` appearance per desktop environment; window drag/resize and
   caption sizing in both themes.
-- XDG deep-link association after installing the deb; the deb itself was inspected but not
-  installed system-wide.
+- End-to-end handling of a `dsh://` deep link by a running desktop session.
 - The desktop test suite, which upstream never ran on Linux and which may have pre-existing
   failures there. Run it once on the unpatched tag to get a baseline before comparing.
 
@@ -322,14 +324,16 @@ Not verified in this environment:
 ## 10. Layout, license, attribution
 
 ```
-patches/0001..0005*.patch   git format-patch series, applied in file-name order
+patches/0001..0008*.patch   git format-patch series, applied in file-name order
 apply.sh                    clone upstream at the base tag, apply the series, create .env.linux
 LINUX-DESKTOP.md            long-form guide: per-file notes, verified facts, open items
 LICENSE                     MIT (upstream DeepSeek + this patch set)
 ```
 
 Each patch is one topic: (1) accept the target, (2) install the `dsh` command,
-(3) prepare the Linux runtime payload, (4) macOS-like shell behaviour, (5) documentation.
+(3) prepare the Linux runtime payload, (4) macOS-like shell behaviour, (5) documentation,
+(6) packaging type declarations, (7) Debian-safe executable naming, and (8) legacy launcher
+cleanup during upgrades.
 
 This patch set is distributed under the MIT License (see `LICENSE`). The patches are diffs
 against [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness),
