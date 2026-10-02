@@ -2,6 +2,10 @@
 
 > 本文档对应的 Linux x64 路径已在本机实际编译、打包并启动验证。验证产物为 AppImage
 > 和 deb；当前主机缺少 `libfuse.so.2`，AppImage 使用自解压运行模式完成启动检查。
+> 另在 **ubuntu-24.04** 的 GitHub Actions（workflow `Linux desktop verification`，
+> dispatch run `36982274054`）上完整跑通：9 个补丁 → `pnpm install` → `pnpm run typecheck` →
+> 应用构建 → `check:package` → `package:linux:x64:dir` → 产物体检 → 无头 runtime 冒烟 →
+> Xvfb GUI 冒烟 → AppImage + deb，全部绿色。
 
 > 基线：上游 `deepseek-ai/deepseek-harness` tag **`dsh-v0.2.0-rc.2`**（commit `639ed0153972`）。
 > 目标：在 Linux x64 上得到与 macOS 版**行为一致**的 Electron 桌面壳，产物为 AppImage + deb。
@@ -146,16 +150,28 @@ pnpm --dir apps/desktop run package:linux:x64
 - 安装 deb 后的 XDG 深链注册，以及安装后的 `dsh` 命令 PATH 行为；
 - 桌面测试套件在 Linux 上的基线差异。
 
-本次验证覆盖的运行时检查与仍建议确认的项目：
+本次验证覆盖的运行时检查与仍建议确认的项目（标 ✅ 的在上述 ubuntu-24.04 CI 中已确认）：
 
-1. `@electron/get` 拉到的 `electron-v44-linux-x64.zip` 解包后，根目录二进制是否确实叫 `electron`
+1. ✅ `@electron/get` 拉到的 `electron-v44-linux-x64.zip` 解包后，根目录二进制是否确实叫 `electron`
    （`prepare-runtime.ts` 的 Linux 分支按此假设；改名只影响这一处）。
-2. `pnpm install --prod` 之后，Linux 运行时树里确实有 `@deepseek-ai/libreoffice-kit-wasm`、
+2. ✅ `pnpm install --prod` 之后，Linux 运行时树里确实有 `@deepseek-ai/libreoffice-kit-wasm`、
    `node-addon-system-linux-x64`、`koffi-linux-x64`、`sharp-linux-x64`、`ripgrep-linux-x64`、
-   `sherpa-onnx-linux-x64`，且没有 darwin/win32 残留。
-3. `prepare:dsh` 的 `runtime:materialize-modules` 之后，WASM 引擎的 `prebuilds.json` 是否在位，
+   `sherpa-onnx-linux-x64`，且没有 darwin/win32 残留（`resources/runtime/pnpm` 里 pnpm 自带的
+   跨平台 vendored 文件除外 —— 已发布的 macOS 版里同样存在）。
+3. ✅ `prepare:dsh` 的 `runtime:materialize-modules` 之后，WASM 引擎的 `prebuilds.json` 是否在位，
    以及 `officePackageDirectories` 是否把 `libreoffice-kit-wasm` 目录正确加进 `asarUnpack`。
 4. `~/.local/bin` 是否在你的 PATH 里（不在的话装上也不会生效，本期不额外提示）。
 5. 桌面测试套件：`cli-launcher.spec.ts` 等文件原本按"非 win32 即 darwin"搭 fixture，仓库也从未把
    Linux 当发布目标，所以在 Linux 主机上跑测试**可能存在基线失败**。建议先在未打补丁的 tag 上跑一遍
    留基线，再对比补丁后的失败集合。
+
+两条与冒烟直接相关的结论（都是首轮 CI 暴露、已修）：
+
+- 仓库级 `pnpm run typecheck` 在 Linux 上首次真跑就失败：`apps/desktop/tests/installer-packaging.spec.ts`
+  第 88–90 行三处 `TS2339`（`DesktopElectronBuilderConfig` 上没有 `linux` / `deb`）。
+  手写声明 `apps/desktop/electron-builder.config.d.mts` 没跟着 Linux 目标扩展，`patches/0009` 补上后通过。
+- dsh payload **在 `app.asar` 内部**（`asarUnpack` 只放 `.node`/`.so`、ripgrep、libreoffice-kit、
+  landlock-run）。因此**不能用 shell 的 `test -f` 去戳 `app.asar/dsh/...`**，那必然报缺失；
+  正确做法是把 asar 路径交给随包的 Electron（它给 `fs` 打了 asar 补丁），
+  `ELECTRON_RUN_AS_NODE=1 <launcher> --expose-internals <app.asar>/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js --version`
+  在 ubuntu-24.04 上输出 `0.2.0-rc.2`、退出码 0。

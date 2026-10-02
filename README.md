@@ -8,13 +8,15 @@ Upstream ships macOS and Windows only — its own `apps/desktop/README.md` state
 `linux-x64` target must be rejected. This repository is the set of diffs that opens that
 path up.
 
-> **Status: Linux x64 verified locally.**
-> The eight-patch series applies cleanly to the upstream tag and has been compiled, packaged,
-> and smoke-tested on Linux x86_64. The verified build produced both an AppImage and a deb;
-> the AppImage was also started from its self-extracting mode because this host does not have
-> `libfuse.so.2`.
+> **Status: Linux x64 verified on ubuntu-24.04 (GitHub Actions) and locally.**
+> The nine-patch series applies cleanly to the upstream tag and has been compiled, packaged,
+> and smoke-tested on Ubuntu 24.04 x86_64. The verified build produced both an AppImage and a
+> deb; the AppImage was also started from its self-extracting mode because the authors' host
+> does not have `libfuse.so.2`. `patches/0009` fixes a `TS2339` failure that the first real
+> Linux typecheck surfaced, and the bundled-runtime smoke now reads the payload from inside
+> `app.asar` through the shipped Electron binary.
 
-Base: upstream tag **`dsh-v0.2.0-rc.2`** (commit `639ed0153972`), 8 patches.
+Base: upstream tag **`dsh-v0.2.0-rc.2`** (commit `639ed0153972`), 9 patches.
 
 ---
 
@@ -96,7 +98,7 @@ export SRC="${SRC:-$HOME/src/deepseek-harness}"
 sh "$PATCH_REPO/apply.sh" "$SRC"
 
 # --- prove the patches landed ---------------------------------------------
-[ "$(git -C "$SRC" rev-parse HEAD^{tree})" = "d9ac693689b84c9524b24f612d26be822128221e" ] \
+[ "$(git -C "$SRC" rev-parse HEAD^{tree})" = "922bcf8ef7e2667793918843a8ad949f84cf5188" ] \
   || { echo "FAIL: patched tree hash mismatch"; exit 1; }
 [ -f "$SRC/apps/desktop/.env.linux" ] || { echo "FAIL: .env.linux missing"; exit 1; }
 
@@ -138,16 +140,16 @@ sh "$PATCH_REPO/apply.sh" "$SRC"
 ```
 
 `apply.sh` clones upstream at tag `dsh-v0.2.0-rc.2`, creates branch `linux-desktop`, runs
-`git am` on all 8 patches, and copies `.env.linux.example` to `.env.linux` (the packaging
+`git am` on all 9 patches, and copies `.env.linux.example` to `.env.linux` (the packaging
 code requires that file and aborts without it).
 
 Success conditions — all four must hold:
 
 ```sh
 git -C "$SRC" log --oneline | head -1
-#   expect: "docs(desktop): describe the Linux build and its known limits"
+#   expect: "fix(desktop): declare the Linux installer config fields"
 git -C "$SRC" rev-parse HEAD^{tree}
-#   expect: d9ac693689b84c9524b24f612d26be822128221e
+#   expect: 922bcf8ef7e2667793918843a8ad949f84cf5188
 git -C "$SRC" status --porcelain      # expect: empty
 test -f "$SRC/apps/desktop/.env.linux" && echo env-ok
 ```
@@ -282,9 +284,9 @@ With the default version these are
 Verified:
 
 - The series applies cleanly on `dsh-v0.2.0-rc.2`; after `git am` the resulting tree hash is
-  `d9ac693689b84c9524b24f612d26be822128221e`, with no leftover changes.
+  `922bcf8ef7e2667793918843a8ad949f84cf5188`, with no leftover changes.
 - `apply.sh` ran end to end under a C locale with no git identity configured: fresh shallow
-  clone → 8 patches → `.env.linux` created → exit 0.
+  clone → 9 patches → `.env.linux` created → exit 0.
 - Every changed file passes a syntax check; all native dependencies were resolved against the
   npm registry (Linux variants exist, `node-pty` ships `linux-x64/arm64` prebuilds).
 - `check:package` passed, and the official Linux build passed runtime preparation, Office
@@ -297,6 +299,28 @@ Verified:
 - The deb installed successfully on Debian/Ubuntu via `apt`; dpkg reports `install ok installed`
   and `/usr/bin/deepseek-harness` resolves through the expected alternatives entry.
 - The packaged application started successfully and exposed its local `dsh web` endpoint.
+- **GitHub Actions on `ubuntu-24.04`** (workflow `Linux desktop verification`, dispatch run
+  `36982274054`): clean clone → 9 patches → `pnpm install --frozen-lockfile` →
+  `pnpm run typecheck` → `apps/desktop` build → `check:package` → `package:linux:x64:dir` →
+  artifact inspection → headless runtime smoke → Xvfb GUI smoke → AppImage + deb, every step
+  green.
+- The first real Linux typecheck failed the whole repository (`pnpm run typecheck`, exit 2) on
+  `apps/desktop/tests/installer-packaging.spec.ts` with three `TS2339`s — `Property 'linux'`
+  and `Property 'deb'` do not exist on `DesktopElectronBuilderConfig`. The hand-written
+  declaration in `electron-builder.config.d.mts` was never extended for the Linux target;
+  `patches/0009` fixes it and the typecheck then passes.
+- The bundled runtime answers from inside the archive:
+  `ELECTRON_RUN_AS_NODE=1 <launcher> --expose-internals resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js --version`
+  prints `0.2.0-rc.2` and exits 0. The payload lives **inside** `app.asar`; `asarUnpack` holds
+  only the `.node`/`.so` binaries, ripgrep, the libreoffice kit and the Landlock launcher, so a
+  shell test on that path can never succeed.
+- The Linux native set is complete in the unpacked tree (`node-pty`, `sharp-linux`,
+  `koffi-linux`, `ripgrep-linux`, `node-addon-system-linux`, `sherpa-onnx-linux`,
+  `libreoffice-kit-wasm`) and there are no darwin/win32 leftovers outside
+  `resources/runtime/pnpm`. That directory is a verbatim copy of the published pnpm package and
+  carries the same cross-platform vendored helpers in the shipped macOS build.
+- Under Xvfb the shell boots and serves its local endpoint (`dsh web: http://127.0.0.1:<port>`)
+  with no `desktop policy: unsupported platform` rejection.
 
 Not verified in this environment:
 
@@ -324,7 +348,7 @@ Not verified in this environment:
 ## 10. Layout, license, attribution
 
 ```
-patches/0001..0008*.patch   git format-patch series, applied in file-name order
+patches/0001..0009*.patch   git format-patch series, applied in file-name order
 apply.sh                    clone upstream at the base tag, apply the series, create .env.linux
 LINUX-DESKTOP.md            long-form guide: per-file notes, verified facts, open items
 LICENSE                     MIT (upstream DeepSeek + this patch set)
