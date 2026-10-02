@@ -1,0 +1,44 @@
+From 5f0abec9c16d320481a7ce97d99420d32240921f Mon Sep 17 00:00:00 2001
+From: Codex <codex@localhost>
+Date: Fri, 2 Oct 2026 15:01:24 +0800
+Subject: [PATCH] fix(desktop): declare the Linux installer config fields
+
+The first real Linux typecheck (Ubuntu 24.04, `pnpm run typecheck`) fails on
+the Linux packaging test:
+
+    apps/desktop/tests/installer-packaging.spec.ts(88,19): error TS2339:
+    Property 'linux' does not exist on type 'DesktopElectronBuilderConfig'.
+    apps/desktop/tests/installer-packaging.spec.ts(89,19): error TS2339:
+    Property 'deb' does not exist on type 'DesktopElectronBuilderConfig'.
+    apps/desktop/tests/installer-packaging.spec.ts(90,32): error TS2339:
+    Property 'deb' does not exist on type 'DesktopElectronBuilderConfig'.
+
+apps/desktop/electron-builder.config.d.mts is the hand-written declaration
+the desktop tests and scripts type against; it still described only the
+macOS and Windows fields, so adding the Linux target never extended it.
+Declare the two fields the packaging test asserts, next to the macOS and
+Windows siblings they mirror.
+---
+ apps/desktop/electron-builder.config.d.mts | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/apps/desktop/electron-builder.config.d.mts b/apps/desktop/electron-builder.config.d.mts
+index 4e978ec..3c04365 100644
+--- a/apps/desktop/electron-builder.config.d.mts
++++ b/apps/desktop/electron-builder.config.d.mts
+@@ -44,6 +44,12 @@ export interface DesktopElectronBuilderConfig {
+       readonly signingHashAlgorithms: readonly string[]
+     }
+   }
++  readonly linux: {
++    readonly executableName: string
++  }
++  readonly deb: {
++    readonly afterInstall: string
++  }
+   readonly nsis: {
+     readonly include: string
+     readonly oneClick: false
+-- 
+2.54.0 (Apple Git-157)
+
