@@ -1,0 +1,61 @@
+From 5240b5989877b58e73134634214ba3587a663d87 Mon Sep 17 00:00:00 2001
+From: Codex <codex@localhost>
+Date: Sat, 3 Oct 2026 00:49:26 +0800
+Subject: [PATCH] fix(desktop): satisfy the upstream repository gates
+
+Upstream's own Linux gate aggregate (pnpm run check:ci:linux-primary) failed on this tree in
+three places, all of them ours:
+
+    apps/desktop/tests/installer-packaging.spec.ts:90  @stylistic(quotes) singlequote
+    apps/desktop/tests/cli-launcher.spec.ts:78 x3      @stylistic(member-delimiter-style)
+    apps/desktop/LINUX.md:3                            verify-repository-references: commit-hash
+
+Use single quotes, terminate the inline type members and reference the release tag instead of the
+base commit hash.
+---
+ apps/desktop/LINUX.md                          | 2 +-
+ apps/desktop/tests/cli-launcher.spec.ts        | 2 +-
+ apps/desktop/tests/installer-packaging.spec.ts | 2 +-
+ 3 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/apps/desktop/LINUX.md b/apps/desktop/LINUX.md
+index 16ce8c2..176e659 100644
+--- a/apps/desktop/LINUX.md
++++ b/apps/desktop/LINUX.md
+@@ -1,6 +1,6 @@
+ # DeepSeek Harness Desktop — Linux（mac-like）移植补丁集
+ 
+-> 基线：上游 `deepseek-ai/deepseek-harness` tag **`dsh-v0.2.0-rc.2`**（commit `639ed0153972`）。
++> 基线：上游 `deepseek-ai/deepseek-harness` tag **`dsh-v0.2.0-rc.2`**。
+ > 目标：在 Linux x64 上得到与 macOS 版**行为一致**的 Electron 桌面壳，产物为 AppImage + deb。
+ > 性质：非官方补丁集。上游 README 明确写有 “Linux is not a supported Desktop release target”，
+ > 且打包脚本的测试断言 `linux-x64` 必须被拒绝 —— 本补丁集就是把这层限制打开并把 Linux 路径补齐。
+diff --git a/apps/desktop/tests/cli-launcher.spec.ts b/apps/desktop/tests/cli-launcher.spec.ts
+index 30076cf..a612767 100644
+--- a/apps/desktop/tests/cli-launcher.spec.ts
++++ b/apps/desktop/tests/cli-launcher.spec.ts
+@@ -75,7 +75,7 @@ function fixture() {
+  * @param options - Mount directory prefix and the launcher branch under test.
+  * @returns The application directory, its resources and the installed command.
+  */
+-function linuxFixture(options: { mount?: boolean, payload?: boolean, executableName?: string, sandboxDecoy?: boolean } = {}) {
++function linuxFixture(options: { mount?: boolean; payload?: boolean; executableName?: string; sandboxDecoy?: boolean } = {}) {
+   const root = realpathSync(mkdtempSync(join(tmpdir(), options.mount === true ? '.mount_dsh-cli-' : 'dsh-cli-linux-')))
+   onTestFinished(() => rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }))
+   const application = join(root, 'Application 中文 with spaces')
+diff --git a/apps/desktop/tests/installer-packaging.spec.ts b/apps/desktop/tests/installer-packaging.spec.ts
+index 6f8ef50..bbfd938 100644
+--- a/apps/desktop/tests/installer-packaging.spec.ts
++++ b/apps/desktop/tests/installer-packaging.spec.ts
+@@ -87,7 +87,7 @@ describe('installer preparation preserves application dependencies', () => {
+     }, 'linux', 'x64')
+     expect(config.linux.executableName).toBe('deepseek-harness')
+     expect(config.deb.afterInstall).toMatch(/linux-after-install\.tpl$/u)
+-    expect(readFileSync(config.deb.afterInstall, 'utf8')).toContain("/usr/bin/DeepSeek Harness")
++    expect(readFileSync(config.deb.afterInstall, 'utf8')).toContain('/usr/bin/DeepSeek Harness')
+   })
+ 
+   it('packages every preload entry point the shell loads', async () => {
+-- 
+2.54.0 (Apple Git-157)
+
