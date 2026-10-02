@@ -166,9 +166,11 @@ jobs:
           DSH_DESKTOP_TARGET_ARCH: x64
 
       - name: Inspect the unpacked application
-        # The bundled dsh payload is asar-unpacked, so its files live under
-        # resources/app.asar.unpacked/dsh. app.asar itself is an archive *file*, not a
-        # directory, so a probe of app.asar/dsh/... can only ever report MISSING.
+        # app.asar is an archive *file*, not a directory, and the bundled dsh payload sits
+        # inside it (asarUnpack only holds .node/.so/.dll binaries, ripgrep, the
+        # libreoffice kit and the Landlock launcher). A shell test on app.asar/dsh/... can
+        # therefore only ever report MISSING, so the payload is probed through the shipped
+        # Electron runtime, which patches fs for asar.
         working-directory: ${{ env.UPSTREAM_DIR }}
         run: |
           set -uo pipefail
@@ -197,11 +199,10 @@ jobs:
             else
               echo "MISSING app.asar"; FAILED=1
             fi
-            if [ -f "$APP/resources/app.asar.unpacked/dsh/package.json" ]; then
-              echo "app.asar.unpacked/dsh/package.json present"
-            else
-              echo "MISSING app.asar.unpacked/dsh/package.json"; FAILED=1
-            fi
+            ELECTRON_RUN_AS_NODE=1 "$LAUNCHER" -e 'const fs=require("node:fs");let bad=0;for(const p of process.argv.slice(1)){const ok=fs.existsSync(p);if(!ok)bad++;console.log((ok?"present  ":"MISSING  ")+p)}process.exit(bad?1:0)' \
+              "$APP/resources/app.asar/dsh/package.json" \
+              "$APP/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js" \
+              || { echo "the bundled dsh payload is not readable inside app.asar"; FAILED=1; }
             echo
             echo "== Linux native packages in the unpacked tree =="
             for p in node-pty sharp-linux koffi-linux ripgrep-linux node-addon-system-linux sherpa-onnx-linux libreoffice-kit-wasm; do
@@ -245,14 +246,14 @@ jobs:
           APP="apps/desktop/.desktop-build/targets/linux-x64/artifacts/linux-unpacked"
           BIN="$APP/DeepSeek Harness"
           [ -x "$BIN" ] || BIN="$APP/deepseek-harness"
-          # The payload is asar-unpacked (see the inspection step above).
-          HOST_CLI="$APP/resources/app.asar.unpacked/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js"
+          # The payload lives inside app.asar, so there is no shell-visible file to test for:
+          # Electron resolves the archive path itself, exactly the way the app loads it.
+          HOST_CLI="$APP/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js"
           rc=0
           {
             echo "SMOKE: binary=$BIN"
             echo "SMOKE: host cli=$HOST_CLI"
             if [ ! -x "$BIN" ]; then echo "SMOKE RESULT: FAIL (no launcher)"; rc=1; fi
-            if [ ! -f "$HOST_CLI" ]; then echo "SMOKE RESULT: FAIL (no bundled host cli)"; rc=1; fi
             if [ "$rc" -eq 0 ]; then
               ELECTRON_RUN_AS_NODE=1 "$BIN" --expose-internals "$HOST_CLI" --version 2>&1 | tail -20
               status=${PIPESTATUS[0]}

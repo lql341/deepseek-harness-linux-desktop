@@ -118,10 +118,13 @@ else
     ls -la "$ART" 2>/dev/null
     echo; echo "-- launcher --"; ls -l "$APP/DeepSeek Harness" 2>/dev/null || echo "launcher missing"
     echo; echo "-- asar --"; ls -l "$APP/resources/app.asar" 2>/dev/null || echo "app.asar missing"
-    # The dsh payload is asar-unpacked: app.asar is an archive file, not a directory.
-    echo; echo "-- bundled dsh payload --"
-    test -f "$APP/resources/app.asar.unpacked/dsh/package.json" \
-      && echo "app.asar.unpacked/dsh/package.json present" || echo "MISSING app.asar.unpacked/dsh/package.json"
+    # app.asar is an archive file: a shell test cannot see inside it, so the bundled dsh
+    # payload is probed through the shipped Electron runtime, which patches fs for asar.
+    echo; echo "-- dsh payload inside app.asar (read through the shipped Electron) --"
+    PBIN="$APP/DeepSeek Harness"; [ -x "$PBIN" ] || PBIN="$APP/deepseek-harness"
+    ELECTRON_RUN_AS_NODE=1 "$PBIN" -e 'const fs=require("node:fs");for(const p of process.argv.slice(1))console.log((fs.existsSync(p)?"present  ":"MISSING  ")+p)' \
+      "$APP/resources/app.asar/dsh/package.json" \
+      "$APP/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js" 2>&1 || true
     echo; echo "-- linux native packages --"
     for p in node-pty sharp-linux koffi-linux ripgrep-linux node-addon-system-linux sherpa-onnx-linux libreoffice-kit-wasm; do
       printf '%-32s' "$p"
@@ -135,13 +138,14 @@ else
 
   step "L3 headless runtime smoke"
   BIN="$APP/DeepSeek Harness"; [ -x "$BIN" ] || BIN="$APP/deepseek-harness"
-  HOSTCLI="$APP/resources/app.asar.unpacked/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js"
-  if [ -x "$BIN" ] && [ -f "$HOSTCLI" ]; then
+  # The payload lives inside app.asar; Electron resolves the archive path itself.
+  HOSTCLI="$APP/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js"
+  if [ -x "$BIN" ]; then
     ELECTRON_RUN_AS_NODE=1 "$BIN" --expose-internals "$HOSTCLI" --version >"$LOGROOT/32-runtime-smoke.log" 2>&1
     if [ $? -eq 0 ]; then pass "bundled runtime responds"; else fail "bundled runtime smoke (see 32-runtime-smoke.log)"; fi
     cat "$LOGROOT/32-runtime-smoke.log" | tee -a "$LOGROOT/summary.txt"
   else
-    fail "runtime smoke skipped (launcher or bundled host cli missing)"
+    fail "runtime smoke skipped (no launcher)"
   fi
 
   step "L4 GUI smoke under Xvfb (best effort)"
