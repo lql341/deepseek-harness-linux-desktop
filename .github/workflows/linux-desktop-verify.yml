@@ -328,16 +328,26 @@ jobs:
 
           echo "== install ~/.local/bin/dsh the way the app does, then run it from PATH =="
           MANAGER="$APP_DIR/resources/runtime/cli/command-manager.js"
-          STATE=$(ELECTRON_RUN_AS_NODE=1 /usr/bin/deepseek-harness "$MANAGER" inspect)
+          # Every mutation is confirmed against the fingerprint the entry has right now, so the
+          # removal has to inspect again: the install necessarily changed the entry.
+          manage() {
+            # Keep the banner off stdout: the callers parse the JSON the worker prints.
+            echo "== command-manager $1 ==" >&2
+            ELECTRON_RUN_AS_NODE=1 /usr/bin/deepseek-harness "$MANAGER" "$1" ${2:+"$2"}
+          }
+          fingerprint() { python3 -c 'import json,sys;print(json.load(sys.stdin)["state"]["fingerprint"])'; }
+
+          STATE=$(manage inspect)
           echo "$STATE"
-          FINGERPRINT=$(printf '%s' "$STATE" | python3 -c 'import json,sys;print(json.load(sys.stdin)["state"]["fingerprint"])')
-          test -n "$FINGERPRINT"
-          ELECTRON_RUN_AS_NODE=1 /usr/bin/deepseek-harness "$MANAGER" install "$FINGERPRINT"
+          FP=$(printf '%s' "$STATE" | fingerprint)
+          test -n "$FP"
+          manage install "$FP"
           ls -l "$HOME/.local/bin/dsh"
           PATH="$HOME/.local/bin:$PATH" dsh --version
 
           echo "== remove it again =="
-          ELECTRON_RUN_AS_NODE=1 /usr/bin/deepseek-harness "$MANAGER" remove "$FINGERPRINT"
+          FP=$(manage inspect | fingerprint)
+          manage remove "$FP"
           test ! -e "$HOME/.local/bin/dsh"
 
           echo "== uninstall the package =="
