@@ -1,0 +1,72 @@
+From b25a88f97bcc015531dfbb7b03155ef0bac9ba43 Mon Sep 17 00:00:00 2001
+From: Codex <codex@localhost>
+Date: Fri, 2 Oct 2026 17:19:35 +0800
+Subject: [PATCH] fix(desktop): let the Linux launcher reach the archived dsh
+ payload
+
+The installed command is broken on every Linux package it ships in:
+
+    $ .../resources/runtime/cli/bin/dsh --version
+    dsh: the DeepSeek Harness Desktop payload is missing under .../resources
+
+app.asar is an archive *file*, so the shell test `[ -f "$host" ]` on a path inside it can
+never succeed. The payload really is in the archive (only the .node/.so binaries, ripgrep,
+the libreoffice kit and the Landlock launcher are asar-unpacked), which is why the macOS
+launcher, which has no such test, works.
+
+The unit fixture hid this: it writes the host CLI into a directory that it happens to name
+app.asar, so the suite never exercised the real layout. Check the archive itself and let the
+Electron runtime report a missing entry point, and add a regression case that lays app.asar
+out as a file and asserts the launcher hands the archive path to the runtime.
+---
+ apps/desktop/cli/dsh-linux              |  7 +++++--
+ apps/desktop/tests/cli-launcher.spec.ts | 12 ++++++++++++
+ 2 files changed, 17 insertions(+), 2 deletions(-)
+
+diff --git a/apps/desktop/cli/dsh-linux b/apps/desktop/cli/dsh-linux
+index 36c9a6d..47f6e6a 100644
+--- a/apps/desktop/cli/dsh-linux
++++ b/apps/desktop/cli/dsh-linux
+@@ -26,11 +26,14 @@ case "$root" in
+     exit 1
+     ;;
+ esac
+-host=$resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js
+-if [ ! -f "$host" ]; then
++# app.asar is an archive file, so a shell test cannot see the payload inside it: check the
++# archive itself and let the Electron runtime report a missing entry point.
++archive=$resources/app.asar
++if [ ! -f "$archive" ]; then
+   echo "dsh: the DeepSeek Harness Desktop payload is missing under $resources" >&2
+   exit 1
+ fi
++host=$archive/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js
+ # Electron reuses the application binary as its Node runtime; the packaged name depends on the builder.
+ executable=${DSH_DESKTOP_EXECUTABLE:-}
+ if [ -z "$executable" ] || [ ! -x "$executable" ]; then
+diff --git a/apps/desktop/tests/cli-launcher.spec.ts b/apps/desktop/tests/cli-launcher.spec.ts
+index 7893202..30076cf 100644
+--- a/apps/desktop/tests/cli-launcher.spec.ts
++++ b/apps/desktop/tests/cli-launcher.spec.ts
+@@ -141,6 +141,18 @@ it.runIf(process.platform === 'linux')('reports a missing Desktop payload', () =
+   expect(run.stderr).toContain('payload is missing')
+ })
+ 
++it.runIf(process.platform === 'linux')('hands the archived app.asar to the runtime instead of probing inside it', () => {
++  const f = linuxFixture({ payload: false })
++  // A real package keeps the dsh payload inside app.asar, which is an archive *file*: only the
++  // unpacked binaries sit beside it, so a shell test on app.asar/dsh/... can only ever fail.
++  writeFileSync(join(f.resources, 'app.asar'), '')
++  const shim = join(f.application, 'runtime-shim')
++  writeFileSync(shim, '#!/bin/sh\nprintf "%s\\n" "$@"\n', { mode: 0o755 })
++  const run = runCommand(f.command, ['--version'], { DSH_DESKTOP_EXECUTABLE: shim })
++  expect(run.status, run.stderr).toBe(0)
++  expect(run.stdout).toContain('app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js')
++})
++
+ it.runIf(process.platform === 'linux')('falls back to the largest executable beside the resources directory', () => {
+   const f = linuxFixture({ executableName: 'renamed-binary', sandboxDecoy: true })
+   const run = runCommand(f.command, [])
+-- 
+2.54.0 (Apple Git-157)
+
