@@ -884,6 +884,49 @@ jobs:
           if grep -qi "unsupported platform" /work/appimage.log; then echo "desktop policy rejected the platform"; exit 1; fi
           echo "DEBIAN-APPIMAGE: OK"
 
+      - name: Prepare bubblewrap and build the Landlock launcher
+        working-directory: /work/upstream
+        run: |
+          set -eux
+          apt-get install -y -qq --no-install-recommends bubblewrap musl-tools
+          bash scripts/prepare-ci-bubblewrap.sh || echo "pinned bubblewrap payload unavailable; using the distribution build"
+          bwrap --version
+          bwrap --ro-bind / / --dev /dev --unshare-pid --proc /proc --die-with-parent -- true || echo "bwrap cannot unshare here (container policy)"
+          pnpm --dir native/system run build:ts
+          pnpm --dir native/system run build:native
+
+      - name: Sandbox confinement on Debian (bwrap and Landlock legs)
+        working-directory: /work/upstream
+        env:
+          NO_COLOR: '1'
+        run: |
+          set -u +e -o pipefail
+          status=0
+          for leg in bwrap landlock; do
+            echo "== sandbox leg: $leg =="
+            out=$(pnpm exec vitest run --config vitest.e2e.config.ts \
+              "packages/sandbox/sandbox-local/tests/$leg.e2e.ts" \
+              "packages/shell/bash-sandbox/tests/$leg.e2e.ts" 2>&1) || status=1
+            echo "$out"
+            echo "$out" | grep -qE 'Test Files[[:space:]]+2 passed \(2\)' \
+              || { echo "SANDBOX($leg): the leg did not run both files"; status=1; }
+          done
+          exit "$status"
+
+      - name: Keyless agent turn on Debian
+        working-directory: /work/upstream
+        env:
+          NO_COLOR: '1'
+        run: |
+          set -u +e -o pipefail
+          pnpm run build || true
+          out=$(pnpm exec vitest run --config vitest.e2e.config.ts \
+            apps/cli/tests/profiles/headless/tests/keyless-smoke.e2e.ts 2>&1); status=$?
+          echo "$out"
+          echo "$out" | grep -qE 'Test Files[[:space:]]+1 passed \(1\)' \
+            || { echo "KEYLESS: the smoke did not run"; status=1; }
+          exit "$status"
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
