@@ -27,6 +27,10 @@ on:
         description: Also run the deb upgrade path and the AppArmor-hardened launch
         type: boolean
         default: true
+      run-wayland:
+        description: Also smoke the published deb under a headless Wayland compositor
+        type: boolean
+        default: true
   push:
     branches: [main]
     paths:
@@ -1026,4 +1030,65 @@ jobs:
           path: |
             hardened-session.log
             hardened/*.png
+          if-no-files-found: warn
+
+  wayland-smoke:
+    # Modern Ubuntu and Debian desktops default to Wayland, where Electron needs the ozone
+    # Wayland backend instead of X11. Every other job runs under an X server, so this is the only
+    # place that answers "does the packaged application start as a Wayland client".
+    name: Wayland session smoke (headless Weston, published deb)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.run-wayland }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download the published deb
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eux
+          mkdir -p rel
+          gh release download v0.2.0-rc.2-linux.2 -R "$GITHUB_REPOSITORY" -p '*.deb' -D rel
+          ls -l rel
+
+      - name: Install a headless compositor and the deb
+        run: |
+          set -eux
+          sudo apt-get update -q
+          sudo apt-get install -yq weston libglib2.0-bin
+          sudo apt-get install -yq ./rel/*.deb
+          dpkg -s deepseek-harness | sed -n '1,4p'
+
+      - name: Boot the installed application as a Wayland client
+        run: |
+          set -uo pipefail
+          export XDG_RUNTIME_DIR=/tmp/xdg-dsh
+          mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
+          weston --backend=headless-backend.so --no-config --socket=wayland-dsh \
+            --width=1280 --height=900 > weston.log 2>&1 &
+          WESTON_PID=$!
+          for _ in $(seq 1 20); do [ -S "$XDG_RUNTIME_DIR/wayland-dsh" ] && break; sleep 1; done
+          ls -l "$XDG_RUNTIME_DIR" || true
+          export WAYLAND_DISPLAY=wayland-dsh XDG_SESSION_TYPE=wayland
+          ELECTRON_OZONE_PLATFORM_HINT=wayland timeout 40 /usr/bin/deepseek-harness \
+            --ozone-platform=wayland --enable-logging > wayland-app.log 2>&1
+          echo "WAYLAND exit=$? (124 = it ran the full 40s)"
+          head -30 wayland-app.log
+          kill "$WESTON_PID" 2>/dev/null || true
+          grep -q "dsh web: http" wayland-app.log \
+            || { echo "WAYLAND: the application never served its endpoint"; exit 1; }
+          if grep -qi "unsupported platform" wayland-app.log; then
+            echo "WAYLAND: desktop policy rejected the platform"; exit 1
+          fi
+          grep -qiE "wayland" wayland-app.log || echo "note: no explicit wayland line in the log"
+          echo "WAYLAND-SMOKE: OK"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wayland-logs
+          path: |
+            weston.log
+            wayland-app.log
           if-no-files-found: warn
