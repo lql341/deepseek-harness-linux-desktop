@@ -19,6 +19,10 @@ on:
         description: Also verify the build chain and the deb on Debian 13 (trixie)
         type: boolean
         default: true
+      run-core:
+        description: Also run the Ubuntu jobs (typecheck, package, release-verify)
+        type: boolean
+        default: true
   push:
     branches: [main]
     paths:
@@ -38,6 +42,7 @@ jobs:
   typecheck:
     name: install + typecheck + package preflight
     runs-on: ubuntu-24.04
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.run-core }}
     timeout-minutes: 60
     steps:
       - name: Environment report
@@ -133,6 +138,7 @@ jobs:
     name: package --dir + artifact inspection + runtime smoke
     needs: typecheck
     runs-on: ubuntu-24.04
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.run-core }}
     timeout-minutes: 240
     steps:
       - name: Free disk space
@@ -669,6 +675,7 @@ jobs:
     # and dsh:// activation - then boot the published AppImage without FUSE.
     name: published artifacts - checksums, install, desktop session, AppImage
     runs-on: ubuntu-24.04
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.run-core }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -758,7 +765,7 @@ jobs:
           apt-get install -y -qq --no-install-recommends \
             ca-certificates curl git xz-utils python3 make g++ procps \
             libgtk-3-0 libnss3 libasound2t64 libxss1 libgbm1 libsecret-1-0 \
-            libnotify4 libappindicator3-1 xvfb xdg-utils file
+            libnotify4 libappindicator3-1 xvfb xauth xdg-utils file
 
       - name: Node 24 and pnpm 11.7.0
         run: |
