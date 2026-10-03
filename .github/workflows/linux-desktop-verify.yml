@@ -15,6 +15,10 @@ on:
         description: Also run the long upstream gate aggregates (patched and baseline)
         type: boolean
         default: true
+      run-debian:
+        description: Also verify the build chain and the deb on Debian 13 (trixie)
+        type: boolean
+        default: true
   push:
     branches: [main]
     paths:
@@ -727,4 +731,116 @@ jobs:
             gio-open.log
             xdg-open.log
             openbox.log
+          if-no-files-found: warn
+
+  debian-13:
+    # The port targets Debian as well as Ubuntu, and the two differ exactly where it matters here:
+    # glibc, the Electron system libraries, dpkg/apt behaviour and the desktop-entry database. Run
+    # the chain inside a Debian 13 (trixie) container rather than assuming the Ubuntu runner
+    # stands in for it.
+    name: Debian 13 (trixie) - build chain, deb install and runtime smoke
+    runs-on: ubuntu-24.04
+    container: debian:13
+    timeout-minutes: 240
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.run-debian }}
+    steps:
+      - name: Environment report
+        run: |
+          cat /etc/os-release | head -3
+          uname -a
+          ldd --version | head -1
+          df -h / | tail -1
+
+      - name: Base tooling
+        run: |
+          set -eux
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl git xz-utils python3 make g++ procps \
+            libgtk-3-0 libnss3 libasound2t64 libxss1 libgbm1 libsecret-1-0 \
+            libnotify4 libappindicator3-1 xvfb xdg-utils file
+
+      - name: Node 24 and pnpm 11.7.0
+        run: |
+          set -eux
+          curl -fsSL https://nodejs.org/dist/v24.9.0/node-v24.9.0-linux-x64.tar.xz -o /tmp/node.tar.xz
+          tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1
+          node -v
+          corepack enable
+          corepack prepare pnpm@11.7.0 --activate
+          pnpm -v
+
+      - name: Fetch the patch series, apply it and install dependencies
+        run: |
+          set -eux
+          git clone --depth 1 https://github.com/lql341/deepseek-harness-linux-desktop.git /work/patches
+          sh /work/patches/apply.sh /work/upstream
+          git -C /work/upstream rev-parse 'HEAD^{tree}'
+          cd /work/upstream
+          pnpm install --frozen-lockfile
+
+      - name: Typecheck on Debian
+        working-directory: /work/upstream
+        run: pnpm run typecheck 2>&1 | tee /work/typecheck.log
+
+      - name: Build the unpacked Linux application
+        working-directory: /work/upstream
+        env:
+          DSH_DESKTOP_TARGET_PLATFORM: linux
+          DSH_DESKTOP_TARGET_ARCH: x64
+        run: pnpm --dir apps/desktop run package:linux:x64:dir 2>&1 | tee /work/package-dir.log
+
+      - name: Inspect and smoke the unpacked tree
+        working-directory: /work/upstream
+        run: |
+          set -eux
+          APP=apps/desktop/.desktop-build/targets/linux-x64/artifacts/linux-unpacked
+          ls -l "$APP/deepseek-harness"
+          test -f "$APP/resources/app.asar"
+          ELECTRON_RUN_AS_NODE=1 "$APP/deepseek-harness" --expose-internals \
+            "$APP/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js" --version \
+            | tee /work/runtime-smoke.log
+
+      - name: Package the deb and AppImage
+        working-directory: /work/upstream
+        env:
+          DSH_DESKTOP_TARGET_PLATFORM: linux
+          DSH_DESKTOP_TARGET_ARCH: x64
+        run: |
+          pnpm --dir apps/desktop run package:linux:x64 2>&1 | tee /work/package-formats.log
+          ls -l apps/desktop/.desktop-build/targets/linux-x64/artifacts | tee -a /work/package-formats.log
+
+      - name: Install the deb on Debian and use it
+        working-directory: /work/upstream
+        run: |
+          set -eux
+          ART=apps/desktop/.desktop-build/targets/linux-x64/artifacts
+          apt-get install -y -qq "$PWD/$ART"/*.deb
+          dpkg -s deepseek-harness | sed -n '1,6p'
+          ls -l /usr/bin/deepseek-harness
+          xdg-mime query default x-scheme-handler/dsh
+          ELECTRON_RUN_AS_NODE=1 /usr/bin/deepseek-harness -p 'process.versions.node + " node / electron " + process.versions.electron'
+          "/opt/DeepSeek Harness/resources/runtime/cli/bin/dsh" --version
+          apt-get remove -y deepseek-harness
+          test ! -e /usr/bin/deepseek-harness
+
+      - name: AppImage boot on Debian (no FUSE)
+        working-directory: /work/upstream
+        run: |
+          set -uo pipefail
+          APPIMAGE=$(ls apps/desktop/.desktop-build/targets/linux-x64/artifacts/*.AppImage | head -1)
+          chmod +x "$APPIMAGE"
+          set +e
+          timeout 40 xvfb-run -a ./"$APPIMAGE" --appimage-extract-and-run --no-sandbox --enable-logging > /work/appimage.log 2>&1
+          echo "APPIMAGE exit=$? (124 = it ran the full 40s)"
+          set -e
+          grep -q "dsh web: http" /work/appimage.log
+          if grep -qi "unsupported platform" /work/appimage.log; then echo "desktop policy rejected the platform"; exit 1; fi
+          echo "DEBIAN-APPIMAGE: OK"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: debian-13-logs
+          path: /work/*.log
           if-no-files-found: warn
