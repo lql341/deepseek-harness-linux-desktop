@@ -19,6 +19,13 @@ APP_BIN=${APP_BIN:-/usr/bin/deepseek-harness}
 SHOT_DIR=${SHOT_DIR:-.}
 MIN_WINDOW_SIZE=${MIN_WINDOW_SIZE:-200}
 FAILED=0
+# Electron refuses to start as root without --no-sandbox ("Running as root without --no-sandbox is
+# not supported"). Containers commonly run as root; the hosted runners do not.
+APP_ARGS=()
+if [ "$(id -u)" = "0" ]; then
+  APP_ARGS+=(--no-sandbox)
+  echo "[session] note: running as root, launching with --no-sandbox"
+fi
 
 note() { echo "[session] $*"; }
 fail() { echo "[session] FAIL: $*"; FAILED=1; }
@@ -79,7 +86,7 @@ diagnose() {
   sed 's/^/[session] app.log: /' app.log 2>/dev/null | tail -15
 }
 
-"$APP_BIN" >app.log 2>&1 &
+"$APP_BIN" "${APP_ARGS[@]}" >app.log 2>&1 &
 APP_PID=$!
 note "application pid=$APP_PID"
 
@@ -138,7 +145,9 @@ if [ -n "$restored" ]; then
   import -window root "$SHOT_DIR/session-deeplink.png" 2>/dev/null || true
 else
   fail "no window after the dsh:// activation"
-  note "activation command output: $(tr '\n' ' ' <activation.log 2>/dev/null | head -c 160)"
+  if [ -f activation.log ]; then
+    note "activation command output: $(tr '\n' ' ' <activation.log | head -c 160)"
+  fi
   diagnose "$APP_PID"
 fi
 
@@ -148,7 +157,7 @@ if [ -n "$current" ]; then
   xdotool windowclose "$current" || fail "sending WM_DELETE_WINDOW failed before the relaunch check"
   sleep 3
 fi
-"$APP_BIN" >second-launch.log 2>&1 &
+"$APP_BIN" "${APP_ARGS[@]}" >second-launch.log 2>&1 &
 SECOND_PID=$!
 sleep 8
 if kill -0 "$SECOND_PID" 2>/dev/null; then
