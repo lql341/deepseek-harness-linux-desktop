@@ -181,6 +181,18 @@ if [ -n "$restored" ]; then
 else
   fail "no window after dsh:// activation"
   describe_windows "$APP_PID"
+  if command -v xwininfo >/dev/null; then
+    note "window tree:"
+    xwininfo -root -tree 2>/dev/null | head -25 | sed 's/^/[session]   /'
+  fi
+  endpoint=$(sed -n 's/.*dsh web: \(http[^ ]*\).*/\1/p' app.log | tail -1)
+  if [ -n "$endpoint" ] && command -v curl >/dev/null; then
+    if curl -fsS --max-time 10 "$endpoint" >/dev/null 2>&1; then
+      note "diagnostic: the Host endpoint still answers ($endpoint)"
+    else
+      note "diagnostic: the Host endpoint no longer answers ($endpoint)"
+    fi
+  fi
   note "activation command output:"
   sed 's/^/[session] activation.log: /' activation.log 2>/dev/null | tail -20
   note "application output:"
