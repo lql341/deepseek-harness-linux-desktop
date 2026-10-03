@@ -338,11 +338,14 @@ dpkg -L deepseek-harness | grep -E '/(bin|opt)/'    # 找到已安装的可执�
   已发布的 macOS 版里同样带有这些跨平台 vendored 文件。
 - 在 Xvfb 下 shell 能启动并提供本机端点（`dsh web: http://127.0.0.1:<port>`），
   无 `desktop policy: unsupported platform`。
+- **真实桌面会话**（`ci/desktop-session.sh`，run `37089025040`；Xvfb + openbox + session bus，
+  驱动已安装的 deb）：窗口被创建并映射（`DeepSeek Harness`，1288x824）；关掉最后一个窗口
+  **不会**结束应用；`x-scheme-handler/dsh` 解析到包里的 `deepseek-harness.desktop`；
+  用 `dsh://open` 激活该条目**能把窗口唤回**；之后的启动被路由到运行实例，而不是新起一个进程。
 
 本环境未验证：
 
 - Electron `titleBarOverlay` 在各桌面环境下的观感；窗口拖拽/缩放与两种主题下的标题栏尺寸。
-- 运行中的桌面会话对 `dsh://` 深链的端到端处理。
 - 桌面集成本身（托盘、通知、真实会话里的窗口控件）；上面的套件覆盖的是打包后的运行时，
   不是正在运行的桌面。
 
@@ -358,6 +361,10 @@ dpkg -L deepseek-harness | grep -E '/(bin|opt)/'    # 找到已安装的可执�
 - 只支持 `linux-x64`；`linux-arm64` 不在本系列内。
 - 欢迎窗口的标题栏配色只在创建时跟随系统主题。
 - `deb` 的 maintainer 字段是占位符（`DeepSeek Harness`）。
+- **第二次"关窗→唤回"不会把窗口找回来**：关掉最后一个窗口后应用与其 Host 继续运行（这是设计），
+  之后的第一次激活或启动都能把窗口找回；但**再关一次之后**，进程仍在服务却什么都不显示 ——
+  `ci/desktop-session.sh` 里只剩 10x10 的托盘辅助窗口，而 Host 端点仍在应答。
+  该问题在 CI run `37089025040` 中发现；曾尝试的修复未改变行为，故已撤回。
 
 ## 10. 目录结构、许可与署名
 

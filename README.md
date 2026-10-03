@@ -360,12 +360,17 @@ Verified:
   carries the same cross-platform vendored helpers in the shipped macOS build.
 - Under Xvfb the shell boots and serves its local endpoint (`dsh web: http://127.0.0.1:<port>`)
   with no `desktop policy: unsupported platform` rejection.
+- **A real desktop session** (`ci/desktop-session.sh`, run `37089025040`; Xvfb + openbox +
+  a session bus, driving the installed deb): the window is created and mapped
+  (`DeepSeek Harness`, 1288x824), closing the last window **does not** end the application,
+  `x-scheme-handler/dsh` resolves to the package's `deepseek-harness.desktop`, and activating
+  that entry with `dsh://open` **brings the window back**; a later launch is routed to the
+  running instance instead of starting a second one.
 
 Not verified in this environment:
 
 - Electron's `titleBarOverlay` appearance per desktop environment; window drag/resize and
   caption sizing in both themes.
-- End-to-end handling of a `dsh://` deep link by a running desktop session.
 - Desktop integration itself (tray, notifications, window controls in a real session); the
   suite above covers the packaged runtime, not a running desktop.
 
@@ -383,6 +388,12 @@ Not verified in this environment:
 - Only `linux-x64`; `linux-arm64` is not part of this series.
 - The welcome window's caption colour follows the system palette only at creation.
 - The `deb` maintainer field is a placeholder (`DeepSeek Harness`).
+- **A second close/restore cycle does not bring the window back.** Closing the last window keeps
+  the application and its Host running (by design), and the first later activation or launch
+  restores the window. Close it a second time, however, and the process keeps serving with
+  nothing on screen: `ci/desktop-session.sh` shows only the 10x10 tray helper window while the
+  Host endpoint still answers. Found in CI run `37089025040`; an attempted fix was withdrawn
+  because it did not change the behaviour.
 
 ## 10. Layout, license, attribution
 

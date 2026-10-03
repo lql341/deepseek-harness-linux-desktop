@@ -181,6 +181,20 @@ Playwright 浏览器）：打过补丁 78/80 通过，未打补丁的上游 tag 
 - 打包链自带的运行时冒烟另外覆盖了：PTY、FFI(koffi)、sharp、ripgrep、glob、随包 pnpm 与 Python，
   以及把 `PATH` 清空后用随包 Office 引擎做真实的 DOCX/XLSX/PPTX→PDF 转换。
 
+**真桌面会话**（`ci/desktop-session.sh`，run `37089025040`：Xvfb + openbox + dbus session，
+驱动**已安装的 deb**）：
+
+- 窗口**真的被创建并映射**（`DeepSeek Harness`，1288x824；另有 10x10 的托盘辅助窗口被显式排除）；
+- **关掉最后一个窗口不会结束应用**（mac 一致性），进程与 Host 继续存活，Host 端点仍在应答；
+- `xdg-mime query default x-scheme-handler/dsh` → `deepseek-harness.desktop`，
+  用 `gio launch` 以 `dsh://open` 激活该条目时**窗口被唤回**；
+- 之后的普通启动被单实例锁路由到运行实例，不会新起第二个进程。
+
+一个**新发现的限制**：这个"关窗→唤回"循环**只成功一次**。第二次关窗之后，进程与 Host 仍在服务，
+但后续任何启动或激活都不再显示窗口（窗口树里只剩 10x10 的托盘窗口）。触发点已用顺序实验定位：
+把"先深链激活、后普通启动"对调后，**激活那一次成功、第二次普通启动失败**，说明问题在重复路径而非
+深链本身。曾按"重建后强制显示窗口"尝试修复（`patches/0013`），实测行为不变，已撤回以免留下未经验证的改动。
+
 本次验证覆盖的运行时检查与仍建议确认的项目（标 ✅ 的在上述 ubuntu-24.04 CI 中已确认）：
 
 1. ✅ `@electron/get` 拉到的 `electron-v44-linux-x64.zip` 解包后，根目录二进制是否确实叫 `electron`
