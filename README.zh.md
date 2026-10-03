@@ -343,12 +343,14 @@ dpkg -L deepseek-harness | grep -E '/(bin|opt)/'    # 找到已安装的可执�
   驱动已安装的 deb）：窗口被创建并映射（`DeepSeek Harness`，1288x824）；关掉最后一个窗口
   **不会**结束应用；`x-scheme-handler/dsh` 解析到包里的 `deepseek-harness.desktop`；
   用 `dsh://open` 激活该条目**能把窗口唤回**；之后的启动被路由到运行实例，而不是新起一个进程。
-- **Debian 13（trixie），run `37091835014` —— 全步通过。** 该 job 在 `debian:13` 容器里从源码装
-  Node 24 与 pnpm 11.7.0、应用补丁、安装依赖、typecheck、构建目录产物、冒烟内置运行时、
-  打包 deb 与 AppImage、用 apt 安装 deb（`Status: install ok installed`；
-  `/usr/bin/deepseek-harness` 经 `update-alternatives`）、把 `dsh://` 解析到
-  `deepseek-harness.desktop`、以 Electron 44 / Node 24 运行已安装二进制、跑一次内置启动器
-  （`dsh --version` → `0.2.0-rc.2`）、干净卸载，并以 `--appimage-extract-and-run` 让 AppImage
+- **Debian 13（trixie），run `37091835014` 与 `37094351188` —— 全步通过。** 该 job 在
+  `debian:13` 容器里从源码装 Node 24 与 pnpm 11.7.0、应用补丁、安装依赖、typecheck、跑打包预检、
+  构建目录产物、冒烟内置运行时、打包 deb 与 AppImage、用 apt 安装 deb
+  （`Status: install ok installed`；`/usr/bin/deepseek-harness` 经 `update-alternatives`）、
+  把 `dsh://` 解析到 `deepseek-harness.desktop`、以 Electron 44 / Node 24 运行已安装二进制、
+  用包内命令管理器安装并删除 `~/.local/bin/dsh`（`dsh --version` → `0.2.0-rc.2`）、
+  跑与 Ubuntu 同一套真桌面会话（窗口被映射、关窗不退出、`dsh://` 激活能把窗口唤回、
+  后续启动路由到运行实例）、干净卸载，并以 `--appimage-extract-and-run` 让 AppImage
   跑满 40 秒且无 `desktop policy: unsupported platform`。
 
 本环境未验证：

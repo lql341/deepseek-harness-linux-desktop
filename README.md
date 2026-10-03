@@ -367,14 +367,18 @@ Verified:
   `x-scheme-handler/dsh` resolves to the package's `deepseek-harness.desktop`, and activating
   that entry with `dsh://open` **brings the window back**; a later launch is routed to the
   running instance instead of starting a second one.
-- **Debian 13 (trixie), run `37091835014` — every step green.** Inside a `debian:13` container the
-  job bootstraps Node 24 and pnpm 11.7.0 from source, applies the series, installs the workspace,
-  typechecks, builds the directory target, smokes the bundled runtime, builds the deb and the
-  AppImage, installs the deb with apt (`Status: install ok installed`; `/usr/bin/deepseek-harness`
-  through `update-alternatives`), resolves `dsh://` to `deepseek-harness.desktop`, runs the
-  installed binary as Electron 44 / Node 24, runs the staged launcher (`dsh --version` →
-  `0.2.0-rc.2`), uninstalls cleanly, and boots the AppImage with `--appimage-extract-and-run` for
-  the full 40 s window with no `desktop policy: unsupported platform`.
+- **Debian 13 (trixie), runs `37091835014` and `37094351188` — every step green.** Inside a
+  `debian:13` container the job bootstraps Node 24 and pnpm 11.7.0 from source, applies the series,
+  installs the workspace, typechecks, runs the packaging preflight, builds the directory target,
+  smokes the bundled runtime, builds the deb and the AppImage, installs the deb with apt
+  (`Status: install ok installed`; `/usr/bin/deepseek-harness` through `update-alternatives`),
+  resolves `dsh://` to `deepseek-harness.desktop`, runs the installed binary as Electron 44 /
+  Node 24, installs and removes `~/.local/bin/dsh` through the packaged command manager
+  (`dsh --version` → `0.2.0-rc.2`), drives the same desktop session as Ubuntu (window mapped,
+  closing it does not end the application, a `dsh://` activation brings it back, a later launch is
+  routed to the running instance), uninstalls cleanly, and boots the AppImage with
+  `--appimage-extract-and-run` for the full 40 s window with no
+  `desktop policy: unsupported platform`.
 
 Not verified in this environment:
 
