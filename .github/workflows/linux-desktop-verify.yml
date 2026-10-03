@@ -11,6 +11,10 @@ on:
         description: Also upload the AppImage and deb (large)
         type: boolean
         default: false
+      run-gates:
+        description: Also run the long upstream gate aggregates (patched and baseline)
+        type: boolean
+        default: true
   push:
     branches: [main]
     paths:
@@ -428,6 +432,7 @@ jobs:
     name: upstream Linux gates, sandbox confinement, keyless agent smoke
     runs-on: ubuntu-24.04
     timeout-minutes: 300
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.run-gates }}
     steps:
       - name: Free disk space
         run: |
@@ -565,6 +570,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 300
     continue-on-error: true
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.run-gates }}
     steps:
       - name: Free disk space
         run: |
@@ -634,3 +640,67 @@ jobs:
         run: |
           echo "unpatched base tag gate: ${{ steps.baseline.outcome }}"
           tail -20 upstream/linux-gates-baseline.log 2>/dev/null || true
+
+  release-verify:
+    # Verifies the bytes that were actually published, not a fresh CI build: download the release
+    # assets, check them against the bundled SHA256SUMS, install the deb and drive a real
+    # (headless) desktop session - window creation, close-does-not-quit, single-instance routing
+    # and dsh:// activation - then boot the published AppImage without FUSE.
+    name: published artifacts - checksums, install, desktop session, AppImage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download the published release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p release
+          gh release download v0.2.0-rc.2-linux.2 -R "$GITHUB_REPOSITORY" \
+            -p '*.deb' -p '*.AppImage' -p 'SHA256SUMS' -D release
+          ls -l release
+
+      - name: Verify the published checksums
+        working-directory: release
+        run: sha256sum -c SHA256SUMS
+
+      - name: Install a desktop session and the published deb
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq xvfb openbox xdotool dbus-x11 imagemagick
+          sudo apt-get install -yq ./release/*.deb
+          dpkg -s deepseek-harness | sed -n '1,5p'
+          ls -l /usr/bin/deepseek-harness
+
+      - name: Desktop session (window, close-does-not-quit, relaunch, dsh:// activation)
+        env:
+          SHOT_DIR: ${{ github.workspace }}/session
+        run: |
+          mkdir -p "$SHOT_DIR"
+          dbus-run-session -- xvfb-run -a -s "-screen 0 1280x900x24" \
+            bash ci/desktop-session.sh 2>&1 | tee session.log
+
+      - name: Published AppImage boot (no FUSE)
+        run: |
+          set -uo pipefail
+          APPIMAGE=$(ls release/*.AppImage | head -1)
+          chmod +x "$APPIMAGE"
+          file "$APPIMAGE" || true
+          set +e
+          timeout 40 xvfb-run -a ./"$APPIMAGE" --appimage-extract-and-run --no-sandbox --enable-logging > appimage.log 2>&1
+          echo "APPIMAGE exit=$? (124 = it ran the full 40s)"
+          set -e
+          grep -q "dsh web: http" appimage.log || { echo "the published AppImage never served its endpoint"; exit 1; }
+          grep -qi "unsupported platform" appimage.log && { echo "desktop policy rejected the platform"; exit 1; }
+          echo "PUBLISHED-APPIMAGE: OK"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-verify-logs
+          path: |
+            session.log
+            appimage.log
+            session/*.png
+          if-no-files-found: warn
