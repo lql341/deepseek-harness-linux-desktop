@@ -128,14 +128,23 @@ fi
 # environment, which a bare Xvfb + openbox session does not provide, so they are only reported.
 exec_line=$(grep -m1 '^Exec=' "/usr/share/applications/$handler" 2>/dev/null | cut -d= -f2- || true)
 note "desktop entry Exec: ${exec_line:-<none>}"
+
+# Expand the entry's field codes the way the desktop specification says, then run it. The Exec
+# value is a command line with quoting of its own (this entry's path contains a space), so it is
+# evaluated rather than word-split.
 activation=''
 if [ -n "$exec_line" ]; then
   activation=${exec_line//%u/dsh://open}
   activation=${activation//%U/dsh://open}
   activation=${activation//%f/}
   activation=${activation//%F/}
-  # shellcheck disable=SC2086 # the entry is a command line, by definition.
-  ${activation} >activation.log 2>&1 &
+fi
+if [ -n "$handler" ] && command -v gio >/dev/null \
+  && gio launch "/usr/share/applications/$handler" 'dsh://open' >gio-launch.log 2>&1; then
+  note "PASS: gio launch handed dsh://open to $handler"
+elif [ -n "$activation" ]; then
+  note "gio launch unavailable; running the entry's command line: $activation"
+  ( eval "$activation" ) >activation.log 2>&1 &
   ACTIVATION_PID=$!
   sleep 10
   if kill -0 "$ACTIVATION_PID" 2>/dev/null; then
@@ -144,6 +153,9 @@ if [ -n "$exec_line" ]; then
   else
     note "PASS: the activation command exited, so the running instance took the request"
   fi
+  note "activation output: $(tr '\n' ' ' <activation.log 2>/dev/null | head -c 160)"
+else
+  fail "the desktop entry declares no Exec line"
 fi
 if command -v gio >/dev/null; then
   gio open 'dsh://open' >gio-open.log 2>&1 \
@@ -177,7 +189,10 @@ else
   # stuck rather than the activation being mishandled.
   note "diagnostic: retrying with a plain second launch"
   "$APP_BIN" >second-after-activation.log 2>&1 &
-  sleep 10
+  for _ in $(seq 1 20); do
+    [ -n "$(main_window "$APP_PID")" ] && break
+    sleep 1
+  done
   if [ -n "$(main_window "$APP_PID")" ]; then
     note "diagnostic: a plain launch still restores the window"
   else
