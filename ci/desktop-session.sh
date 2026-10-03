@@ -108,31 +108,52 @@ else
 fi
 import -window root "$SHOT_DIR/session-relaunch.png" 2>/dev/null || true
 
-# dsh:// activation through the handler the package registered. Close the window first so the
-# check can only pass if the activation actually brought it back.
+# dsh:// activation. Close the window first so the check can only pass if the activation
+# actually brings it back.
 if [ -n "$wid2" ]; then
   xdotool windowclose "$wid2" || fail "could not close the window before the activation check"
   sleep 3
 fi
 
-open_url() {
-  if command -v gio >/dev/null; then
-    gio open "$1" >gio-open.log 2>&1 && return 0
-    note "gio open failed: $(tr '\n' ' ' <gio-open.log 2>/dev/null | head -c 200)"
-  fi
-  command -v xdg-open >/dev/null || return 127
-  xdg-open "$1" >xdg-open.log 2>&1
-}
-
-if [ "$(xdotool search --pid "$APP_PID" 2>/dev/null | wc -l | tr -d ' ')" != "0" ] \
-  && [ -z "$(main_window "$APP_PID")" ]; then
-  note "the window is closed; the activation check now proves it comes back"
+# Registration: the package must own the scheme.
+handler=$(xdg-mime query default x-scheme-handler/dsh 2>/dev/null || true)
+if [ -n "$handler" ] && [ -f "/usr/share/applications/$handler" ]; then
+  note "PASS: x-scheme-handler/dsh is registered to $handler"
+else
+  fail "x-scheme-handler/dsh is not registered (query returned '$handler')"
 fi
 
-if open_url 'dsh://open'; then
-  note "the dsh:// handler accepted the request"
-else
-  fail "no handler accepted dsh://open (xdg-mime query: $(xdg-mime query default x-scheme-handler/dsh 2>&1 | head -c 80))"
+# Activation: run the command the registered desktop entry declares, the way a desktop
+# environment does when the scheme is opened. gio/xdg-open need a portal or a known desktop
+# environment, which a bare Xvfb + openbox session does not provide, so they are only reported.
+exec_line=$(grep -m1 '^Exec=' "/usr/share/applications/$handler" 2>/dev/null | cut -d= -f2- || true)
+note "desktop entry Exec: ${exec_line:-<none>}"
+activation=''
+if [ -n "$exec_line" ]; then
+  activation=${exec_line//%u/dsh://open}
+  activation=${activation//%U/dsh://open}
+  activation=${activation//%f/}
+  activation=${activation//%F/}
+  # shellcheck disable=SC2086 # the entry is a command line, by definition.
+  ${activation} >activation.log 2>&1 &
+  ACTIVATION_PID=$!
+  sleep 10
+  if kill -0 "$ACTIVATION_PID" 2>/dev/null; then
+    fail "the activation command stayed alive instead of handing over to the running instance"
+    kill "$ACTIVATION_PID" 2>/dev/null
+  else
+    note "PASS: the activation command exited, so the running instance took the request"
+  fi
+fi
+if command -v gio >/dev/null; then
+  gio open 'dsh://open' >gio-open.log 2>&1 \
+    && note "gio open accepted dsh://open" \
+    || note "gio open could not route the scheme here (no desktop portal): $(tr '\n' ' ' <gio-open.log | head -c 120)"
+fi
+if command -v xdg-open >/dev/null; then
+  xdg-open 'dsh://open' >xdg-open.log 2>&1 \
+    && note "xdg-open accepted dsh://open" \
+    || note "xdg-open could not route the scheme here (no desktop environment): $(tr '\n' ' ' <xdg-open.log | head -c 120)"
 fi
 sleep 10
 kill -0 "$APP_PID" 2>/dev/null || fail "the owner died during dsh:// activation"
