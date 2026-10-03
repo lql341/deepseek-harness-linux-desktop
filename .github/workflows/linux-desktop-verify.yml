@@ -668,7 +668,7 @@ jobs:
       - name: Install a desktop session and the published deb
         run: |
           sudo apt-get update -q
-          sudo apt-get install -yq xvfb openbox xdotool dbus-x11 imagemagick
+          sudo apt-get install -yq xvfb openbox xdotool dbus-x11 imagemagick libglib2.0-bin
           sudo apt-get install -yq ./release/*.deb
           dpkg -s deepseek-harness | sed -n '1,5p'
           ls -l /usr/bin/deepseek-harness
@@ -677,6 +677,7 @@ jobs:
         env:
           SHOT_DIR: ${{ github.workspace }}/session
         run: |
+          set -o pipefail
           mkdir -p "$SHOT_DIR"
           dbus-run-session -- xvfb-run -a -s "-screen 0 1280x900x24" \
             bash ci/desktop-session.sh 2>&1 | tee session.log
