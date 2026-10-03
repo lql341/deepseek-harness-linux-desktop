@@ -1,3 +1,5 @@
+English | [中文](README.zh.md)
+
 # deepseek-harness-linux-desktop
 
 Unofficial patch set that gives the **DeepSeek Harness desktop app** a Linux x64 release
