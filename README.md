@@ -379,6 +379,13 @@ Verified:
   routed to the running instance), uninstalls cleanly, and boots the AppImage with
   `--appimage-extract-and-run` for the full 40 s window with no
   `desktop policy: unsupported platform`.
+- **The deb upgrade path and the hardened-kernel launch** (run `37095694923`). Installing
+  `v0.2.0-rc.2-linux.1` and then `…-linux.2` on top of it removes a legacy
+  `/usr/bin/DeepSeek Harness` link while `update-alternatives` keeps resolving
+  `/usr/bin/deepseek-harness`. With `kernel.apparmor_restrict_unprivileged_userns=1` — what
+  Ubuntu 23.10+ does, and the reason an AppImage can refuse to start there — the package installs
+  `/etc/apparmor.d/deepseek-harness` and the application still starts and passes the whole session
+  check **without** `--no-sandbox` (`chrome-sandbox` stays 0755; the profile carries the sandbox).
 
 Not verified in this environment:
 

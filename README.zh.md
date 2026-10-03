@@ -352,6 +352,12 @@ dpkg -L deepseek-harness | grep -E '/(bin|opt)/'    # 找到已安装的可执�
   跑与 Ubuntu 同一套真桌面会话（窗口被映射、关窗不退出、`dsh://` 激活能把窗口唤回、
   后续启动路由到运行实例）、干净卸载，并以 `--appimage-extract-and-run` 让 AppImage
   跑满 40 秒且无 `desktop policy: unsupported platform`。
+- **deb 升级路径与硬化内核下的启动**（run `37095694923`）：先装 `v0.2.0-rc.2-linux.1`，再在其上
+  安装 `…-linux.2`，旧的 `/usr/bin/DeepSeek Harness` 链接被清除，而 `update-alternatives`
+  仍正确解析 `/usr/bin/deepseek-harness`。在 `kernel.apparmor_restrict_unprivileged_userns=1`
+  （Ubuntu 23.10+ 的默认姿态，也是 AppImage 在那些系统上可能起不来的原因）下，包会安装
+  `/etc/apparmor.d/deepseek-harness`，应用**不加 `--no-sandbox`** 也能启动并通过整套会话检查
+  （`chrome-sandbox` 保持 0755，靠 profile 完成沙箱）。
 
 本环境未验证：
 
