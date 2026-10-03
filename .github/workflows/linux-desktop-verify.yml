@@ -1071,9 +1071,14 @@ jobs:
           for _ in $(seq 1 20); do [ -S "$XDG_RUNTIME_DIR/wayland-dsh" ] && break; sleep 1; done
           ls -l "$XDG_RUNTIME_DIR" || true
           export WAYLAND_DISPLAY=wayland-dsh XDG_SESSION_TYPE=wayland
+          # The runner wraps steps in `bash -e`, so a 124 from timeout would abort the script
+          # before the assertions run. Capture it instead.
+          set +e
           ELECTRON_OZONE_PLATFORM_HINT=wayland timeout 40 /usr/bin/deepseek-harness \
             --ozone-platform=wayland --enable-logging > wayland-app.log 2>&1
-          echo "WAYLAND exit=$? (124 = it ran the full 40s)"
+          wayland_status=$?
+          set -e
+          echo "WAYLAND exit=$wayland_status (124 = it ran the full 40s)"
           head -30 wayland-app.log
           kill "$WESTON_PID" 2>/dev/null || true
           grep -q "dsh web: http" wayland-app.log \
