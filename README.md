@@ -386,6 +386,11 @@ Verified:
   Ubuntu 23.10+ does, and the reason an AppImage can refuse to start there — the package installs
   `/etc/apparmor.d/deepseek-harness` and the application still starts and passes the whole session
   check **without** `--no-sandbox` (`chrome-sandbox` stays 0755; the profile carries the sandbox).
+- **Wayland** (run `37135502569`). With a headless Weston compositor and
+  `--ozone-platform=wayland`, the published deb boots as a pure Wayland client (no X server) and
+  serves its local endpoint, with no `desktop policy: unsupported platform`. The DRM render-node
+  and `wl_seat` warnings in the log come from the headless compositor having no GPU and no input
+  devices, not from the application.
 
 Not verified in this environment:
 

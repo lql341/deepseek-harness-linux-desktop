@@ -358,6 +358,10 @@ dpkg -L deepseek-harness | grep -E '/(bin|opt)/'    # 找到已安装的可执�
   （Ubuntu 23.10+ 的默认姿态，也是 AppImage 在那些系统上可能起不来的原因）下，包会安装
   `/etc/apparmor.d/deepseek-harness`，应用**不加 `--no-sandbox`** 也能启动并通过整套会话检查
   （`chrome-sandbox` 保持 0755，靠 profile 完成沙箱）。
+- **Wayland**（run `37135502569`）：在 headless Weston 合成器下用 `--ozone-platform=wayland`
+  启动已发布的 deb，应用以**纯 Wayland 客户端**（无 X 服务器）启动并提供本机端点，无
+  `desktop policy: unsupported platform`。日志里的 DRM render-node 与 `wl_seat` 警告来自
+  headless 合成器没有 GPU/输入设备，与应用无关。
 
 本环境未验证：
 
