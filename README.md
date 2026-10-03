@@ -10,9 +10,10 @@ Upstream ships macOS and Windows only — its own `apps/desktop/README.md` state
 `linux-x64` target must be rejected. This repository is the set of diffs that opens that
 path up.
 
-> **Status: Linux x64 verified on ubuntu-24.04 (GitHub Actions) and locally.**
-> The twelve-patch series applies cleanly to the upstream tag and has been compiled, packaged,
-> and smoke-tested on Ubuntu 24.04 x86_64. The verified build produced both an AppImage and a
+> **Status: Linux x64 verified on Ubuntu 24.04 LTS and Debian 13 (trixie) in GitHub Actions, and
+> locally.** The twelve-patch series applies cleanly to the upstream tag and has been compiled,
+> packaged, and smoke-tested on Ubuntu 24.04 x86_64, and the whole chain (including installing the
+> deb and booting the AppImage) also runs inside a Debian 13 container. The verified build produced both an AppImage and a
 > deb; the AppImage was also started from its self-extracting mode because the authors' host
 > does not have `libfuse.so.2`. `patches/0009`–`0012` fix what the first real Linux runs
 > surfaced: a `TS2339` failure in the typecheck, a `dsh` launcher that could never find its
@@ -366,6 +367,14 @@ Verified:
   `x-scheme-handler/dsh` resolves to the package's `deepseek-harness.desktop`, and activating
   that entry with `dsh://open` **brings the window back**; a later launch is routed to the
   running instance instead of starting a second one.
+- **Debian 13 (trixie), run `37091835014` — every step green.** Inside a `debian:13` container the
+  job bootstraps Node 24 and pnpm 11.7.0 from source, applies the series, installs the workspace,
+  typechecks, builds the directory target, smokes the bundled runtime, builds the deb and the
+  AppImage, installs the deb with apt (`Status: install ok installed`; `/usr/bin/deepseek-harness`
+  through `update-alternatives`), resolves `dsh://` to `deepseek-harness.desktop`, runs the
+  installed binary as Electron 44 / Node 24, runs the staged launcher (`dsh --version` →
+  `0.2.0-rc.2`), uninstalls cleanly, and boots the AppImage with `--appimage-extract-and-run` for
+  the full 40 s window with no `desktop policy: unsupported platform`.
 
 Not verified in this environment:
 

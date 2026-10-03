@@ -8,8 +8,9 @@ macOS 版保持一致的非官方补丁集。
 上游只发布 macOS 与 Windows —— 其 `apps/desktop/README.md` 明确写着 Linux 不是受支持的桌面
 发布目标，打包测试也断言 `linux-x64` 目标必须被拒绝。本仓库就是把这层限制打开的那组 diff。
 
-> **状态：Linux x64 已在 ubuntu-24.04（GitHub Actions）与本机验证通过。**
-> 十二个补丁干净应用到上游 tag，并在 Ubuntu 24.04 x86_64 上完成编译、打包与冒烟。
+> **状态：Linux x64 已在 GitHub Actions 的 Ubuntu 24.04 LTS 与 Debian 13（trixie）上验证通过，本机亦通过。**
+> 十二个补丁干净应用到上游 tag，并在 Ubuntu 24.04 x86_64 上完成编译、打包与冒烟；
+> 完整链路（含安装 deb 与启动 AppImage）也在 **Debian 13** 容器里跑通。
 > 产物为 AppImage 与 deb；因作者本机没有 `libfuse.so.2`，AppImage 也以自解压模式启动过。
 > `patches/0009`–`0012` 修的都是第一次真机/真 CI 跑出来的问题：typecheck 里的 `TS2339`、
 > 找不到 payload 的 `dsh` 启动器、丢掉了 environment 的 upload-plan 报错文案，以及四处会被
@@ -342,6 +343,13 @@ dpkg -L deepseek-harness | grep -E '/(bin|opt)/'    # 找到已安装的可执�
   驱动已安装的 deb）：窗口被创建并映射（`DeepSeek Harness`，1288x824）；关掉最后一个窗口
   **不会**结束应用；`x-scheme-handler/dsh` 解析到包里的 `deepseek-harness.desktop`；
   用 `dsh://open` 激活该条目**能把窗口唤回**；之后的启动被路由到运行实例，而不是新起一个进程。
+- **Debian 13（trixie），run `37091835014` —— 全步通过。** 该 job 在 `debian:13` 容器里从源码装
+  Node 24 与 pnpm 11.7.0、应用补丁、安装依赖、typecheck、构建目录产物、冒烟内置运行时、
+  打包 deb 与 AppImage、用 apt 安装 deb（`Status: install ok installed`；
+  `/usr/bin/deepseek-harness` 经 `update-alternatives`）、把 `dsh://` 解析到
+  `deepseek-harness.desktop`、以 Electron 44 / Node 24 运行已安装二进制、跑一次内置启动器
+  （`dsh --version` → `0.2.0-rc.2`）、干净卸载，并以 `--appimage-extract-and-run` 让 AppImage
+  跑满 40 秒且无 `desktop policy: unsupported platform`。
 
 本环境未验证：
 
