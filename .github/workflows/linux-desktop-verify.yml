@@ -23,6 +23,10 @@ on:
         description: Also run the Ubuntu jobs (typecheck, package, release-verify)
         type: boolean
         default: true
+      run-hardening:
+        description: Also run the deb upgrade path and the AppArmor-hardened launch
+        type: boolean
+        default: true
   push:
     branches: [main]
     paths:
@@ -887,4 +891,74 @@ jobs:
           path: |
             /work/*.log
             /work/session/*.png
+          if-no-files-found: warn
+
+  upgrade-and-hardening:
+    # Two things a real host does that no other job covers: installing a newer deb over an older
+    # one (the series promises to remove the legacy `/usr/bin/DeepSeek Harness` launcher during
+    # that upgrade), and launching on an Ubuntu 23.10+/24.04 kernel where AppArmor restricts
+    # unprivileged user namespaces and the sandbox must fall back to the SUID helper.
+    name: deb upgrade path and AppArmor-hardened launch
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.run-hardening }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download the previous and the current release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eux
+          mkdir -p rel-old rel-new
+          gh release download v0.2.0-rc.2-linux.1 -R "$GITHUB_REPOSITORY" -p '*.deb' -D rel-old
+          gh release download v0.2.0-rc.2-linux.2 -R "$GITHUB_REPOSITORY" -p '*.deb' -D rel-new
+          ls -l rel-old rel-new
+
+      - name: Session tooling
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq xvfb xauth openbox xdotool dbus-x11 imagemagick libglib2.0-bin
+
+      - name: Install the previous deb, leave a legacy launcher, then upgrade
+        run: |
+          set -eux
+          sudo apt-get install -y ./rel-old/*.deb
+          dpkg -s deepseek-harness | sed -n '1,4p'
+          # A package built before the Debian-safe naming left this link behind; the upgrade must
+          # remove it rather than leave two launchers pointing at the same binary.
+          sudo ln -sf '/opt/DeepSeek Harness/deepseek-harness' '/usr/bin/DeepSeek Harness'
+          test -L '/usr/bin/DeepSeek Harness'
+          sudo apt-get install -y ./rel-new/*.deb
+          test ! -e '/usr/bin/DeepSeek Harness'
+          ls -l /usr/bin/deepseek-harness
+          ELECTRON_RUN_AS_NODE=1 /usr/bin/deepseek-harness -p 'process.versions.electron'
+          echo "UPGRADE: OK (legacy launcher removed, alternatives still resolve)"
+
+      - name: Harden the kernel the way Ubuntu 23.10+ does
+        run: |
+          set -eux
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1 || echo "apparmor userns knob absent"
+          cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || true
+          ls -l '/opt/DeepSeek Harness/chrome-sandbox'
+          ls -l /etc/apparmor.d/deepseek-harness 2>/dev/null || echo "(no apparmor profile installed by the package)"
+          # The postinst decides between SUID and user namespaces; record what it chose.
+          stat -c '%a %U %n' '/opt/DeepSeek Harness/chrome-sandbox'
+
+      - name: Launch the installed application on the hardened kernel
+        env:
+          SHOT_DIR: ${{ github.workspace }}/hardened
+        run: |
+          set -o pipefail
+          mkdir -p "$SHOT_DIR"
+          dbus-run-session -- xvfb-run -a -s "-screen 0 1280x900x24" \
+            bash ci/desktop-session.sh 2>&1 | tee hardened-session.log
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hardening-logs
+          path: |
+            hardened-session.log
+            hardened/*.png
           if-no-files-found: warn
