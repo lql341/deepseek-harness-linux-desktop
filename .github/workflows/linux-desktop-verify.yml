@@ -765,7 +765,8 @@ jobs:
           apt-get install -y -qq --no-install-recommends \
             ca-certificates curl git xz-utils python3 make g++ procps \
             libgtk-3-0 libnss3 libasound2t64 libxss1 libgbm1 libsecret-1-0 \
-            libnotify4 libappindicator3-1 xvfb xauth xdg-utils file
+            libnotify4 libappindicator3-1 xvfb xauth xdg-utils file \
+            openbox xdotool dbus-x11 imagemagick libglib2.0-bin
 
       - name: Node 24 and pnpm 11.7.0
         run: |
@@ -789,6 +790,12 @@ jobs:
       - name: Typecheck on Debian
         working-directory: /work/upstream
         run: pnpm run typecheck 2>&1 | tee /work/typecheck.log
+
+      - name: Packaging preflight on Debian
+        working-directory: /work/upstream
+        env:
+          DSH_DESKTOP_TARGET_PLATFORM: linux
+        run: pnpm --dir apps/desktop run check:package 2>&1 | tee /work/check-package.log
 
       - name: Build the unpacked Linux application
         working-directory: /work/upstream
@@ -828,8 +835,36 @@ jobs:
           xdg-mime query default x-scheme-handler/dsh
           ELECTRON_RUN_AS_NODE=1 /usr/bin/deepseek-harness -p 'process.versions.node + " node / electron " + process.versions.electron'
           "/opt/DeepSeek Harness/resources/runtime/cli/bin/dsh" --version
+
+          # Same command-management flow the Desktop UI drives, on Debian's ~/.local/bin.
+          MANAGER="/opt/DeepSeek Harness/resources/runtime/cli/command-manager.js"
+          state=$(ELECTRON_RUN_AS_NODE=1 /usr/bin/deepseek-harness "$MANAGER" inspect)
+          echo "$state"
+          fingerprint=$(printf '%s' "$state" | python3 -c 'import json,sys;print(json.load(sys.stdin)["state"]["fingerprint"])')
+          ELECTRON_RUN_AS_NODE=1 /usr/bin/deepseek-harness "$MANAGER" install "$fingerprint"
+          PATH="$HOME/.local/bin:$PATH" dsh --version
+          fingerprint=$(ELECTRON_RUN_AS_NODE=1 /usr/bin/deepseek-harness "$MANAGER" inspect \
+            | python3 -c 'import json,sys;print(json.load(sys.stdin)["state"]["fingerprint"])')
+          ELECTRON_RUN_AS_NODE=1 /usr/bin/deepseek-harness "$MANAGER" remove "$fingerprint"
+          test ! -e "$HOME/.local/bin/dsh"
+
+      - name: Desktop session on Debian (window, close-does-not-quit, dsh:// activation)
+        working-directory: /work/upstream
+        env:
+          SHOT_DIR: /work/session
+        run: |
+          set -o pipefail
+          mkdir -p "$SHOT_DIR"
+          dbus-run-session -- xvfb-run -a -s "-screen 0 1280x900x24" \
+            bash /work/patches/ci/desktop-session.sh 2>&1 | tee /work/session.log
+
+      - name: Uninstall the deb on Debian
+        working-directory: /work/upstream
+        run: |
+          set -eux
           apt-get remove -y deepseek-harness
           test ! -e /usr/bin/deepseek-harness
+          test ! -d "/opt/DeepSeek Harness"
 
       - name: AppImage boot on Debian (no FUSE)
         working-directory: /work/upstream
@@ -849,5 +884,7 @@ jobs:
         if: always()
         with:
           name: debian-13-logs
-          path: /work/*.log
+          path: |
+            /work/*.log
+            /work/session/*.png
           if-no-files-found: warn
