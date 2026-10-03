@@ -895,22 +895,36 @@ jobs:
           pnpm --dir native/system run build:ts
           pnpm --dir native/system run build:native
 
-      - name: Sandbox confinement on Debian (bwrap and Landlock legs)
+      - name: Sandbox confinement on Debian (Landlock strict, bwrap reported)
         working-directory: /work/upstream
         env:
           NO_COLOR: '1'
         run: |
           set -u +e -o pipefail
           status=0
-          for leg in bwrap landlock; do
-            echo "== sandbox leg: $leg =="
+
+          # Landlock needs no user namespaces, so it must work inside this container.
+          out=$(pnpm exec vitest run --config vitest.e2e.config.ts \
+            packages/sandbox/sandbox-local/tests/landlock.e2e.ts \
+            packages/shell/bash-sandbox/tests/landlock.e2e.ts 2>&1) || status=1
+          echo "$out"
+          echo "$out" | grep -qE 'Test Files[[:space:]]+2 passed \(2\)' \
+            || { echo "SANDBOX(landlock): the leg did not run both files"; status=1; }
+
+          # The bwrap leg creates user namespaces, which a GitHub container job cannot do: Docker's
+          # default seccomp profile denies unshare. Run it there and report; the Ubuntu host runner
+          # runs the same files strictly.
+          if bwrap --ro-bind / / --dev /dev --unshare-pid --proc /proc --die-with-parent -- true 2>/dev/null; then
             out=$(pnpm exec vitest run --config vitest.e2e.config.ts \
-              "packages/sandbox/sandbox-local/tests/$leg.e2e.ts" \
-              "packages/shell/bash-sandbox/tests/$leg.e2e.ts" 2>&1) || status=1
+              packages/sandbox/sandbox-local/tests/bwrap.e2e.ts \
+              packages/shell/bash-sandbox/tests/bwrap.e2e.ts 2>&1) || status=1
             echo "$out"
             echo "$out" | grep -qE 'Test Files[[:space:]]+2 passed \(2\)' \
-              || { echo "SANDBOX($leg): the leg did not run both files"; status=1; }
-          done
+              || { echo "SANDBOX(bwrap): the leg did not run both files"; status=1; }
+          else
+            echo "SANDBOX(bwrap): SKIPPED - this container cannot create user namespaces"
+            echo "  (Docker's default seccomp profile denies unshare; the Ubuntu host runner runs it strictly)"
+          fi
           exit "$status"
 
       - name: Keyless agent turn on Debian
