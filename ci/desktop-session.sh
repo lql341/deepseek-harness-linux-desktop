@@ -2,14 +2,16 @@
 # Exercise the installed application inside a real (headless) desktop session:
 #   * a window is actually created and mapped for the application process,
 #   * closing the last window does not end the application (the macOS-like behaviour),
-#   * a second launch is routed to the running instance instead of starting another one,
-#   * a dsh:// activation through the registered handler reaches that instance and brings
-#     the window back.
+#   * a dsh:// activation through the handler the package registered brings that window back,
+#   * a later plain launch is routed to the running instance and brings the window back too.
+#
+# The activation is checked before the plain relaunch on purpose: if only the second cycle fails,
+# the fault is in the repeat path; if the activation fails on a single cycle, it is the activation.
 #
 # Run it under a display and a session bus, with a window manager on PATH:
 #   dbus-run-session -- xvfb-run -a env SHOT_DIR=/tmp ci/desktop-session.sh
 #
-# Requires: xdotool, a window manager (openbox or fluxbox), imagemagick (optional screenshots).
+# Requires: xdotool, a window manager (openbox or fluxbox), imagemagick for screenshots.
 
 set -uo pipefail
 
@@ -32,10 +34,10 @@ fi
 WM_PID=$!
 sleep 2
 
-# A tray/indicator helper window is small and always present, so the assertions look for a
-# window of real size and log every window the process owns while they wait.
+# A tray/indicator helper window is small and always present, so the assertions look for a window
+# of real size and log every window the process owns while they wait.
 main_window() {
-  local pid=$1 best='' best_area=0 wid area width height
+  local pid=$1 best='' best_area=0 wid area
   for wid in $(xdotool search --pid "$pid" 2>/dev/null); do
     eval "$(xdotool getwindowgeometry --shell "$wid" 2>/dev/null)"
     area=$(( ${WIDTH:-0} * ${HEIGHT:-0} ))
@@ -52,28 +54,45 @@ describe_windows() {
   done
 }
 
+wait_for_window() {
+  local pid=$1 seconds=$2 found=''
+  for _ in $(seq 1 "$seconds"); do
+    found=$(main_window "$pid")
+    [ -n "$found" ] && break
+    sleep 1
+  done
+  printf '%s' "$found"
+}
+
+diagnose() {
+  describe_windows "$1"
+  local endpoint
+  endpoint=$(sed -n 's/.*dsh web: \(http[^ ]*\).*/\1/p' app.log 2>/dev/null | tail -1)
+  if [ -n "$endpoint" ] && command -v curl >/dev/null; then
+    if curl -fsS --max-time 10 "$endpoint" >/dev/null 2>&1; then
+      note "diagnostic: the Host endpoint still answers"
+    else
+      note "diagnostic: the Host endpoint no longer answers"
+    fi
+  fi
+  sed 's/^/[session] app.log: /' app.log 2>/dev/null | tail -15
+}
+
 "$APP_BIN" >app.log 2>&1 &
 APP_PID=$!
 note "application pid=$APP_PID"
 
-wid=''
-for _ in $(seq 1 60); do
-  wid=$(main_window "$APP_PID")
-  [ -n "$wid" ] && break
-  kill -0 "$APP_PID" 2>/dev/null || break
-  sleep 1
-done
-
+wid=$(wait_for_window "$APP_PID" 60)
 if [ -z "$wid" ]; then
-  fail "no window of at least ${MIN_WINDOW_SIZE}x${MIN_WINDOW_SIZE} appeared for pid $APP_PID within 60s"
-  describe_windows "$APP_PID"
-  sed 's/^/[session] app.log: /' app.log | tail -20
+  fail "no window of at least ${MIN_WINDOW_SIZE}x${MIN_WINDOW_SIZE} appeared within 60s"
+  diagnose "$APP_PID"
 else
   note "PASS: main window $wid mapped: $(xdotool getwindowname "$wid" 2>/dev/null)"
   xdotool getwindowgeometry "$wid" 2>&1 | sed 's/^/[session] /'
   describe_windows "$APP_PID"
   import -window root "$SHOT_DIR/session-window.png" 2>/dev/null || note "screenshot unavailable"
 
+  # Closing the last window must not end the application (macOS-like behaviour).
   xdotool windowclose "$wid" || fail "sending WM_DELETE_WINDOW failed"
   sleep 5
   if kill -0 "$APP_PID" 2>/dev/null; then
@@ -83,7 +102,51 @@ else
   fi
 fi
 
-# A later launch must be routed to the owner by the single-instance lock.
+# Registration: the package must own the scheme.
+handler=$(xdg-mime query default x-scheme-handler/dsh 2>/dev/null || true)
+if [ -n "$handler" ] && [ -f "/usr/share/applications/$handler" ]; then
+  note "PASS: x-scheme-handler/dsh is registered to $handler"
+else
+  fail "x-scheme-handler/dsh is not registered (query returned '$handler')"
+fi
+
+# Activation on a single close cycle: the window must come back.
+activation=''
+exec_line=$(grep -m1 '^Exec=' "/usr/share/applications/$handler" 2>/dev/null | cut -d= -f2- || true)
+note "desktop entry Exec: ${exec_line:-<none>}"
+if [ -n "$exec_line" ]; then
+  activation=${exec_line//%u/dsh://open}
+  activation=${activation//%U/dsh://open}
+  activation=${activation//%f/}
+  activation=${activation//%F/}
+fi
+
+if [ -n "$handler" ] && command -v gio >/dev/null \
+  && gio launch "/usr/share/applications/$handler" 'dsh://open' >gio-launch.log 2>&1; then
+  note "PASS: gio launch handed dsh://open to $handler"
+elif [ -n "$activation" ]; then
+  note "gio launch unavailable; running the entry's command line: $activation"
+  ( eval "$activation" ) >activation.log 2>&1 &
+  sleep 10
+fi
+
+restored=$(wait_for_window "$APP_PID" 30)
+kill -0 "$APP_PID" 2>/dev/null || fail "the owner died during dsh:// activation"
+if [ -n "$restored" ]; then
+  note "PASS: the dsh:// activation brought the window back ($restored)"
+  import -window root "$SHOT_DIR/session-deeplink.png" 2>/dev/null || true
+else
+  fail "no window after the dsh:// activation"
+  note "activation command output: $(tr '\n' ' ' <activation.log 2>/dev/null | head -c 160)"
+  diagnose "$APP_PID"
+fi
+
+# A plain later launch must be routed to the owner by the single-instance lock and restore a window.
+current=$(main_window "$APP_PID")
+if [ -n "$current" ]; then
+  xdotool windowclose "$current" || fail "sending WM_DELETE_WINDOW failed before the relaunch check"
+  sleep 3
+fi
 "$APP_BIN" >second-launch.log 2>&1 &
 SECOND_PID=$!
 sleep 8
@@ -95,126 +158,15 @@ else
 fi
 kill -0 "$APP_PID" 2>/dev/null || fail "the owning process died during the second launch"
 
-wid2=''
-for _ in $(seq 1 30); do
-  wid2=$(main_window "$APP_PID")
-  [ -n "$wid2" ] && break
-  sleep 1
-done
-if [ -n "$wid2" ]; then
-  note "PASS: the window returned after the second launch ($wid2)"
+restored2=$(wait_for_window "$APP_PID" 30)
+if [ -n "$restored2" ]; then
+  note "PASS: the window returned after the second launch ($restored2)"
 else
-  fail "no window for the owner after the second launch"
+  fail "no window after the second launch"
+  diagnose "$APP_PID"
 fi
 import -window root "$SHOT_DIR/session-relaunch.png" 2>/dev/null || true
 
-# dsh:// activation. Close the window first so the check can only pass if the activation
-# actually brings it back.
-if [ -n "$wid2" ]; then
-  xdotool windowclose "$wid2" || fail "could not close the window before the activation check"
-  sleep 3
-fi
-
-# Registration: the package must own the scheme.
-handler=$(xdg-mime query default x-scheme-handler/dsh 2>/dev/null || true)
-if [ -n "$handler" ] && [ -f "/usr/share/applications/$handler" ]; then
-  note "PASS: x-scheme-handler/dsh is registered to $handler"
-else
-  fail "x-scheme-handler/dsh is not registered (query returned '$handler')"
-fi
-
-# Activation: run the command the registered desktop entry declares, the way a desktop
-# environment does when the scheme is opened. gio/xdg-open need a portal or a known desktop
-# environment, which a bare Xvfb + openbox session does not provide, so they are only reported.
-exec_line=$(grep -m1 '^Exec=' "/usr/share/applications/$handler" 2>/dev/null | cut -d= -f2- || true)
-note "desktop entry Exec: ${exec_line:-<none>}"
-
-# Expand the entry's field codes the way the desktop specification says, then run it. The Exec
-# value is a command line with quoting of its own (this entry's path contains a space), so it is
-# evaluated rather than word-split.
-activation=''
-if [ -n "$exec_line" ]; then
-  activation=${exec_line//%u/dsh://open}
-  activation=${activation//%U/dsh://open}
-  activation=${activation//%f/}
-  activation=${activation//%F/}
-fi
-if [ -n "$handler" ] && command -v gio >/dev/null \
-  && gio launch "/usr/share/applications/$handler" 'dsh://open' >gio-launch.log 2>&1; then
-  note "PASS: gio launch handed dsh://open to $handler"
-elif [ -n "$activation" ]; then
-  note "gio launch unavailable; running the entry's command line: $activation"
-  ( eval "$activation" ) >activation.log 2>&1 &
-  ACTIVATION_PID=$!
-  sleep 10
-  if kill -0 "$ACTIVATION_PID" 2>/dev/null; then
-    fail "the activation command stayed alive instead of handing over to the running instance"
-    kill "$ACTIVATION_PID" 2>/dev/null
-  else
-    note "PASS: the activation command exited, so the running instance took the request"
-  fi
-  note "activation output: $(tr '\n' ' ' <activation.log 2>/dev/null | head -c 160)"
-else
-  fail "the desktop entry declares no Exec line"
-fi
-if command -v gio >/dev/null; then
-  gio open 'dsh://open' >gio-open.log 2>&1 \
-    && note "gio open accepted dsh://open" \
-    || note "gio open could not route the scheme here (no desktop portal): $(tr '\n' ' ' <gio-open.log | head -c 120)"
-fi
-if command -v xdg-open >/dev/null; then
-  xdg-open 'dsh://open' >xdg-open.log 2>&1 \
-    && note "xdg-open accepted dsh://open" \
-    || note "xdg-open could not route the scheme here (no desktop environment): $(tr '\n' ' ' <xdg-open.log | head -c 120)"
-fi
-
-# Give the owner up to 30s to bring a window back, logging what it owns while we wait.
-restored=''
-for _ in $(seq 1 30); do
-  restored=$(main_window "$APP_PID")
-  [ -n "$restored" ] && break
-  sleep 1
-done
-kill -0 "$APP_PID" 2>/dev/null || fail "the owner died during dsh:// activation"
-if [ -n "$restored" ]; then
-  note "PASS: dsh:// activation reached the running instance and its window is back"
-else
-  fail "no window after dsh:// activation"
-  describe_windows "$APP_PID"
-  if command -v xwininfo >/dev/null; then
-    note "window tree:"
-    xwininfo -root -tree 2>/dev/null | head -25 | sed 's/^/[session]   /'
-  fi
-  endpoint=$(sed -n 's/.*dsh web: \(http[^ ]*\).*/\1/p' app.log | tail -1)
-  if [ -n "$endpoint" ] && command -v curl >/dev/null; then
-    if curl -fsS --max-time 10 "$endpoint" >/dev/null 2>&1; then
-      note "diagnostic: the Host endpoint still answers ($endpoint)"
-    else
-      note "diagnostic: the Host endpoint no longer answers ($endpoint)"
-    fi
-  fi
-  note "activation command output:"
-  sed 's/^/[session] activation.log: /' activation.log 2>/dev/null | tail -20
-  note "application output:"
-  sed 's/^/[session] app.log: /' app.log 2>/dev/null | tail -40
-  # Isolate the failure: if a plain launch cannot restore a window either, the application is
-  # stuck rather than the activation being mishandled.
-  note "diagnostic: retrying with a plain second launch"
-  "$APP_BIN" >second-after-activation.log 2>&1 &
-  for _ in $(seq 1 20); do
-    [ -n "$(main_window "$APP_PID")" ] && break
-    sleep 1
-  done
-  if [ -n "$(main_window "$APP_PID")" ]; then
-    note "diagnostic: a plain launch still restores the window"
-  else
-    note "diagnostic: even a plain launch no longer restores a window"
-    sed 's/^/[session] app.log: /' app.log 2>/dev/null | tail -20
-  fi
-fi
-import -window root "$SHOT_DIR/session-deeplink.png" 2>/dev/null || true
-
-if [ -f app.log ]; then tail -20 app.log | sed 's/^/[session] app.log: /'; fi
 kill "$APP_PID" 2>/dev/null || true
 kill "$WM_PID" 2>/dev/null || true
 
