@@ -380,6 +380,21 @@ jobs:
           grep -q "dsh web: http" appimage-smoke.log || { echo "the AppImage never served its endpoint"; exit 1; }
           echo "APPIMAGE-SMOKE: OK"
 
+      - name: Desktop session against the freshly built deb
+        # The same session harness release-verify runs against the published bytes, but here it
+        # exercises the build under test, so an application-side fix can be verified before release.
+        working-directory: ${{ env.UPSTREAM_DIR }}
+        env:
+          SHOT_DIR: ${{ github.workspace }}/session-build
+        run: |
+          set -o pipefail
+          sudo apt-get update -q
+          sudo apt-get install -yq xvfb openbox xdotool dbus-x11 imagemagick libglib2.0-bin
+          sudo apt-get install -yq "$PWD"/apps/desktop/.desktop-build/targets/linux-x64/artifacts/*.deb
+          mkdir -p "$SHOT_DIR"
+          dbus-run-session -- xvfb-run -a -s "-screen 0 1280x900x24" \
+            bash "$GITHUB_WORKSPACE/ci/desktop-session.sh" 2>&1 | tee session-build.log
+
       - name: Desktop test suite on Linux (informational baseline)
         # Upstream never ran this suite on Linux; record the baseline instead of gating on it.
         working-directory: ${{ env.UPSTREAM_DIR }}
@@ -401,7 +416,9 @@ jobs:
             upstream/gui-smoke.log
             upstream/package-formats.log
             upstream/appimage-smoke.log
+            upstream/session-build.log
             upstream/desktop-tests.log
+            session-build/*.png
           if-no-files-found: warn
 
       - uses: actions/upload-artifact@v4
