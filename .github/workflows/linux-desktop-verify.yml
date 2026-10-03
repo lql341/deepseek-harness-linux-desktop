@@ -704,4 +704,10 @@ jobs:
             session.log
             appimage.log
             session/*.png
+            app.log
+            activation.log
+            second-launch.log
+            gio-open.log
+            xdg-open.log
+            openbox.log
           if-no-files-found: warn

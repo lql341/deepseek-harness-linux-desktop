@@ -155,13 +155,35 @@ if command -v xdg-open >/dev/null; then
     && note "xdg-open accepted dsh://open" \
     || note "xdg-open could not route the scheme here (no desktop environment): $(tr '\n' ' ' <xdg-open.log | head -c 120)"
 fi
-sleep 10
+
+# Give the owner up to 30s to bring a window back, logging what it owns while we wait.
+restored=''
+for _ in $(seq 1 30); do
+  restored=$(main_window "$APP_PID")
+  [ -n "$restored" ] && break
+  sleep 1
+done
 kill -0 "$APP_PID" 2>/dev/null || fail "the owner died during dsh:// activation"
-if [ -n "$(main_window "$APP_PID")" ]; then
+if [ -n "$restored" ]; then
   note "PASS: dsh:// activation reached the running instance and its window is back"
 else
   fail "no window after dsh:// activation"
   describe_windows "$APP_PID"
+  note "activation command output:"
+  sed 's/^/[session] activation.log: /' activation.log 2>/dev/null | tail -20
+  note "application output:"
+  sed 's/^/[session] app.log: /' app.log 2>/dev/null | tail -40
+  # Isolate the failure: if a plain launch cannot restore a window either, the application is
+  # stuck rather than the activation being mishandled.
+  note "diagnostic: retrying with a plain second launch"
+  "$APP_BIN" >second-after-activation.log 2>&1 &
+  sleep 10
+  if [ -n "$(main_window "$APP_PID")" ]; then
+    note "diagnostic: a plain launch still restores the window"
+  else
+    note "diagnostic: even a plain launch no longer restores a window"
+    sed 's/^/[session] app.log: /' app.log 2>/dev/null | tail -20
+  fi
 fi
 import -window root "$SHOT_DIR/session-deeplink.png" 2>/dev/null || true
 
