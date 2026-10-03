@@ -381,6 +381,10 @@ dpkg -L deepseek-harness | grep -E '/(bin|opt)/'    # 找到已安装的可执�
   之后的第一次激活或启动都能把窗口找回；但**再关一次之后**，进程仍在服务却什么都不显示 ——
   `ci/desktop-session.sh` 里只剩 10x10 的托盘辅助窗口，而 Host 端点仍在应答。
   该问题在 CI run `37089025040` 中发现；曾尝试的修复未改变行为，故已撤回。
+- **两项检查无法在 Debian 容器 job 里真跑**：Docker 默认 seccomp 禁止 `unshare`，因此 bwrap
+  沙箱腿在那里自跳过（Landlock 腿严格跑并通过），而无 key agent 冒烟会在读取自己的会话目录时
+  失败（`ENOENT …/.sessions`）且 harness 没有把驱动的 stderr 带出来，所以只做**报告**、不作为门禁。
+  这两项在 Ubuntu runner 上都是严格门控的（那里的内核允许所需的 namespace）。
 
 ## 10. 目录结构、许可与署名
 

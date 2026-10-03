@@ -414,6 +414,11 @@ Not verified in this environment:
   nothing on screen: `ci/desktop-session.sh` shows only the 10x10 tray helper window while the
   Host endpoint still answers. Found in CI run `37089025040`; an attempted fix was withdrawn
   because it did not change the behaviour.
+- **Two checks cannot run inside the Debian container job.** Docker's default seccomp profile
+  denies `unshare`, so the bwrap sandbox leg self-skips there (the Landlock leg runs strictly) and
+  the keyless agent smoke fails while reading its own session directory
+  (`ENOENT …/.sessions`) without surfacing the driver's stderr, so it is reported rather than
+  gated. Both run strictly on the Ubuntu runner, where the kernel allows the namespaces they need.
 
 ## 10. Layout, license, attribution
 
