@@ -507,7 +507,7 @@ jobs:
       - name: Install Playwright browsers
         # The web snapshot gates launch a real browser; upstream installs these before the gate.
         working-directory: ${{ env.UPSTREAM_DIR }}
-        run: pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install chromium webkit
+        run: pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install --with-deps chromium webkit
 
       - name: Upstream Linux primary gate
         id: gate
@@ -644,7 +644,7 @@ jobs:
 
       - name: Install Playwright browsers
         working-directory: ${{ env.UPSTREAM_DIR }}
-        run: pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install chromium webkit
+        run: pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install --with-deps chromium webkit
 
       - name: Baseline Linux primary gate (unpatched)
         id: baseline

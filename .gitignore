@@ -1,0 +1,7 @@
+# Verification artefacts downloaded or produced locally (never commit these)
+dsh-verify-*.tar.gz
+data.tar.xz*
+verify-logs/
+
+# Upstream checkout created by ./apply.sh when it is run with no destination
+/deepseek-harness/
