@@ -391,6 +391,24 @@ Verified:
   serves its local endpoint, with no `desktop policy: unsupported platform`. The DRM render-node
   and `wl_seat` warnings in the log come from the headless compositor having no GPU and no input
   devices, not from the application.
+- **The 13-patch series, full gate set** (run `37411910000`, 2026-10-06, head `d70585e`). Seven of
+  the eight jobs are green, including `install + typecheck + package preflight`, the packaging
+  job, Debian 13, the deb upgrade path / hardened launch, the published-artifact checks and the
+  Wayland smoke. `upstream Linux gates, sandbox confinement, keyless agent smoke` reports
+  **failure**, but only through its `Verdict` step — the sandbox confinement and keyless agent
+  smoke legs both pass, and the failure is the upstream gate aggregate, which fails on the **same
+  two tasks and the same four tests on the unpatched base tag in the same run**: `test:coverage`
+  (one 5 s timeout in `scripts/persistence-schema.spec.ts` out of 37 874 passing tests) and
+  `web browser snapshot` (`apps/web/tests/declared-reasoning.e2e.ts`,
+  `apps/web/tests/document-preview.e2e.ts`, `apps/web/tests/session-replay-reload.e2e.ts`). The
+  attribution is therefore exact — none of the four is ours, and `patches/0013` touches only
+  `apps/desktop/src/main.ts`.
+  **Known and deliberately not fixed:** the `web browser snapshot` leg fails because both
+  `Install Playwright browsers` steps run `playwright install chromium webkit` **without**
+  `--with-deps`, so the runner gets the browser binaries but not WebKit's system libraries
+  (`libgtk-4.so.1`, `libgraphene-1.0.so.0`, `libgst*.so.0`, `libopus.so.0`, `libevent-2.1.so.7`);
+  the tests that fail are exactly the `('WebKit')` ones. Adding `--with-deps` to both steps is the
+  likely fix and has **not** been applied.
 
 Not verified in this environment:
 

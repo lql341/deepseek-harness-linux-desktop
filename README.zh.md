@@ -362,6 +362,20 @@ dpkg -L deepseek-harness | grep -E '/(bin|opt)/'    # 找到已安装的可执�
   启动已发布的 deb，应用以**纯 Wayland 客户端**（无 X 服务器）启动并提供本机端点，无
   `desktop policy: unsupported platform`。日志里的 DRM render-node 与 `wl_seat` 警告来自
   headless 合成器没有 GPU/输入设备，与应用无关。
+- **13 个补丁的完整门禁集**（run `37411910000`，2026-10-06，head `d70585e`）：8 个 job 里 7 个绿，
+  含 `install + typecheck + package preflight`、打包、Debian 13、deb 升级路径与硬化启动、
+  已发布产物校验、Wayland 冒烟。`upstream Linux gates, sandbox confinement, keyless agent smoke`
+  报 **failure**，但只卡在它的 `Verdict` 汇总步 —— sandbox confinement 与 keyless agent smoke
+  两条腿都过，红的是上游门禁聚合本身；而它在**同一次运行的未打补丁基线 tag** 上挂的是
+  **同样两个任务、同样四个测试**：`test:coverage`（37874 个通过里，`scripts/persistence-schema.spec.ts`
+  有一个 5 秒超时）与 `web browser snapshot`（`declared-reasoning.e2e.ts`、`document-preview.e2e.ts`、
+  `session-replay-reload.e2e.ts`）。归因因此是确定的 —— 四个都不属于本补丁集，
+  且 `patches/0013` 只碰 `apps/desktop/src/main.ts`。
+  **已知且有意未修：** `web browser snapshot` 那条红是因为两处 `Install Playwright browsers`
+  步骤用的是 `playwright install chromium webkit`、**没有** `--with-deps`，跑器拿到了浏览器二进制
+  却缺少 WebKit 的系统库（`libgtk-4.so.1`、`libgraphene-1.0.so.0`、`libgst*.so.0`、`libopus.so.0`、
+  `libevent-2.1.so.7`）；挂掉的正是测试名里带 `('WebKit')` 的那几个。两处补上 `--with-deps`
+  是可能的修法，**尚未应用**。
 
 本环境未验证：
 
