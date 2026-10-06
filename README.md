@@ -11,7 +11,7 @@ Upstream ships macOS and Windows only — its own `apps/desktop/README.md` state
 path up.
 
 > **Status: Linux x64 verified on Ubuntu 24.04 LTS and Debian 13 (trixie) in GitHub Actions, and
-> locally.** The twelve-patch series applies cleanly to the upstream tag and has been compiled,
+> locally.** The thirteen-patch series applies cleanly to the upstream tag and has been compiled,
 > packaged, and smoke-tested on Ubuntu 24.04 x86_64, and the whole chain (including installing the
 > deb and booting the AppImage) also runs inside a Debian 13 container. The verified build produced both an AppImage and a
 > deb; the AppImage was also started from its self-extracting mode because the authors' host
@@ -20,7 +20,7 @@ path up.
 > payload, an upload-plan error message that dropped the environment name, and four style /
 > repository-reference errors that upstream's own Linux gate rejects.
 
-Base: upstream tag **`dsh-v0.2.0-rc.2`** (commit `639ed0153972`), 12 patches.
+Base: upstream tag **`dsh-v0.2.0-rc.2`** (commit `639ed0153972`), 13 patches.
 
 ---
 
@@ -144,7 +144,7 @@ sh "$PATCH_REPO/apply.sh" "$SRC"
 ```
 
 `apply.sh` clones upstream at tag `dsh-v0.2.0-rc.2`, creates branch `linux-desktop`, runs
-`git am` on all 12 patches, and copies `.env.linux.example` to `.env.linux` (the packaging
+`git am` on all 13 patches, and copies `.env.linux.example` to `.env.linux` (the packaging
 code requires that file and aborts without it).
 
 Success conditions — all four must hold:
@@ -428,7 +428,7 @@ Not verified in this environment:
 ## 10. Layout, license, attribution
 
 ```
-patches/0001..0012*.patch   git format-patch series, applied in file-name order
+patches/0001..0013*.patch   git format-patch series, applied in file-name order
 apply.sh                    clone upstream at the base tag, apply the series, create .env.linux
 LINUX-DESKTOP.md            long-form guide: per-file notes, verified facts, open items
 LICENSE                     MIT (upstream DeepSeek + this patch set)

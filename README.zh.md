@@ -9,14 +9,14 @@ macOS 版保持一致的非官方补丁集。
 发布目标，打包测试也断言 `linux-x64` 目标必须被拒绝。本仓库就是把这层限制打开的那组 diff。
 
 > **状态：Linux x64 已在 GitHub Actions 的 Ubuntu 24.04 LTS 与 Debian 13（trixie）上验证通过，本机亦通过。**
-> 十二个补丁干净应用到上游 tag，并在 Ubuntu 24.04 x86_64 上完成编译、打包与冒烟；
+> 十三个补丁干净应用到上游 tag，并在 Ubuntu 24.04 x86_64 上完成编译、打包与冒烟；
 > 完整链路（含安装 deb 与启动 AppImage）也在 **Debian 13** 容器里跑通。
 > 产物为 AppImage 与 deb；因作者本机没有 `libfuse.so.2`，AppImage 也以自解压模式启动过。
 > `patches/0009`–`0012` 修的都是第一次真机/真 CI 跑出来的问题：typecheck 里的 `TS2339`、
 > 找不到 payload 的 `dsh` 启动器、丢掉了 environment 的 upload-plan 报错文案，以及四处会被
 > 上游自有 Linux 门禁拒绝的风格/仓库引用错误。
 
-基线：上游 tag **`dsh-v0.2.0-rc.2`**（commit `639ed0153972`），12 个补丁。
+基线：上游 tag **`dsh-v0.2.0-rc.2`**（commit `639ed0153972`），13 个补丁。
 
 ---
 
@@ -137,7 +137,7 @@ git clone https://github.com/lql341/deepseek-harness-linux-desktop.git "$PATCH_R
 sh "$PATCH_REPO/apply.sh" "$SRC"
 ```
 
-`apply.sh` 会克隆上游 tag `dsh-v0.2.0-rc.2`、创建分支 `linux-desktop`、对全部 12 个补丁执行
+`apply.sh` 会克隆上游 tag `dsh-v0.2.0-rc.2`、创建分支 `linux-desktop`、对全部 13 个补丁执行
 `git am`，并把 `.env.linux.example` 复制为 `.env.linux`（打包代码要求该文件存在，缺了会直接报错）。
 
 成功判据 —— 四条都要成立：
@@ -393,7 +393,7 @@ dpkg -L deepseek-harness | grep -E '/(bin|opt)/'    # 找到已安装的可执�
 ## 10. 目录结构、许可与署名
 
 ```
-patches/0001..0012*.patch   git format-patch 序列，按文件名顺序应用
+patches/0001..0013*.patch   git format-patch 序列，按文件名顺序应用
 apply.sh                    克隆上游基线 tag、应用序列、生成 .env.linux
 LINUX-DESKTOP.md            长文指南：逐文件说明、已验证事实、待办项
 LICENSE                     MIT（上游 DeepSeek + 本补丁集）
