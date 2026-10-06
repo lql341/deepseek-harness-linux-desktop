@@ -2,10 +2,15 @@
 
 > 本文档对应的 Linux x64 路径已在本机实际编译、打包并启动验证。验证产物为 AppImage
 > 和 deb；当前主机缺少 `libfuse.so.2`，AppImage 使用自解压运行模式完成启动检查。
-> 另在 **ubuntu-24.04** 的 GitHub Actions（workflow `Linux desktop verification`，
-> dispatch run `36982274054`）上完整跑通：9 个补丁 → `pnpm install` → `pnpm run typecheck` →
-> 应用构建 → `check:package` → `package:linux:x64:dir` → 产物体检 → 无头 runtime 冒烟 →
-> Xvfb GUI 冒烟 → AppImage + deb，全部绿色。
+> 另在 **ubuntu-24.04 与 Debian 13（trixie）** 的 GitHub Actions（workflow
+> `Linux desktop verification`）上完整跑通。最新一轮是**13 个补丁**的完整门禁集
+> （run `37411910000`，2026-10-06，head `d70585e`）：8 个 job 中 7 个绿，涵盖
+> `install + typecheck + package preflight`、打包、Debian 13、deb 升级路径与硬化启动、
+> 已发布产物校验与 Wayland 冒烟；唯一报红的是上游门禁聚合腿，且在同一次运行的
+> **未打补丁基线 tag** 上挂的是同样两个任务、同样四个测试，与本补丁集无关。
+> 更早的一轮（run `36982274054`，当时 9 个补丁）即已跑通 `pnpm install` →
+> `pnpm run typecheck` → 应用构建 → `check:package` → `package:linux:x64:dir` →
+> 产物体检 → 无头 runtime 冒烟 → Xvfb GUI 冒烟 → AppImage + deb。
 
 > 基线：上游 `deepseek-ai/deepseek-harness` tag **`dsh-v0.2.0-rc.2`**（commit `639ed0153972`）。
 > 目标：在 Linux x64 上得到与 macOS 版**行为一致**的 Electron 桌面壳，产物为 AppImage + deb。
@@ -193,7 +198,9 @@ Playwright 浏览器）：打过补丁 78/80 通过，未打补丁的上游 tag 
 一个**新发现的限制**：这个"关窗→唤回"循环**只成功一次**。第二次关窗之后，进程与 Host 仍在服务，
 但后续任何启动或激活都不再显示窗口（窗口树里只剩 10x10 的托盘窗口）。触发点已用顺序实验定位：
 把"先深链激活、后普通启动"对调后，**激活那一次成功、第二次普通启动失败**，说明问题在重复路径而非
-深链本身。曾按"重建后强制显示窗口"尝试修复（`patches/0013`），实测行为不变，已撤回以免留下未经验证的改动。
+深链本身。`patches/0013` 就是针对它的修复（激活要求窗口时，若重建后的窗口仍是隐藏状态就把它显示出来）；
+它曾一度被撤回，2026-10-06 重新入树。**该修复尚未在真桌面会话里复验**，所以这条限制暂时仍按"未修"
+记录 —— 需要再跑一次 `ci/desktop-session.sh` 确认"第二次关窗 → 唤回"是否真的能把窗口找回来。
 
 本次验证覆盖的运行时检查与仍建议确认的项目（标 ✅ 的在上述 ubuntu-24.04 CI 中已确认）：
 

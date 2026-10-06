@@ -102,7 +102,7 @@ export SRC="${SRC:-$HOME/src/deepseek-harness}"
 sh "$PATCH_REPO/apply.sh" "$SRC"
 
 # --- prove the patches landed ---------------------------------------------
-[ "$(git -C "$SRC" rev-parse HEAD^{tree})" = "5103892b735d996d9180605f73e5477bc84a894f" ] \
+[ "$(git -C "$SRC" rev-parse HEAD^{tree})" = "1bc46010b3ecd920638bd625a55957e71f07269a" ] \
   || { echo "FAIL: patched tree hash mismatch"; exit 1; }
 [ -f "$SRC/apps/desktop/.env.linux" ] || { echo "FAIL: .env.linux missing"; exit 1; }
 
@@ -151,9 +151,9 @@ Success conditions — all four must hold:
 
 ```sh
 git -C "$SRC" log --oneline | head -1
-#   expect: "fix(desktop): declare the Linux installer config fields"
+#   expect: "fix(desktop): keep a window on screen when activation rebuilds it"
 git -C "$SRC" rev-parse HEAD^{tree}
-#   expect: 5103892b735d996d9180605f73e5477bc84a894f
+#   expect: 1bc46010b3ecd920638bd625a55957e71f07269a
 git -C "$SRC" status --porcelain      # expect: empty
 test -f "$SRC/apps/desktop/.env.linux" && echo env-ok
 ```
@@ -287,10 +287,12 @@ With the default version these are
 
 Verified:
 
-- The series applies cleanly on `dsh-v0.2.0-rc.2`; after `git am` the resulting tree hash is
-  `5103892b735d996d9180605f73e5477bc84a894f`, with no leftover changes.
-- `apply.sh` ran end to end under a C locale with no git identity configured: fresh shallow
-  clone → 12 patches → `.env.linux` created → exit 0.
+- All 13 patches apply cleanly on `dsh-v0.2.0-rc.2`; after `git am` the resulting tree hash is
+  `1bc46010b3ecd920638bd625a55957e71f07269a`, with a clean worktree and no leftover changes.
+  (Re-measured against the current 13-patch series; the 12-patch hash
+  `5103892b735d996d9180605f73e5477bc84a894f` recorded earlier is no longer valid.)
+- `apply.sh` ran end to end, including under a C locale with no git identity configured: fresh
+  shallow clone → 13 patches → `.env.linux` created → exit 0.
 - Every changed file passes a syntax check; all native dependencies were resolved against the
   npm registry (Linux variants exist, `node-pty` ships `linux-x64/arm64` prebuilds).
 - `check:package` passed, and the official Linux build passed runtime preparation, Office
@@ -391,7 +393,8 @@ Verified:
   serves its local endpoint, with no `desktop policy: unsupported platform`. The DRM render-node
   and `wl_seat` warnings in the log come from the headless compositor having no GPU and no input
   devices, not from the application.
-- **The 13-patch series, full gate set** (run `37411910000`, 2026-10-06, head `d70585e`). Seven of
+- **The 13-patch series, full gate set** (run `37411910000`, 2026-10-06, head `d70585e`; the same
+  result was reproduced by the later push-triggered run `37431745619` on `main`, head `6380440`). Seven of
   the eight jobs are green, including `install + typecheck + package preflight`, the packaging
   job, Debian 13, the deb upgrade path / hardened launch, the published-artifact checks and the
   Wayland smoke. `upstream Linux gates, sandbox confinement, keyless agent smoke` reports
@@ -403,12 +406,15 @@ Verified:
   `apps/web/tests/document-preview.e2e.ts`, `apps/web/tests/session-replay-reload.e2e.ts`). The
   attribution is therefore exact — none of the four is ours, and `patches/0013` touches only
   `apps/desktop/src/main.ts`.
-  **Known and deliberately not fixed:** the `web browser snapshot` leg fails because both
-  `Install Playwright browsers` steps run `playwright install chromium webkit` **without**
+  **Cause identified, fix applied:** the `web browser snapshot` leg fails because both
+  `Install Playwright browsers` steps ran `playwright install chromium webkit` **without**
   `--with-deps`, so the runner gets the browser binaries but not WebKit's system libraries
   (`libgtk-4.so.1`, `libgraphene-1.0.so.0`, `libgst*.so.0`, `libopus.so.0`, `libevent-2.1.so.7`);
-  the tests that fail are exactly the `('WebKit')` ones. Adding `--with-deps` to both steps is the
-  likely fix and has **not** been applied.
+  the tests that fail are exactly the `('WebKit')` ones. Both steps now pass `--with-deps`; the
+  leg has **not** been re-run since, so the result above stands as recorded for this run.
+  Note that `--with-deps` only addresses this leg: `test:coverage` fails independently, on a
+  single flaky case in `scripts/persistence-schema.spec.ts:508`, and does so on the unpatched
+  base tag too — so the gate aggregate stays red until that second leg is handled separately.
 
 Not verified in this environment:
 
@@ -448,14 +454,22 @@ Not verified in this environment:
 ```
 patches/0001..0013*.patch   git format-patch series, applied in file-name order
 apply.sh                    clone upstream at the base tag, apply the series, create .env.linux
+verify.sh                   one-shot Linux diagnostic (--env-only / --full); emits a tarball
 LINUX-DESKTOP.md            long-form guide: per-file notes, verified facts, open items
 LICENSE                     MIT (upstream DeepSeek + this patch set)
 ```
 
+`verify.sh` is the diagnostic to run when a build fails on your Linux host: it records PASS/FAIL
+per step and writes a `dsh-verify-<stamp>.tar.gz` you can attach to an issue. It never uses
+`sudo` and writes only under `verify-logs/`.
+
 Each patch is one topic: (1) accept the target, (2) install the `dsh` command,
 (3) prepare the Linux runtime payload, (4) macOS-like shell behaviour, (5) documentation,
-(6) packaging type declarations, (7) Debian-safe executable naming, and (8) legacy launcher
-cleanup during upgrades.
+(6) packaging type declarations, (7) Debian-safe executable naming, (8) legacy launcher
+cleanup during upgrades, (9) Linux fields in the installer config declarations, (10) let the
+launcher reach the bundled `dsh` payload inside `app.asar`, (11) keep the update environment in
+the upload-plan error, (12) satisfy the upstream repository gates, and (13) keep a rebuilt
+window on screen after an activation.
 
 This patch set is distributed under the MIT License (see `LICENSE`). The patches are diffs
 against [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness),

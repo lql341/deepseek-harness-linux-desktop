@@ -97,7 +97,7 @@ export SRC="${SRC:-$HOME/src/deepseek-harness}"
 sh "$PATCH_REPO/apply.sh" "$SRC"
 
 # --- 证明补丁确实落地 ------------------------------------------------------
-[ "$(git -C "$SRC" rev-parse HEAD^{tree})" = "5103892b735d996d9180605f73e5477bc84a894f" ] \
+[ "$(git -C "$SRC" rev-parse HEAD^{tree})" = "1bc46010b3ecd920638bd625a55957e71f07269a" ] \
   || { echo "FAIL: patched tree hash mismatch"; exit 1; }
 [ -f "$SRC/apps/desktop/.env.linux" ] || { echo "FAIL: .env.linux missing"; exit 1; }
 
@@ -144,9 +144,9 @@ sh "$PATCH_REPO/apply.sh" "$SRC"
 
 ```sh
 git -C "$SRC" log --oneline | head -1
-#   期望: "fix(desktop): declare the Linux installer config fields"
+#   期望: "fix(desktop): keep a window on screen when activation rebuilds it"
 git -C "$SRC" rev-parse HEAD^{tree}
-#   期望: 5103892b735d996d9180605f73e5477bc84a894f
+#   期望: 1bc46010b3ecd920638bd625a55957e71f07269a
 git -C "$SRC" status --porcelain      # 期望: 空
 test -f "$SRC/apps/desktop/.env.linux" && echo env-ok
 ```
@@ -274,9 +274,10 @@ dpkg -L deepseek-harness | grep -E '/(bin|opt)/'    # 找到已安装的可执�
 
 已验证：
 
-- 补丁干净应用到 `dsh-v0.2.0-rc.2`；`git am` 后树哈希为
-  `5103892b735d996d9180605f73e5477bc84a894f`，无残留改动。
-- `apply.sh` 在 C locale、无 git 身份的机器上端到端跑通：浅克隆 → 12 个补丁 →
+- 13 个补丁全部干净应用到 `dsh-v0.2.0-rc.2`；`git am` 后树哈希为
+  `1bc46010b3ecd920638bd625a55957e71f07269a`，工作区干净、无残留改动。（该值按当前 13 个补丁
+  重新测得；早先 12 个补丁时的 `5103892b735d996d9180605f73e5477bc84a894f` 已失效。）
+- `apply.sh` 端到端跑通（含在 C locale、无 git 身份的机器上）：浅克隆 → 13 个补丁 →
   生成 `.env.linux` → exit 0。
 - 每个改动文件都过语法检查；原生依赖都能在 npm registry 上解析到 Linux 变体
   （`node-pty` 自带 `linux-x64/arm64` prebuild）。
@@ -362,7 +363,8 @@ dpkg -L deepseek-harness | grep -E '/(bin|opt)/'    # 找到已安装的可执�
   启动已发布的 deb，应用以**纯 Wayland 客户端**（无 X 服务器）启动并提供本机端点，无
   `desktop policy: unsupported platform`。日志里的 DRM render-node 与 `wl_seat` 警告来自
   headless 合成器没有 GPU/输入设备，与应用无关。
-- **13 个补丁的完整门禁集**（run `37411910000`，2026-10-06，head `d70585e`）：8 个 job 里 7 个绿，
+- **13 个补丁的完整门禁集**（run `37411910000`，2026-10-06，head `d70585e`；其后由 push 触发的
+  run `37431745619`（`main`，head `6380440`）复现了完全相同的结果）：8 个 job 里 7 个绿，
   含 `install + typecheck + package preflight`、打包、Debian 13、deb 升级路径与硬化启动、
   已发布产物校验、Wayland 冒烟。`upstream Linux gates, sandbox confinement, keyless agent smoke`
   报 **failure**，但只卡在它的 `Verdict` 汇总步 —— sandbox confinement 与 keyless agent smoke
@@ -371,11 +373,13 @@ dpkg -L deepseek-harness | grep -E '/(bin|opt)/'    # 找到已安装的可执�
   有一个 5 秒超时）与 `web browser snapshot`（`declared-reasoning.e2e.ts`、`document-preview.e2e.ts`、
   `session-replay-reload.e2e.ts`）。归因因此是确定的 —— 四个都不属于本补丁集，
   且 `patches/0013` 只碰 `apps/desktop/src/main.ts`。
-  **已知且有意未修：** `web browser snapshot` 那条红是因为两处 `Install Playwright browsers`
-  步骤用的是 `playwright install chromium webkit`、**没有** `--with-deps`，跑器拿到了浏览器二进制
+  **归因已定、修复已应用：** `web browser snapshot` 那条红是因为两处 `Install Playwright browsers`
+  步骤此前用的是 `playwright install chromium webkit`、**没有** `--with-deps`，跑器拿到了浏览器二进制
   却缺少 WebKit 的系统库（`libgtk-4.so.1`、`libgraphene-1.0.so.0`、`libgst*.so.0`、`libopus.so.0`、
-  `libevent-2.1.so.7`）；挂掉的正是测试名里带 `('WebKit')` 的那几个。两处补上 `--with-deps`
-  是可能的修法，**尚未应用**。
+  `libevent-2.1.so.7`）；挂掉的正是测试名里带 `('WebKit')` 的那几个。两处现已补上 `--with-deps`，
+  但该腿**尚未重跑**，故上面记录的仍是本次运行的结果。注意 `--with-deps` 只解决这一腿：
+  `test:coverage` 是**独立**失败的（`scripts/persistence-schema.spec.ts:508` 单个 flaky 用例），
+  且在未打补丁的基线 tag 上同样失败 —— 所以在第二条腿单独处理之前，门禁聚合仍会是红。
 
 本环境未验证：
 
@@ -409,13 +413,19 @@ dpkg -L deepseek-harness | grep -E '/(bin|opt)/'    # 找到已安装的可执�
 ```
 patches/0001..0013*.patch   git format-patch 序列，按文件名顺序应用
 apply.sh                    克隆上游基线 tag、应用序列、生成 .env.linux
+verify.sh                   一次性 Linux 诊断脚本（--env-only / --full），产出诊断 tarball
 LINUX-DESKTOP.md            长文指南：逐文件说明、已验证事实、待办项
 LICENSE                     MIT（上游 DeepSeek + 本补丁集）
 ```
 
+`verify.sh` 是在你的 Linux 主机上构建失败时该跑的诊断脚本：逐步记录 PASS/FAIL，并产出可直接
+附到 issue 里的 `dsh-verify-<时间戳>.tar.gz`。它不使用 `sudo`，只写 `verify-logs/` 下的内容。
+
 每个补丁一个主题：(1) 接受该目标，(2) 安装 `dsh` 命令，(3) 准备 Linux 运行时 payload，
 (4) macOS 风格的 shell 行为，(5) 文档，(6) 打包类型声明，(7) Debian 安全可执行名，
-(8) 升级时清理旧启动器。
+(8) 升级时清理旧启动器，(9) 补齐安装器配置声明里的 Linux 字段，(10) 让 Linux 启动器取到
+`app.asar` 内的 `dsh` payload，(11) 保留 upload-plan 报错里的 update 环境，(12) 满足上游仓库
+门禁，(13) 激活重建窗口时把它显示出来。
 
 本补丁集以 MIT 许可分发（见 `LICENSE`）。这些补丁是针对
 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) 的 diff，
