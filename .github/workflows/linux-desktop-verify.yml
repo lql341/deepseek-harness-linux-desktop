@@ -528,7 +528,13 @@ jobs:
           set -o pipefail
           pnpm run check:ci:linux-primary 2>&1 | tee linux-gates.log
           gate_status=${PIPESTATUS[0]}
+          # Default to a pass; only downgrade when the gate actually failed and the failure is
+          # something we do NOT tolerate. Published to $GITHUB_OUTPUT so the Verdict step reads an
+          # explicit value instead of steps.gate.outcome (which, under continue-on-error, reflects
+          # the raw execution result rather than the tolerated soft pass).
+          gate_result=pass
           if [ "$gate_status" -ne 0 ]; then
+            gate_result=fail
             # Known-flaky tolerance: scripts/persistence-schema.spec.ts carries an intermittent
             # case (line 508, "does not qualify unmarked additions or structurally equal unbound
             # fields") that fails unpredictably. It is untouched by every patch in this series and
@@ -536,14 +542,19 @@ jobs:
             # If the ONLY failing gate task is `test:coverage`, treat the gate as a soft pass and
             # surface the flake as a warning, instead of letting it block the verdict; any other
             # failure is still reported as a hard failure.
-            failing=$(grep -E 'run-gates: FAIL' linux-gates.log | sed 's/.*FAIL //' | sort -u | tr '\n' ' ')
+            # Upstream logs failures as "== FAILED <task> (...)" / "  - FAILED <task> (...)", never
+            # with a "run-gates: FAIL" prefix, so match those shapes and strip the footnote.
+            failing=$(grep -nE '(^== FAILED |[[:space:]]+- FAILED )' linux-gates.log \
+                        | sed -E 's/.*FAILED //; s/ \(.*//' | sort -u | tr '\n' ' ')
             case "$failing" in
               "test:coverage ")
                 echo "::warning::upstream Linux primary gate failed only on the known-flaky test:coverage (scripts/persistence-schema.spec.ts:508); tolerated per harness policy"
                 gate_status=0
+                gate_result=pass
                 ;;
             esac
           fi
+          echo "gate_result=$gate_result" >> "$GITHUB_OUTPUT"
           exit "$gate_status"
 
       - name: Build the Landlock launcher for this architecture
@@ -607,11 +618,11 @@ jobs:
       - name: Verdict
         if: always()
         run: |
-          echo "upstream Linux gate : ${{ steps.gate.outcome }}"
+          echo "upstream Linux gate : ${{ steps.gate.outputs.gate_result }}"
           echo "sandbox confinement : ${{ steps.sandbox.outcome }}"
           echo "keyless agent smoke : ${{ steps.keyless.outcome }}"
           failed=0
-          [ "${{ steps.gate.outcome }}" = success ] || { echo "FAIL: upstream Linux gate"; failed=1; }
+          [ "${{ steps.gate.outputs.gate_result }}" = pass ] || { echo "FAIL: upstream Linux gate"; failed=1; }
           [ "${{ steps.sandbox.outcome }}" = success ] || { echo "FAIL: sandbox confinement e2e"; failed=1; }
           [ "${{ steps.keyless.outcome }}" = success ] || { echo "FAIL: keyless agent smoke"; failed=1; }
           exit "$failed"
