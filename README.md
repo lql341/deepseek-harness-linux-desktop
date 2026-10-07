@@ -11,7 +11,7 @@ Upstream ships macOS and Windows only — its own `apps/desktop/README.md` state
 path up.
 
 > **Status: Linux x64 verified on Ubuntu 24.04 LTS and Debian 13 (trixie) in GitHub Actions, and
-> locally.** The thirteen-patch series applies cleanly to the upstream tag and has been compiled,
+> locally.** The fourteen-patch series applies cleanly to the upstream tag and has been compiled,
 > packaged, and smoke-tested on Ubuntu 24.04 x86_64, and the whole chain (including installing the
 > deb and booting the AppImage) also runs inside a Debian 13 container. The verified build produced both an AppImage and a
 > deb; the AppImage was also started from its self-extracting mode because the authors' host
@@ -20,7 +20,7 @@ path up.
 > payload, an upload-plan error message that dropped the environment name, and four style /
 > repository-reference errors that upstream's own Linux gate rejects.
 
-Base: upstream tag **`dsh-v0.2.0-rc.2`** (commit `639ed0153972`), 13 patches.
+Base: upstream tag **`dsh-v0.2.0-rc.2`** (commit `639ed0153972`), 14 patches.
 
 ---
 
@@ -102,7 +102,7 @@ export SRC="${SRC:-$HOME/src/deepseek-harness}"
 sh "$PATCH_REPO/apply.sh" "$SRC"
 
 # --- prove the patches landed ---------------------------------------------
-[ "$(git -C "$SRC" rev-parse HEAD^{tree})" = "1bc46010b3ecd920638bd625a55957e71f07269a" ] \
+[ "$(git -C "$SRC" rev-parse HEAD^{tree})" = "9e43fa571c6d7df8f364700ee2d0865b23fb1bb4" ] \
   || { echo "FAIL: patched tree hash mismatch"; exit 1; }
 [ -f "$SRC/apps/desktop/.env.linux" ] || { echo "FAIL: .env.linux missing"; exit 1; }
 
@@ -144,16 +144,16 @@ sh "$PATCH_REPO/apply.sh" "$SRC"
 ```
 
 `apply.sh` clones upstream at tag `dsh-v0.2.0-rc.2`, creates branch `linux-desktop`, runs
-`git am` on all 13 patches, and copies `.env.linux.example` to `.env.linux` (the packaging
+`git am` on all 14 patches, and copies `.env.linux.example` to `.env.linux` (the packaging
 code requires that file and aborts without it).
 
 Success conditions — all four must hold:
 
 ```sh
 git -C "$SRC" log --oneline | head -1
-#   expect: "fix(desktop): keep a window on screen when activation rebuilds it"
+#   expect: "fix(desktop): restore the window on a plain second launch"
 git -C "$SRC" rev-parse HEAD^{tree}
-#   expect: 1bc46010b3ecd920638bd625a55957e71f07269a
+#   expect: 9e43fa571c6d7df8f364700ee2d0865b23fb1bb4
 git -C "$SRC" status --porcelain      # expect: empty
 test -f "$SRC/apps/desktop/.env.linux" && echo env-ok
 ```
@@ -287,12 +287,12 @@ With the default version these are
 
 Verified:
 
-- All 13 patches apply cleanly on `dsh-v0.2.0-rc.2`; after `git am` the resulting tree hash is
-  `1bc46010b3ecd920638bd625a55957e71f07269a`, with a clean worktree and no leftover changes.
-  (Re-measured against the current 13-patch series; the 12-patch hash
+- All 14 patches apply cleanly on `dsh-v0.2.0-rc.2`; after `git am` the resulting tree hash is
+  `9e43fa571c6d7df8f364700ee2d0865b23fb1bb4`, with a clean worktree and no leftover changes.
+  (Re-measured against the current 14-patch series; the 12-patch hash
   `5103892b735d996d9180605f73e5477bc84a894f` recorded earlier is no longer valid.)
 - `apply.sh` ran end to end, including under a C locale with no git identity configured: fresh
-  shallow clone → 13 patches → `.env.linux` created → exit 0.
+  shallow clone → 14 patches → `.env.linux` created → exit 0.
 - Every changed file passes a syntax check; all native dependencies were resolved against the
   npm registry (Linux variants exist, `node-pty` ships `linux-x64/arm64` prebuilds).
 - `check:package` passed, and the official Linux build passed runtime preparation, Office
@@ -393,7 +393,7 @@ Verified:
   serves its local endpoint, with no `desktop policy: unsupported platform`. The DRM render-node
   and `wl_seat` warnings in the log come from the headless compositor having no GPU and no input
   devices, not from the application.
-- **The 13-patch series, full gate set** (run `37411910000`, 2026-10-06, head `d70585e`; the same
+- **The 14-patch series, full gate set** (run `37411910000`, 2026-10-06, head `d70585e`; the same
   result was reproduced by the later push-triggered run `37431745619` on `main`, head `6380440`). Seven of
   the eight jobs are green, including `install + typecheck + package preflight`, the packaging
   job, Debian 13, the deb upgrade path / hardened launch, the published-artifact checks and the
@@ -442,14 +442,13 @@ Not verified in this environment:
 - Only `linux-x64`; `linux-arm64` is not part of this series.
 - The welcome window's caption colour follows the system palette only at creation.
 - The `deb` maintainer field is a placeholder (`DeepSeek Harness`).
-- **A plain second launch does not restore the window.** Closing the last window keeps the
-  application and its Host running (by design), and the first `dsh://` activation or launch restores
-  the window — this is exactly what `patches/0013` fixes, and it is verified: in run `37491323328`
-  `ci/desktop-session.sh` reports `the dsh:// activation brought the window back`. Close it again
-  and then perform a *plain* second launch, however, and the single-instance lock routes it to the
-  running owner but nothing puts a window back on screen: the session shows only the 10x10 tray
-  helper while the Host endpoint still answers. That second-cycle plain-relaunch gap is outside
-  `patches/0013`'s scope (it targets the activation-rebuild path) and remains a known limitation.
+- **Window restore after close is handled end to end.** Closing the last window keeps the
+  application and its Host running (by design). The first `dsh://` activation or launch restores the
+  window — `patches/0013` fixes that activation-rebuild path, verified in run `37491323328`
+  (`the dsh:// activation brought the window back`). A *plain* second launch is now fixed too:
+  `patches/0014` narrows the early-return in `focusPrimaryWindow` so the instance-lock-routed relaunch
+  brings the window back instead of leaving only the 10x10 tray helper. `ci/desktop-session.sh`
+  asserts both paths and fails the run if the window does not return.
 - **Two checks cannot run inside the Debian container job.** Docker's default seccomp profile
   denies `unshare`, so the bwrap sandbox leg self-skips there (the Landlock leg runs strictly) and
   the keyless agent smoke fails while reading its own session directory
@@ -459,7 +458,7 @@ Not verified in this environment:
 ## 10. Layout, license, attribution
 
 ```
-patches/0001..0013*.patch   git format-patch series, applied in file-name order
+patches/0001..0014*.patch   git format-patch series, applied in file-name order
 apply.sh                    clone upstream at the base tag, apply the series, create .env.linux
 verify.sh                   one-shot Linux diagnostic (--env-only / --full); emits a tarball
 LINUX-DESKTOP.md            long-form guide: per-file notes, verified facts, open items

@@ -1,0 +1,54 @@
+From d1c1cf9ba9fcbacf0aa5ff1fb0a4efa10b28c785 Mon Sep 17 00:00:00 2001
+From: linux-port <linux-port@localhost>
+Date: Wed, 7 Oct 2026 17:44:18 +0800
+Subject: [PATCH] fix(desktop): restore the window on a plain second launch
+
+Closing the last window leaves the application and its Host running on Linux
+(the macOS-style behaviour this port adds). A later launch is routed to the
+owner by the single-instance lock and fires focusPrimaryWindow(), but the
+window came back only for the dsh:// activation path (0013): the existing
+early-return `if (window === mainWindow && !enteredWorkspace) return` left a
+hidden main window parked whenever no welcome surface was active, so a plain
+relaunch mapped nothing but the tray helper.
+
+Narrow the early-return to its actual intent -- suppress the hidden main window
+only while the welcome surface is still the active one -- and fall through to
+show it once the welcome is gone. In the recreate branch, show whichever surface
+the navigation settled on (welcome if it opened one, else the main window) so the
+showWelcome() path that destroys the freshly built main window still ends with a
+visible window.
+---
+ apps/desktop/src/main.ts | 14 ++++++++++----
+ 1 file changed, 10 insertions(+), 4 deletions(-)
+
+diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
+index e87dfa8..b32870d 100644
+--- a/apps/desktop/src/main.ts
++++ b/apps/desktop/src/main.ts
+@@ -1242,13 +1242,19 @@ async function main(): Promise<void> {
+       const created = mainWindow
+       void (backend.state.phase === 'ready' ? openInitialWindow() : navigateMain(applicationUrl)).then(() => {
+         // An activation asked for a window, so never leave a hidden one behind: once the welcome
+-        // window has been closed the Host stays up but nothing else puts it back on screen.
+-        if (!quitting && created !== undefined && !created.isDestroyed() && !created.isVisible()) created.show()
++        // window has been closed the Host stays up but nothing else puts it back on screen. Show
++        // whichever surface the navigation settled on (welcome if it opened one, else the main
++        // window) so a plain second launch routed through the instance lock restores a usable window.
++        const target = welcomeWindow ?? created
++        if (!quitting && target !== undefined && !target.isDestroyed() && !target.isVisible()) target.show()
+       }).catch((error: unknown) => { reportFatal(error, 'main') })
+       return
+     }
+-    // Startup and sign-out select the visible window before activation may reveal the workspace.
+-    if (window === mainWindow && !enteredWorkspace) return
++    // Startup and sign-out select the visible window before activation may reveal the workspace:
++    // while the welcome surface is still the active one, leave the hidden main window parked. Once
++    // the welcome is gone (a later launch after everything closed), bring the main window back
++    // instead of leaving it hidden with only the tray helper mapped.
++    if (welcomeWindow !== undefined && window === mainWindow && !enteredWorkspace) return
+     if (window.isMinimized()) window.restore()
+     window.show()
+     window.focus()
+-- 
+2.54.0 (Apple Git-157)
+

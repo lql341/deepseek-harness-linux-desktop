@@ -16,7 +16,7 @@ macOS 版保持一致的非官方补丁集。
 > 找不到 payload 的 `dsh` 启动器、丢掉了 environment 的 upload-plan 报错文案，以及四处会被
 > 上游自有 Linux 门禁拒绝的风格/仓库引用错误。
 
-基线：上游 tag **`dsh-v0.2.0-rc.2`**（commit `639ed0153972`），13 个补丁。
+基线：上游 tag **`dsh-v0.2.0-rc.2`**（commit `639ed0153972`），14 个补丁。
 
 ---
 
@@ -97,7 +97,7 @@ export SRC="${SRC:-$HOME/src/deepseek-harness}"
 sh "$PATCH_REPO/apply.sh" "$SRC"
 
 # --- 证明补丁确实落地 ------------------------------------------------------
-[ "$(git -C "$SRC" rev-parse HEAD^{tree})" = "1bc46010b3ecd920638bd625a55957e71f07269a" ] \
+[ "$(git -C "$SRC" rev-parse HEAD^{tree})" = "9e43fa571c6d7df8f364700ee2d0865b23fb1bb4" ] \
   || { echo "FAIL: patched tree hash mismatch"; exit 1; }
 [ -f "$SRC/apps/desktop/.env.linux" ] || { echo "FAIL: .env.linux missing"; exit 1; }
 
@@ -137,16 +137,16 @@ git clone https://github.com/lql341/deepseek-harness-linux-desktop.git "$PATCH_R
 sh "$PATCH_REPO/apply.sh" "$SRC"
 ```
 
-`apply.sh` 会克隆上游 tag `dsh-v0.2.0-rc.2`、创建分支 `linux-desktop`、对全部 13 个补丁执行
+`apply.sh` 会克隆上游 tag `dsh-v0.2.0-rc.2`、创建分支 `linux-desktop`、对全部 14 个补丁执行
 `git am`，并把 `.env.linux.example` 复制为 `.env.linux`（打包代码要求该文件存在，缺了会直接报错）。
 
 成功判据 —— 四条都要成立：
 
 ```sh
 git -C "$SRC" log --oneline | head -1
-#   期望: "fix(desktop): keep a window on screen when activation rebuilds it"
+#   期望: "fix(desktop): restore the window on a plain second launch"
 git -C "$SRC" rev-parse HEAD^{tree}
-#   期望: 1bc46010b3ecd920638bd625a55957e71f07269a
+#   期望: 9e43fa571c6d7df8f364700ee2d0865b23fb1bb4
 git -C "$SRC" status --porcelain      # 期望: 空
 test -f "$SRC/apps/desktop/.env.linux" && echo env-ok
 ```
@@ -274,10 +274,10 @@ dpkg -L deepseek-harness | grep -E '/(bin|opt)/'    # 找到已安装的可执�
 
 已验证：
 
-- 13 个补丁全部干净应用到 `dsh-v0.2.0-rc.2`；`git am` 后树哈希为
-  `1bc46010b3ecd920638bd625a55957e71f07269a`，工作区干净、无残留改动。（该值按当前 13 个补丁
+- 14 个补丁全部干净应用到 `dsh-v0.2.0-rc.2`；`git am` 后树哈希为
+  `9e43fa571c6d7df8f364700ee2d0865b23fb1bb4`，工作区干净、无残留改动。（该值按当前 14 个补丁
   重新测得；早先 12 个补丁时的 `5103892b735d996d9180605f73e5477bc84a894f` 已失效。）
-- `apply.sh` 端到端跑通（含在 C locale、无 git 身份的机器上）：浅克隆 → 13 个补丁 →
+- `apply.sh` 端到端跑通（含在 C locale、无 git 身份的机器上）：浅克隆 → 14 个补丁 →
   生成 `.env.linux` → exit 0。
 - 每个改动文件都过语法检查；原生依赖都能在 npm registry 上解析到 Linux 变体
   （`node-pty` 自带 `linux-x64/arm64` prebuild）。
@@ -363,7 +363,7 @@ dpkg -L deepseek-harness | grep -E '/(bin|opt)/'    # 找到已安装的可执�
   启动已发布的 deb，应用以**纯 Wayland 客户端**（无 X 服务器）启动并提供本机端点，无
   `desktop policy: unsupported platform`。日志里的 DRM render-node 与 `wl_seat` 警告来自
   headless 合成器没有 GPU/输入设备，与应用无关。
-- **13 个补丁的完整门禁集**（run `37411910000`，2026-10-06，head `d70585e`；其后由 push 触发的
+- **14 个补丁的完整门禁集**（run `37411910000`，2026-10-06，head `d70585e`；其后由 push 触发的
   run `37431745619`（`main`，head `6380440`）复现了完全相同的结果）：8 个 job 里 7 个绿，
   含 `install + typecheck + package preflight`、打包、Debian 13、deb 升级路径与硬化启动、
   已发布产物校验、Wayland 冒烟。`upstream Linux gates, sandbox confinement, keyless agent smoke`
@@ -405,12 +405,12 @@ dpkg -L deepseek-harness | grep -E '/(bin|opt)/'    # 找到已安装的可执�
 - 只支持 `linux-x64`；`linux-arm64` 不在本系列内。
 - 欢迎窗口的标题栏配色只在创建时跟随系统主题。
 - `deb` 的 maintainer 字段是占位符（`DeepSeek Harness`）。
-- **普通的第二次启动不会把窗口找回来**：关掉最后一个窗口后应用与其 Host 继续运行（这是设计），
-  之后的第一次 `dsh://` 激活或启动**能**把窗口找回 —— 这正是 `patches/0013` 修的，且已验证：run
-  `37491323328` 里三处 `ci/desktop-session.sh` 会话都报告 `the dsh:// activation brought the window
-  back`。但**再关一次之后做一次*普通*启动**，单实例锁会把它路由回运行实例，却没有任何东西再把窗口
-  显示出来 —— `ci/desktop-session.sh` 里只剩 10x10 的托盘辅助窗口，而 Host 端点仍在应答。这一
-  "普通第二次启动唤回"缺口不在 `patches/0013` 范围内（它只修激活重建路径），目前仍按已知限制记录。
+- **关窗后找回窗口已端到端覆盖**：关掉最后一个窗口后应用与其 Host 继续运行（这是设计），
+  之后的第一次 `dsh://` 激活或启动**能**把窗口找回 —— `patches/0013` 修的就是这条激活重建路径，
+  已在 run `37491323328` 验证（`the dsh:// activation brought the window back`）。**普通第二次启动**
+  现在也修了：`patches/0014` 收窄了 `focusPrimaryWindow` 里的 early-return，让单实例锁路由回来的
+  二次启动把窗口重新显示，而不是只剩 10x10 托盘辅助窗。`ci/desktop-session.sh` 对两条路径都做断言，
+  窗口若找不回会让该 run 失败。
 - **两项检查无法在 Debian 容器 job 里真跑**：Docker 默认 seccomp 禁止 `unshare`，因此 bwrap
   沙箱腿在那里自跳过（Landlock 腿严格跑并通过），而无 key agent 冒烟会在读取自己的会话目录时
   失败（`ENOENT …/.sessions`）且 harness 没有把驱动的 stderr 带出来，所以只做**报告**、不作为门禁。
@@ -419,7 +419,7 @@ dpkg -L deepseek-harness | grep -E '/(bin|opt)/'    # 找到已安装的可执�
 ## 10. 目录结构、许可与署名
 
 ```
-patches/0001..0013*.patch   git format-patch 序列，按文件名顺序应用
+patches/0001..0014*.patch   git format-patch 序列，按文件名顺序应用
 apply.sh                    克隆上游基线 tag、应用序列、生成 .env.linux
 verify.sh                   一次性 Linux 诊断脚本（--env-only / --full），产出诊断 tarball
 LINUX-DESKTOP.md            长文指南：逐文件说明、已验证事实、待办项

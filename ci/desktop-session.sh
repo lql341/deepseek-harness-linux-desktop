@@ -170,13 +170,14 @@ kill -0 "$APP_PID" 2>/dev/null || fail "the owning process died during the secon
 
 restored2=$(wait_for_window "$APP_PID" 30)
 if [ -n "$restored2" ]; then
-  note "PASS: the window returned after the second launch ($restored2)"
+  note "PASS: the window returned after the plain second launch ($restored2)"
+  import -window root "$SHOT_DIR/session-second-launch.png" 2>/dev/null || true
 else
-  # Known limitation (README "Known limits"): patches/0013 fixes the dsh:// activation rebuild path,
-  # so the first activation brings the window back (verified in run 37491323328). A *plain* second
-  # launch, however, is routed to the running owner by the instance lock but nothing puts a window
-  # back on screen -- the process and its Host keep serving, only the tray helper is mapped.
-  known_issue "no window after the plain second launch (the dsh:// activation path is fixed by 0013); see README known limits"
+  # patches/0013 fixed the dsh:// activation-rebuild path; patches/0014 fixed this plain second
+  # launch path by narrowing the early-return in focusPrimaryWindow so the instance-lock-routed
+  # relaunch shows the window. If this still fails, the fix regressed -- fail the run.
+  fail "no window after the plain second launch; patches/0014 should have restored it"
+  diagnose "$APP_PID"
   diagnose "$APP_PID"
 fi
 import -window root "$SHOT_DIR/session-relaunch.png" 2>/dev/null || true
