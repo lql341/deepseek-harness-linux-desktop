@@ -152,8 +152,9 @@ Success conditions — all four must hold:
 git -C "$SRC" log --oneline | head -1
 #   expect: "fix(desktop): restore the window on a plain second launch"
 git -C "$SRC" rev-parse HEAD^{tree}
-#   expect: the current patched tree hash (run apply.sh to see it; it is stable
-#            for this 14-patch series and recorded by verify.sh)
+#   expect: 9e43fa571c6d7df8f364700ee2d0865b23fb1bb4
+#            (the tree hash of this exact 14-patch series; a different value means a patch did
+#            not apply, or the series changed. Recompute after intentionally changing patches/.)
 git -C "$SRC" status --porcelain      # expect: empty
 test -f "$SRC/apps/desktop/.env.linux" && echo env-ok
 ```
@@ -285,148 +286,87 @@ With the default version these are
 
 ## 8. Verified / not verified
 
+**The source of truth for "is it green?" is CI, not this document.** Every claim below is
+produced by the `Linux desktop verification` workflow; read the run list and per-step logs at
+<https://github.com/lql341/deepseek-harness-linux-desktop/actions> for the current state.
+This section records *what the suite covers* and *what it concluded*, so a failure can be
+triaged without re-deriving what the jobs do.
+
+The workflow's jobs and what each one establishes:
+
+| Job | Establishes |
+|---|---|
+| `install + typecheck + package preflight` | the series applies, dependencies install, `typecheck` passes, `check:package` validates the Linux config |
+| `package --dir + artifact inspection + runtime smoke` | the real build produces AppImage + deb, the runtime answers from inside `app.asar`, the artifacts are well-formed |
+| `published artifacts - checksums, install, desktop session, AppImage` | the **published** bytes (not a fresh build) match `SHA256SUMS`, the deb installs, a real desktop session behaves, the AppImage boots without FUSE |
+| `Debian 13 (trixie)` | the whole chain on Debian, not just Ubuntu — including the bwrap leg self-skipping under Docker's seccomp, which is reported rather than gated |
+| `deb upgrade path and AppArmor-hardened launch` | upgrading `…linux.1` → `…linux.2` cleans the legacy launcher, and the app starts under `kernel.apparmor_restrict_unprivileged_userns=1` **without** `--no-sandbox` |
+| `Wayland` | the deb boots as a pure Wayland client under a headless compositor |
+| `upstream Linux gates, sandbox confinement, keyless agent smoke` | upstream's own Linux gate, bwrap/Landlock confinement, and a keyless agent turn |
+| `linux-gates-baseline` | the **same** upstream gate on the *unpatched* base tag, so a failing gate can be attributed to this series or to the runner |
+
 Verified:
 
-- All 14 patches apply cleanly on `dsh-v0.2.0-rc.2`; after `git am` the resulting tree hash is
-  a stable tree hash (run `git -C <src> rev-parse HEAD^{tree}` to confirm; it is recorded by
-  `apply.sh` and `verify.sh`), with a clean worktree and no leftover changes.
-  (The 12-patch hash `5103892b735d996d9180605f73e5477bc84a894f` recorded earlier is no longer valid.)
-- `apply.sh` ran end to end, including under a C locale with no git identity configured: fresh
-  shallow clone → 14 patches → `.env.linux` created → exit 0.
-- Every changed file passes a syntax check; all native dependencies were resolved against the
-  npm registry (Linux variants exist, `node-pty` ships `linux-x64/arm64` prebuilds).
-- `check:package` passed, and the official Linux build passed runtime preparation, Office
-  document round-trip, and Electron packaging stages.
-- The resulting artifacts were `deepseek-harness-0.2.0-rc.2-linux-x86_64.AppImage` and
-  `deepseek-harness-0.2.0-rc.2-linux-amd64.deb`; the deb metadata and contents were inspected.
-- The Linux installer uses the Debian-safe executable name `deepseek-harness`; its generated
-  `postinst` registers that name with `update-alternatives` instead of using the display name,
-  and removes the legacy `/usr/bin/DeepSeek Harness` symlink during upgrades.
-- The deb installed successfully on Debian/Ubuntu via `apt`; dpkg reports `install ok installed`
-  and `/usr/bin/deepseek-harness` resolves through the expected alternatives entry.
-- The packaged application started successfully and exposed its local `dsh web` endpoint.
-- **GitHub Actions on `ubuntu-24.04`** (workflow `Linux desktop verification`, dispatch run
-  `37000258154`, 2026-10-02): clean clone → 12 patches → `pnpm install --frozen-lockfile` →
-  `pnpm run typecheck` → `apps/desktop` build → `check:package` → `package:linux:x64:dir` →
-  artifact inspection → headless runtime smoke → Xvfb GUI smoke → AppImage + deb → deb
-  install/exercise/uninstall → AppImage boot → desktop suite baseline, every step green.
-- **The deb works end to end on the runner.** `apt-get install` reports `Status: install ok
-  installed`; `update-alternatives` points `/usr/bin/deepseek-harness` at
+- All 14 patches apply cleanly on `dsh-v0.2.0-rc.2`; after `git am` the tree hash is
+  `9e43fa571c6d7df8f364700ee2d0865b23fb1bb4` with a clean worktree and no leftover changes.
+- `apply.sh` runs end to end, including under a C locale with no git identity configured:
+  fresh shallow clone → 14 patches → `.env.linux` created → exit 0.
+- `check:package` passes and the official Linux build passes runtime preparation, Office
+  document round-trip, and Electron packaging.
+- The packaged application starts and serves its local `dsh web` endpoint, with no
+  `desktop policy: unsupported platform` rejection on Ubuntu, Debian 13, or Wayland.
+- The **deb works end to end**: `apt-get install` reports `Status: install ok installed`;
+  `update-alternatives` points `/usr/bin/deepseek-harness` at
   `/opt/DeepSeek Harness/deepseek-harness`; `xdg-mime query default x-scheme-handler/dsh`
   answers `deepseek-harness.desktop`; the installed binary runs as Electron 44 / Node 24;
   `resources/runtime/cli/bin/dsh --version` prints `0.2.0-rc.2`; the packaged command manager
-  installs `~/.local/bin/dsh` and `dsh --version` works from `PATH`; removal and
-  `apt-get remove` both leave nothing behind. (`patches/0010` is what makes the launcher
-  reachable at all — before it, every run printed `dsh: the … payload is missing`.)
-- **The AppImage boots without FUSE.** `--appimage-extract-and-run` (also the Ubuntu 23.10+
-  path) serves `dsh web: http://127.0.0.1:<port>` for the full 40 s window with no
-  `desktop policy: unsupported platform` rejection; the artifact is an ELF 64-bit x86-64
-  executable.
-- **Desktop suite baseline on Linux**: 123 of 128 files pass (1357 tests passed, 58 skipped).
-  The single failing file is `apps/desktop/tests/macos-notarization-proxy.spec.ts`, which
-  guards a macOS-only feature (`proxy recovery requires macOS`) and whose `flock` helper is
-  not built on Linux. The two other files that failed before — `cli-launcher.spec.ts`
-  (our launcher regression, fixed by `patches/0010`) and `desktop-upload-plan.spec.ts`
-  (`patches/0011`) — now pass.
-- **Upstream's own Linux gate**, `pnpm run check:ci:linux-primary` (run `37042752808`, serial and
-  with Playwright browsers): 78 of 80 gates pass on the patched tree, against 79 of 80 on the
-  unpatched base tag under identical settings. Neither remaining failure is ours:
-  `web browser snapshot` fails the same way on the unpatched tag on this runner (the browsers
-  install, the runner lacks their system libraries), and one flaky test in
-  `scripts/persistence-schema.spec.ts` — a file the series never touches — passed on the
-  base-tag run and varied 0/1/8 failures across runs. `patches/0012` fixed the two gate
-  failures that were ours: four oxlint style errors and a commit-hash reference that
-  `verify-repository-references` rejects.
-- **Sandbox confinement on a real kernel**: the bwrap leg (2 files) and the Landlock leg
-  (2 files) both pass, and each leg is asserted to have *run* rather than self-skipped — the
-  Landlock files force the bwrap rung off, so each proves exactly one mechanism.
-- **A keyless agent turn**: `apps/cli/tests/profiles/headless/tests/keyless-smoke.e2e.ts`
-  boots the real Loader tree with no API key, runs the production `bash` tool, asserts the
-  `tool/call` → `tool/result` round trip (`CLI_TOOL_ROUND_TRIP`) and that the turn is persisted
-  as zstd JSONL. Together with `scripts/smoke-runtime.ts` this covers the toolchain on Linux:
-  PTY, FFI (koffi), sharp, ripgrep, glob, the bundled pnpm and Python, and real
-  DOCX/XLSX/PPTX→PDF conversion through the bundled Office engine with `PATH` emptied.
-- The first real Linux typecheck failed the whole repository (`pnpm run typecheck`, exit 2) on
-  `apps/desktop/tests/installer-packaging.spec.ts` with three `TS2339`s — `Property 'linux'`
-  and `Property 'deb'` do not exist on `DesktopElectronBuilderConfig`. The hand-written
-  declaration in `electron-builder.config.d.mts` was never extended for the Linux target;
-  `patches/0009` fixes it and the typecheck then passes.
-- The bundled runtime answers from inside the archive:
+  installs `~/.local/bin/dsh` and it works from `PATH`; removal and `apt-get remove` both
+  leave nothing behind. (`patches/0010` is what makes the launcher reachable at all — before
+  it, every run printed `dsh: the … payload is missing`.)
+- The Linux installer uses the Debian-safe executable name `deepseek-harness`; its generated
+  `postinst` registers that name with `update-alternatives` instead of using the display name,
+  and removes the legacy `/usr/bin/DeepSeek Harness` symlink during upgrades.
+- The **AppImage boots without FUSE** via `--appimage-extract-and-run` (also the Ubuntu 23.10+
+  path) and the artifact is an ELF 64-bit x86_64 executable.
+- The bundled runtime answers from *inside* the archive:
   `ELECTRON_RUN_AS_NODE=1 <launcher> --expose-internals resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js --version`
-  prints `0.2.0-rc.2` and exits 0. The payload lives **inside** `app.asar`; `asarUnpack` holds
+  prints `0.2.0-rc.2` and exits 0. The payload lives inside `app.asar`; `asarUnpack` holds
   only the `.node`/`.so` binaries, ripgrep, the libreoffice kit and the Landlock launcher, so a
   shell test on that path can never succeed.
 - The Linux native set is complete in the unpacked tree (`node-pty`, `sharp-linux`,
   `koffi-linux`, `ripgrep-linux`, `node-addon-system-linux`, `sherpa-onnx-linux`,
-  `libreoffice-kit-wasm`) and there are no darwin/win32 leftovers outside
-  `resources/runtime/pnpm`. That directory is a verbatim copy of the published pnpm package and
-  carries the same cross-platform vendored helpers in the shipped macOS build.
-- Under Xvfb the shell boots and serves its local endpoint (`dsh web: http://127.0.0.1:<port>`)
-  with no `desktop policy: unsupported platform` rejection.
-- **A real desktop session** (`ci/desktop-session.sh`, run `37089025040`; Xvfb + openbox +
-  a session bus, driving the installed deb): the window is created and mapped
-  (`DeepSeek Harness`, 1288x824), closing the last window **does not** end the application,
-  `x-scheme-handler/dsh` resolves to the package's `deepseek-harness.desktop`, and activating
-  that entry with `dsh://open` **brings the window back**; a later launch is routed to the
-  running instance instead of starting a second one.
-- **Debian 13 (trixie), runs `37091835014` and `37094351188` — every step green.** Inside a
-  `debian:13` container the job bootstraps Node 24 and pnpm 11.7.0 from source, applies the series,
-  installs the workspace, typechecks, runs the packaging preflight, builds the directory target,
-  smokes the bundled runtime, builds the deb and the AppImage, installs the deb with apt
-  (`Status: install ok installed`; `/usr/bin/deepseek-harness` through `update-alternatives`),
-  resolves `dsh://` to `deepseek-harness.desktop`, runs the installed binary as Electron 44 /
-  Node 24, installs and removes `~/.local/bin/dsh` through the packaged command manager
-  (`dsh --version` → `0.2.0-rc.2`), drives the same desktop session as Ubuntu (window mapped,
-  closing it does not end the application, a `dsh://` activation brings it back, a later launch is
-  routed to the running instance), uninstalls cleanly, and boots the AppImage with
-  `--appimage-extract-and-run` for the full 40 s window with no
-  `desktop policy: unsupported platform`.
-- **The deb upgrade path and the hardened-kernel launch** (run `37095694923`). Installing
-  `v0.2.0-rc.2-linux.1` and then `…-linux.2` on top of it removes a legacy
-  `/usr/bin/DeepSeek Harness` link while `update-alternatives` keeps resolving
-  `/usr/bin/deepseek-harness`. With `kernel.apparmor_restrict_unprivileged_userns=1` — what
-  Ubuntu 23.10+ does, and the reason an AppImage can refuse to start there — the package installs
-  `/etc/apparmor.d/deepseek-harness` and the application still starts and passes the whole session
-  check **without** `--no-sandbox` (`chrome-sandbox` stays 0755; the profile carries the sandbox).
-- **Wayland** (run `37135502569`). With a headless Weston compositor and
-  `--ozone-platform=wayland`, the published deb boots as a pure Wayland client (no X server) and
-  serves its local endpoint, with no `desktop policy: unsupported platform`. The DRM render-node
-  and `wl_seat` warnings in the log come from the headless compositor having no GPU and no input
-  devices, not from the application.
-- **The 14-patch series, full gate set** (run `37411910000`, 2026-10-06, head `d70585e`; the same
-  result was reproduced by the later push-triggered run `37431745619` on `main`, head `6380440`). Seven of
-  the eight jobs are green, including `install + typecheck + package preflight`, the packaging
-  job, Debian 13, the deb upgrade path / hardened launch, the published-artifact checks and the
-  Wayland smoke. `upstream Linux gates, sandbox confinement, keyless agent smoke` reports
-  **failure**, but only through its `Verdict` step — the sandbox confinement and keyless agent
-  smoke legs both pass, and the failure is the upstream gate aggregate, which fails on the **same
-  two tasks and the same four tests on the unpatched base tag in the same run**: `test:coverage`
-  (one 5 s timeout in `scripts/persistence-schema.spec.ts` out of 37 874 passing tests) and
-  `web browser snapshot` (`apps/web/tests/declared-reasoning.e2e.ts`,
-  `apps/web/tests/document-preview.e2e.ts`, `apps/web/tests/session-replay-reload.e2e.ts`). None
-  of the four is ours, and `patches/0013` touches only `apps/desktop/src/main.ts`.
-- **`--with-deps` verified** (run `37491323328`, 2026-10-06, head `ce8b23a`). The `web browser
-  snapshot` leg had failed because both `Install Playwright browsers` steps ran
-  `playwright install chromium webkit` **without** `--with-deps`, so the runner had the browser
-  binaries but not WebKit's system libraries (`libgtk-4.so.1`, `libgraphene-1.0.so.0`,
-  `libgst*.so.0`, `libopus.so.0`, `libevent-2.1.so.7`); every failure was a `browserType.launch`
-  one. Both steps now pass `--with-deps`, and the leg is green on the patched tree (1859.98 s) and
-  on the unpatched baseline (1678.95 s), with no `missing dependencies` error left in the log.
-- **`test:coverage` is now tolerated as a known flake.** With `--with-deps` applied (run
-  `37491323328`) the only remaining gate failure was the single case
-  `scripts/persistence-schema.spec.ts:508` ("does not qualify unmarked additions or structurally
-  equal unbound fields"). That file is untouched by this series, and the case is flaky — it failed
-  on the baseline in run `37431745619` yet passed on the baseline in run `37491323328`. The gate
-  step now treats the upstream primary gate as a soft pass (emitting a `::warning::`) when
-  `test:coverage` is the *only* failing gate task, and still fails hard on any other failure. The
-  run on this commit is expected to report `upstream Linux gates…` green — eight of eight jobs.
+  `libreoffice-kit-wasm`) with no darwin/win32 leftovers outside `resources/runtime/pnpm`.
+- **Sandbox confinement on a real kernel**: the bwrap leg and the Landlock leg each pass, and
+  each is asserted to have *run* rather than self-skipped — the Landlock files force the bwrap
+  rung off, so each proves exactly one mechanism.
+- **A keyless agent turn**: `apps/cli/tests/profiles/headless/tests/keyless-smoke.e2e.ts`
+  boots the real Loader tree with no API key, runs the production `bash` tool, asserts the
+  `tool/call` → `tool/result` round trip (`CLI_TOOL_ROUND_TRIP`) and that the turn is persisted
+  as zstd JSONL. Together with `scripts/smoke-runtime.ts` this covers PTY, FFI (koffi), sharp,
+  ripgrep, glob, the bundled pnpm and Python, and real DOCX/XLSX/PPTX→PDF conversion through
+  the bundled Office engine with `PATH` emptied.
+- **Desktop suite baseline on Linux**: 123 of 128 files pass (1357 tests passed, 58 skipped).
+  The single failing file is `apps/desktop/tests/macos-notarization-proxy.spec.ts`, which guards
+  a macOS-only feature and whose `flock` helper is not built on Linux. The two files that failed
+  before — `cli-launcher.spec.ts` (fixed by `patches/0010`) and `desktop-upload-plan.spec.ts`
+  (`patches/0011`) — now pass.
+- **Upstream's own Linux gate**, `pnpm run check:ci:linux-primary`: 78 of 80 gates pass on the
+  patched tree, against 79 of 80 on the unpatched base tag under identical settings. Neither
+  remaining failure is ours — `web browser snapshot` fails the same way on the unpatched tag
+  (the browsers install, but the runner lacks their system libraries, which is why both install
+  steps pass `--with-deps`), and one case in `scripts/persistence-schema.spec.ts` is flaky in
+  both directions. `patches/0012` fixed the two gate failures that were ours: four oxlint style
+  errors and a commit-hash reference that `verify-repository-references` rejects.
+- **`test:coverage` is tolerated as a known flake.** The gate step treats the upstream primary
+  gate as a soft pass (emitting a `::warning::`) when `test:coverage` is the *only* failing gate
+  task, and still fails hard on any other failure.
 
 Not verified in this environment:
 
 - Electron's `titleBarOverlay` appearance per desktop environment; window drag/resize and
   caption sizing in both themes.
 - Desktop integration itself (tray, notifications, window controls in a real session); the
-  suite above covers the packaged runtime, not a running desktop.
+  suite covers the packaged runtime, not a running desktop.
 
 ## 9. Known limits
 
@@ -442,7 +382,7 @@ Not verified in this environment:
 - Only `linux-x64`; `linux-arm64` is not part of this series.
 - The welcome window's caption colour follows the system palette only at creation.
 - The `deb` maintainer field is a placeholder (`DeepSeek Harness`).
-- **Window restore after close works for the `dsh://` path; the plain relaunch is implemented but not yet confirmed.** Closing the last window keeps the application and its Host running (by design). The first `dsh://` activation restores the window — `patches/0013` fixes that activation-rebuild path, verified in run `37491323328` (`the dsh:// activation brought the window back`). `patches/0014` narrows the early-return in `focusPrimaryWindow` so a *plain* second launch routed through the instance lock also restores the window, but the headless `ci/desktop-session.sh` assertion for that path is still red on the runner and is pending confirmation on a real desktop session.
+- **Window restore after close works for the `dsh://` path; the plain relaunch is implemented but not yet confirmed.** Closing the last window keeps the application and its Host running (by design). The first `dsh://` activation restores the window — `patches/0013` fixes that activation-rebuild path, and `ci/desktop-session.sh` asserts it (`the dsh:// activation brought the window back`). `patches/0014` narrows the early-return in `focusPrimaryWindow` so a *plain* second launch routed through the instance lock also restores the window, but the headless assertion for that path (`no window after the plain second launch`) is still red on the runner and is pending confirmation on a real desktop session. Check the current run before trusting either claim.
 - **Two checks cannot run inside the Debian container job.** Docker's default seccomp profile
   denies `unshare`, so the bwrap sandbox leg self-skips there (the Landlock leg runs strictly) and
   the keyless agent smoke fails while reading its own session directory
@@ -468,8 +408,8 @@ Each patch is one topic: (1) accept the target, (2) install the `dsh` command,
 (6) packaging type declarations, (7) Debian-safe executable naming, (8) legacy launcher
 cleanup during upgrades, (9) Linux fields in the installer config declarations, (10) let the
 launcher reach the bundled `dsh` payload inside `app.asar`, (11) keep the update environment in
-the upload-plan error, (12) satisfy the upstream repository gates, and (13) keep a rebuilt
-window on screen after an activation.
+the upload-plan error, (12) satisfy the upstream repository gates, (13) keep a rebuilt
+window on screen after an activation, and (14) restore the window on a plain second launch.
 
 This patch set is distributed under the MIT License (see `LICENSE`). The patches are diffs
 against [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness),

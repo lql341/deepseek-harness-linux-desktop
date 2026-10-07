@@ -31,11 +31,21 @@ on:
         description: Also smoke the published deb under a headless Wayland compositor
         type: boolean
         default: true
+      release-tag:
+        description: Release tag whose published deb/AppImage the published-artifact jobs verify
+        type: string
+        default: v0.2.0-rc.2-linux.2
+      previous-release-tag:
+        description: Release tag the deb upgrade path upgrades from
+        type: string
+        default: v0.2.0-rc.2-linux.1
   push:
     branches: [main]
     paths:
       - 'patches/**'
       - 'apply.sh'
+      - 'verify.sh'
+      - 'ci/**'
       - '.github/workflows/linux-desktop-verify.yml'
 
 permissions:
@@ -45,6 +55,10 @@ env:
   UPSTREAM_DIR: ${{ github.workspace }}/upstream
   # Upstream tag the patch series is based on; apply.sh reads the same default.
   BASE_TAG: dsh-v0.2.0-rc.2
+  # Release tags the published-artifact jobs verify. They point at published bytes, not at this
+  # tree, so they are inputs rather than literals: a push cannot supply them, hence the fallback.
+  RELEASE_TAG: ${{ inputs.release-tag || 'v0.2.0-rc.2-linux.2' }}
+  PREVIOUS_RELEASE_TAG: ${{ inputs.previous-release-tag || 'v0.2.0-rc.2-linux.1' }}
 
 jobs:
   typecheck:
@@ -716,7 +730,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p release
-          gh release download v0.2.0-rc.2-linux.2 -R "$GITHUB_REPOSITORY" \
+          gh release download "$RELEASE_TAG" -R "$GITHUB_REPOSITORY" \
             -p '*.deb' -p '*.AppImage' -p 'SHA256SUMS' -D release
           ls -l release
 
@@ -1003,8 +1017,8 @@ jobs:
         run: |
           set -eux
           mkdir -p rel-old rel-new
-          gh release download v0.2.0-rc.2-linux.1 -R "$GITHUB_REPOSITORY" -p '*.deb' -D rel-old
-          gh release download v0.2.0-rc.2-linux.2 -R "$GITHUB_REPOSITORY" -p '*.deb' -D rel-new
+          gh release download "$PREVIOUS_RELEASE_TAG" -R "$GITHUB_REPOSITORY" -p '*.deb' -D rel-old
+          gh release download "$RELEASE_TAG" -R "$GITHUB_REPOSITORY" -p '*.deb' -D rel-new
           ls -l rel-old rel-new
 
       - name: Session tooling
@@ -1072,7 +1086,7 @@ jobs:
         run: |
           set -eux
           mkdir -p rel
-          gh release download v0.2.0-rc.2-linux.2 -R "$GITHUB_REPOSITORY" -p '*.deb' -D rel
+          gh release download "$RELEASE_TAG" -R "$GITHUB_REPOSITORY" -p '*.deb' -D rel
           ls -l rel
 
       - name: Install a headless compositor and the deb
