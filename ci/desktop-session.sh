@@ -172,9 +172,11 @@ restored2=$(wait_for_window "$APP_PID" 30)
 if [ -n "$restored2" ]; then
   note "PASS: the window returned after the second launch ($restored2)"
 else
-  # Documented limitation (README "Known limits"): the close/restore cycle works once; the
-  # process and its Host keep serving afterwards, but nothing puts a window back on screen.
-  known_issue "no window after the second close/restore cycle; see README known limits"
+  # Known limitation (README "Known limits"): patches/0013 fixes the dsh:// activation rebuild path,
+  # so the first activation brings the window back (verified in run 37491323328). A *plain* second
+  # launch, however, is routed to the running owner by the instance lock but nothing puts a window
+  # back on screen -- the process and its Host keep serving, only the tray helper is mapped.
+  known_issue "no window after the plain second launch (the dsh:// activation path is fixed by 0013); see README known limits"
   diagnose "$APP_PID"
 fi
 import -window root "$SHOT_DIR/session-relaunch.png" 2>/dev/null || true
