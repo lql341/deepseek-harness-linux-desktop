@@ -403,18 +403,24 @@ Verified:
   two tasks and the same four tests on the unpatched base tag in the same run**: `test:coverage`
   (one 5 s timeout in `scripts/persistence-schema.spec.ts` out of 37 874 passing tests) and
   `web browser snapshot` (`apps/web/tests/declared-reasoning.e2e.ts`,
-  `apps/web/tests/document-preview.e2e.ts`, `apps/web/tests/session-replay-reload.e2e.ts`). The
-  attribution is therefore exact — none of the four is ours, and `patches/0013` touches only
-  `apps/desktop/src/main.ts`.
-  **Cause identified, fix applied:** the `web browser snapshot` leg fails because both
-  `Install Playwright browsers` steps ran `playwright install chromium webkit` **without**
-  `--with-deps`, so the runner gets the browser binaries but not WebKit's system libraries
-  (`libgtk-4.so.1`, `libgraphene-1.0.so.0`, `libgst*.so.0`, `libopus.so.0`, `libevent-2.1.so.7`);
-  the tests that fail are exactly the `('WebKit')` ones. Both steps now pass `--with-deps`; the
-  leg has **not** been re-run since, so the result above stands as recorded for this run.
-  Note that `--with-deps` only addresses this leg: `test:coverage` fails independently, on a
-  single flaky case in `scripts/persistence-schema.spec.ts:508`, and does so on the unpatched
-  base tag too — so the gate aggregate stays red until that second leg is handled separately.
+  `apps/web/tests/document-preview.e2e.ts`, `apps/web/tests/session-replay-reload.e2e.ts`). None
+  of the four is ours, and `patches/0013` touches only `apps/desktop/src/main.ts`.
+- **`--with-deps` verified** (run `37491323328`, 2026-10-06, head `ce8b23a`). The `web browser
+  snapshot` leg had failed because both `Install Playwright browsers` steps ran
+  `playwright install chromium webkit` **without** `--with-deps`, so the runner had the browser
+  binaries but not WebKit's system libraries (`libgtk-4.so.1`, `libgraphene-1.0.so.0`,
+  `libgst*.so.0`, `libopus.so.0`, `libevent-2.1.so.7`); every failure was a `browserType.launch`
+  one. Both steps now pass `--with-deps`, and the leg is green on the patched tree (1859.98 s) and
+  on the unpatched baseline (1678.95 s), with no `missing dependencies` error left in the log.
+- **What is still red after that fix** (same run `37491323328`): seven of the eight jobs stay
+  green and `upstream Linux gates…` still fails at `Verdict`, now on `test:coverage` alone — a
+  single case on the patched tree, `scripts/persistence-schema.spec.ts:508`, "does not qualify
+  unmarked additions or structurally equal unbound fields". This run's baseline **passed**
+  `test:coverage`, so the identical-failure attribution above no longer holds for it: the case is
+  flaky and also failed on the baseline in run `37431745619`. The file is untouched by this
+  series. The gate aggregate therefore stays red until this leg is handled separately — for
+  instance by excluding the known-flaky case from `Verdict`, or reporting the leg instead of
+  gating on it.
 
 Not verified in this environment:
 

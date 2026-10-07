@@ -371,15 +371,22 @@ dpkg -L deepseek-harness | grep -E '/(bin|opt)/'    # 找到已安装的可执�
   两条腿都过，红的是上游门禁聚合本身；而它在**同一次运行的未打补丁基线 tag** 上挂的是
   **同样两个任务、同样四个测试**：`test:coverage`（37874 个通过里，`scripts/persistence-schema.spec.ts`
   有一个 5 秒超时）与 `web browser snapshot`（`declared-reasoning.e2e.ts`、`document-preview.e2e.ts`、
-  `session-replay-reload.e2e.ts`）。归因因此是确定的 —— 四个都不属于本补丁集，
-  且 `patches/0013` 只碰 `apps/desktop/src/main.ts`。
-  **归因已定、修复已应用：** `web browser snapshot` 那条红是因为两处 `Install Playwright browsers`
-  步骤此前用的是 `playwright install chromium webkit`、**没有** `--with-deps`，跑器拿到了浏览器二进制
-  却缺少 WebKit 的系统库（`libgtk-4.so.1`、`libgraphene-1.0.so.0`、`libgst*.so.0`、`libopus.so.0`、
-  `libevent-2.1.so.7`）；挂掉的正是测试名里带 `('WebKit')` 的那几个。两处现已补上 `--with-deps`，
-  但该腿**尚未重跑**，故上面记录的仍是本次运行的结果。注意 `--with-deps` 只解决这一腿：
-  `test:coverage` 是**独立**失败的（`scripts/persistence-schema.spec.ts:508` 单个 flaky 用例），
-  且在未打补丁的基线 tag 上同样失败 —— 所以在第二条腿单独处理之前，门禁聚合仍会是红。
+  `session-replay-reload.e2e.ts`）。四个都不属于本补丁集，且 `patches/0013` 只碰
+  `apps/desktop/src/main.ts`。
+- **`--with-deps` 已验证生效**（run `37491323328`，2026-10-06，head `ce8b23a`）。此前
+  `web browser snapshot` 那条腿失败，是因为两处 `Install Playwright browsers` 步骤用的是
+  `playwright install chromium webkit`、**没有** `--with-deps`，跑器拿到了浏览器二进制却缺少
+  WebKit 的系统库（`libgtk-4.so.1`、`libgraphene-1.0.so.0`、`libgst*.so.0`、`libopus.so.0`、
+  `libevent-2.1.so.7`），失败全部是 `browserType.launch`。两处补上 `--with-deps` 后，该腿在
+  **打过补丁的树上转绿**（1859.98s），未打补丁基线上同样转绿（1678.95s），日志里已无
+  `missing dependencies` 报错。
+- **修完之后还剩什么红**（同一次 run `37491323328`）：仍是 8 个 job 中 7 个绿，
+  `upstream Linux gates…` 依然红在 `Verdict`，但这次只剩 `test:coverage` 一条腿 —— 打过补丁的
+  树上挂在单个用例 `scripts/persistence-schema.spec.ts:508`「does not qualify unmarked additions
+  or structurally equal unbound fields」。而**本次的基线通过了 `test:coverage`**，所以上面那段
+  "同样失败"的归因对它已不再成立：该用例是 flaky（它在 run `37431745619` 的基线上失败过，
+  本次基线上却通过）。该文件本系列从未改动。因此门禁聚合仍是红，除非单独处理这一腿 ——
+  例如把这个已知 flaky 用例从 `Verdict` 排除，或让该腿只报告、不门禁。
 
 本环境未验证：
 
