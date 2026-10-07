@@ -383,6 +383,12 @@ Not verified in this environment:
 - The welcome window's caption colour follows the system palette only at creation.
 - The `deb` maintainer field is a placeholder (`DeepSeek Harness`).
 - **Window restore after close works for the `dsh://` path; the plain relaunch is implemented but not yet confirmed.** Closing the last window keeps the application and its Host running (by design). The first `dsh://` activation restores the window — `patches/0013` fixes that activation-rebuild path, and `ci/desktop-session.sh` asserts it (`the dsh:// activation brought the window back`). `patches/0014` narrows the early-return in `focusPrimaryWindow` so a *plain* second launch routed through the instance lock also restores the window, but the headless assertion for that path (`no window after the plain second launch`) is still red on the runner and is pending confirmation on a real desktop session. Check the current run before trusting either claim.
+
+  Releases cut from this tree carry that limitation in their notes. The publish workflow
+  (`.github/workflows/publish-linux-desktop.yml`) has an `allow-known-session-gap` input that
+  tolerates *that one assertion only* — any other session failure still blocks the release, and
+  the notes gain a "Known limitation" section whenever it is used. Once the behaviour is
+  confirmed on a real desktop, drop the input and let the step fail outright.
 - **Two checks cannot run inside the Debian container job.** Docker's default seccomp profile
   denies `unshare`, so the bwrap sandbox leg self-skips there (the Landlock leg runs strictly) and
   the keyless agent smoke fails while reading its own session directory

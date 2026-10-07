@@ -371,6 +371,11 @@ workflow 的各个 job 及其证明的事：
   重新显示；但该路径在 headless 的 `ci/desktop-session.sh` 断言里仍是红的
   （`no window after the plain second launch`），尚待真实桌面会话确认。
   两条断言的当前状态请以 CI run 为准。
+
+  从这棵树发出的 release 会在自己的 notes 里带上该限制。发布 workflow
+  （`.github/workflows/publish-linux-desktop.yml`）有一个 `allow-known-session-gap` 输入，
+  它**只**放过这一条断言 —— 其他任何会话失败仍然会拦住发布，且每次使用都会在 notes 里
+  追加一段"Known limitation"。等真机确认行为后，去掉这个输入，让该步骤恢复为硬失败。
 - **两项检查无法在 Debian 容器 job 里真跑**：Docker 默认 seccomp 禁止 `unshare`，因此 bwrap
   沙箱腿在那里自跳过（Landlock 腿严格跑并通过），而无 key agent 冒烟会在读取自己的会话目录时
   失败（`ENOENT …/.sessions`）且 harness 没有把驱动的 stderr 带出来，所以只做**报告**、不作为门禁。
