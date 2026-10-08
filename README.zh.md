@@ -2,19 +2,13 @@
 
 # deepseek-harness-linux-desktop
 
-给 **DeepSeek Harness 桌面端** 补上 Linux x64 发布目标（`AppImage` + `deb`），并使其行为与
+给 **DeepSeek Harness 桌面端** 补上 Linux x64 发布目标（`deb`），并使其行为与
 macOS 版保持一致的非官方补丁集。
 
 上游只发布 macOS 与 Windows —— 其 `apps/desktop/README.md` 明确写着 Linux 不是受支持的桌面
 发布目标，打包测试也断言 `linux-x64` 目标必须被拒绝。本仓库就是把这层限制打开的那组 diff。
 
-> **状态：Linux x64 已在 GitHub Actions 的 Ubuntu 24.04 LTS 与 Debian 13（trixie）上验证通过，本机亦通过。**
-> 十三个补丁干净应用到上游 tag，并在 Ubuntu 24.04 x86_64 上完成编译、打包与冒烟；
-> 完整链路（含安装 deb 与启动 AppImage）也在 **Debian 13** 容器里跑通。
-> 产物为 AppImage 与 deb；因作者本机没有 `libfuse.so.2`，AppImage 也以自解压模式启动过。
-> `patches/0009`–`0012` 修的都是第一次真机/真 CI 跑出来的问题：typecheck 里的 `TS2339`、
-> 找不到 payload 的 `dsh` 启动器、丢掉了 environment 的 upload-plan 报错文案，以及四处会被
-> 上游自有 Linux 门禁拒绝的风格/仓库引用错误。
+> **状态：Linux x64 已在 GitHub Actions 的 Ubuntu 24.04 LTS 与 Debian 13（trixie）上验证通过，本机亦通过。** 十六个补丁干净应用到上游 tag，并在 Ubuntu 24.04 x86_64 上完成编译、打包与冒烟；deb 安装链路也在 Debian 13 容器里跑通。Linux 发行包使用 deb。`patches/0009`–`0012` 修复了首次 Linux 验证发现的类型错误、dsh 启动器 payload 路径、上传计划报错信息以及上游门禁拒绝的风格与仓库引用。
 
 基线：上游 tag **`dsh-v0.2.0-rc.2`**（commit `639ed0153972`），16 个补丁。
 
@@ -45,7 +39,6 @@ macOS 版保持一致的非官方补丁集。
 | 4 | `dsh` 命令进 `PATH` | 新增 POSIX 启动器 + 命令安装器的 Linux 分支（`~/.local/bin/dsh`）；已有外来命令会被报告并备份，绝不静默覆盖 |
 | 5 | `dsh://` 深链 | desktop 条目带 `MimeType=x-scheme-handler/dsh`；shell 侧已完成协议注册 |
 | 6 | 内置运行时 | runtime 准备按**目标**平台选择 Linux payload（Node/pnpm/Python、Electron 二进制、原生包），不再假定 macOS 或 Windows |
-| 7 | 更新 | Linux 包默认无更新源；设置 `DSH_DESKTOP_LINUX_UPDATE_ORIGIN` 可接入自建 generic（AppImage）源 |
 
 Office 文档转换开箱可用：Linux 走**内置 WASM** LibreOffice 引擎
 （`@deepseek-ai/libreoffice-kit-wasm`），**不需要**系统安装 LibreOffice。
@@ -191,14 +184,14 @@ ls -d "$ARTIFACTS"/linux-unpacked                                    # 未打包
 ls -l "$ARTIFACTS/linux-unpacked/DeepSeek Harness"                   # Electron 二进制，且有可执行位
 ```
 
-### Step 5 —— AppImage + deb
+### Step 5 —— deb
 
 ```sh
 pnpm --dir apps/desktop run package:linux:x64
-ls -l "$ARTIFACTS"/*.AppImage "$ARTIFACTS"/*.deb
+ls -l "$ARTIFACTS"/*.deb
 ```
 
-期望恰好两个产物，名字来自产品版本（见 §6）。Linux 不做签名/公证，这里没有别的步骤。
+期望一个 deb 产物，名字来自产品版本（见 §6）。Linux 不做签名/公证，这里没有别的步骤。
 
 想要自己的编号可加 `--build-version`，例如
 `pnpm --dir apps/desktop run package:linux:x64 -- --build-version 0.2.0-rc.2.linux.1`；
@@ -236,7 +229,7 @@ dpkg -L deepseek-harness | grep -E '/(bin|opt)/'    # 找到已安装的可执�
 | 4 | `dsh` 进 PATH | 在应用 UI 里安装命令，然后开**新** shell：`command -v dsh && dsh --version` | 落在 `~/.local/bin/dsh`，能跑内置 CLI（确保 `~/.local/bin` 在 `PATH` 里） |
 | 5 | 深链 | `xdg-mime query default x-scheme-handler/dsh`，再 `xdg-open 'dsh://open'` | 已注册 desktop 文件且窗口被唤到前台 |
 | 6 | 运行时 + Office | 在会话里跑一次 shell 工具；要求一次 DOCX→PDF 转换 | bash 工具可用（Landlock，内核 ≥ 5.13）；转换经内置 WASM 引擎成功 |
-| 7 | 更新 | 不设 `DSH_DESKTOP_LINUX_UPDATE_ORIGIN` 启动 | 不检查更新；设置自建 generic 源后读取 `latest-linux.yml` |
+| 7 | 更新 | 不设 `` 启动 | 不检查更新；设置自建 generic 源后读取 `latest-linux.yml` |
 
 ## 6. 产物与落地位置
 
@@ -245,14 +238,13 @@ dpkg -L deepseek-harness | grep -E '/(bin|opt)/'    # 找到已安装的可执�
 | 路径 | 内容 |
 |---|---|
 | `artifacts/linux-unpacked/` | 未打包应用（来自 `:dir`）；可执行文件 `DeepSeek Harness` |
-| `artifacts/deepseek-harness-<version>-linux-x86_64.AppImage` | AppImage |
 | `artifacts/deepseek-harness-<version>-linux-amd64.deb` | Debian 包 |
 | `runtime/` | 为该目标准备好的 Electron + pnpm + 启动器 |
 | `dsh/` | 内置 `dsh` 运行时树，最终变成 `app.asar/dsh` |
 | `package-set/`、`downloads/` | 中间包集合与已下载归档 |
 | `packaging-runs/` | 每次运行的日志与发布记录 |
 
-默认版本下即 `deepseek-harness-0.2.0-rc.2-linux-x86_64.AppImage` 与 `…-linux-amd64.deb`。
+默认版本下为 `deepseek-harness-…-linux-amd64.deb`。
 
 ## 7. 失败排查
 
@@ -261,13 +253,11 @@ dpkg -L deepseek-harness | grep -E '/(bin|opt)/'    # 找到已安装的可执�
 | `desktop package: unsupported target "linux-x64"` | 补丁没打上 | 重跑 step 1，并核对树哈希 |
 | `desktop package: cannot read …/.env.linux; copy …` | 必需的环境文件缺失 | `cp apps/desktop/.env.linux.example apps/desktop/.env.linux` |
 | `desktop package: linux-x64 requires a Linux x64 build host` | 在 macOS/arm64 上构建 | 换到 Linux x86_64 |
-| `desktop package: unsupported setting X in …/.env.linux` | 键不在 Linux 模板里 | 只用 `DSH_DESKTOP_APP_ID`、`DSH_DESKTOP_NPM_REGISTRY`、`DSH_DESKTOP_LINUX_UPDATE_ORIGIN` 及策略 origin |
+| `desktop package: unsupported setting X in …/.env.linux` | 键不在 Linux 模板里 | 只用 `DSH_DESKTOP_APP_ID`、`DSH_DESKTOP_NPM_REGISTRY` 及策略 origin |
 | `ERR_PNPM_UNSUPPORTED_ENGINE` / 奇怪的依赖错误 | Node 或 pnpm 版本不对 | Node `^22.19 \|\| >=24`，pnpm `11.7.0` |
 | Electron 下载超时 / 404 | 代理或镜像 | `ELECTRON_MIRROR`，或导出 `HTTPS_PROXY` |
 | `missing required LibreOffice engine wasm` | 运行时树里没有 WASM kit | 确认 `@deepseek-ai/libreoffice-kit-wasm` 已安装（它是 `@deepseek-ai/libreoffice-kit` 的可选依赖） |
 | `tsc` 在 `main.ts` 报类型错 | 第一次真类型检查 | 上报；最可能是策略分支的收窄 |
-| AppImage 起不来（沙箱 / user namespace） | Ubuntu 23.10+ 的 AppArmor 限制 | 装 `deb`，或加 AppArmor profile；`--no-sandbox` 只作最后手段 |
-| 安装 `dsh` 被拒：transient AppImage mount | AppImage 资源在临时挂载点 | 装 `deb`，或解出 AppImage 后设 `DSH_DESKTOP_RESOURCES` |
 | 深链无反应 | desktop 文件未注册 | 确认 `xdg-mime query default x-scheme-handler/dsh`；重装 deb |
 
 ## 8. 已验证 / 未验证
@@ -279,16 +269,15 @@ dpkg -L deepseek-harness | grep -E '/(bin|opt)/'    # 找到已安装的可执�
 而不必重新推导每个 job 到底做了什么。
 
 **CI 保留有效的打包信号，并跳过 headless 误报。** push 到 `main` 会应用补丁、安装依赖、跑类型检查，
-构建 Linux AppImage/deb、安装 deb，并检查启动、关窗和 `dsh://` 唤回。只有普通第二次启动的窗口断言
+构建 Linux deb、安装 deb，并检查启动、关窗和 `dsh://` 唤回。只有普通第二次启动的窗口断言
 在 Xvfb 下跳过；Ubuntu 与 Debian 真桌面会话已确认该路径。耗时较长的上游门禁和已发布产物检查仍手动触发。
 
 workflow 的各个 job 及其证明的事：
 
 | Job | 证明 | 触发时机 |
 |---|---|---|
-| `install + typecheck + package preflight + Linux package smoke` | 补丁能应用、类型检查/预检通过、AppImage/deb 能构建，安装后的 deb 可启动并通过关窗/`dsh://` 检查 | push |
+| `install + typecheck + package preflight + Linux package smoke` | 补丁能应用、类型检查/预检通过、deb 能构建，安装后的 deb 可启动并通过关窗/`dsh://` 检查 | push |
 | `upstream Linux gates, sandbox confinement, keyless agent smoke` | 上游自己的 Linux 门禁、bwrap/Landlock 隔离、以及一次无 key 的 agent 回合 | 手动 |
-| `published artifacts - checksums, install, desktop session, AppImage` | 验的是**已发布**的字节（不是新构建）：与 `SHA256SUMS` 一致、deb 能装、真实桌面会话行为正确、AppImage 免 FUSE 启动 | 手动 |
 | `deb upgrade path and AppArmor-hardened launch` | 从 `…linux.2` 升到 `…linux.3` 会清掉旧启动器；且在 `kernel.apparmor_restrict_unprivileged_userns=1` 下**不加** `--no-sandbox` 也能启动 | 手动 |
 | `Wayland` | deb 在 headless 合成器下以纯 Wayland 客户端启动 | 手动 |
 
@@ -319,8 +308,6 @@ workflow 的各个 job 及其证明的事：
 - Linux 安装器使用 Debian 安全可执行名 `deepseek-harness`；它生成的 `postinst` 把该名字
   注册进 `update-alternatives` 而不是用展示名，并在升级时移除旧的
   `/usr/bin/DeepSeek Harness` 符号链接。
-- **AppImage 免 FUSE 启动**（`--appimage-extract-and-run`，也是 Ubuntu 23.10+ 的路径），
-  且该产物是 ELF 64-bit x86_64 可执行文件。
 - 捆绑运行时从*归档内部*应答：
   `ELECTRON_RUN_AS_NODE=1 <launcher> --expose-internals resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js --version`
   打印 `0.2.0-rc.2` 并 exit 0。payload 在 `app.asar` **里面**；`asarUnpack` 只装
@@ -363,7 +350,6 @@ workflow 的各个 job 及其证明的事：
 
 - **无法 1:1 的部分**：macOS 红绿灯按钮、侧栏 `vibrancy` 毛玻璃、Dock 跳动。本补丁集用
   原生 overlay 窗口控件、纯色侧栏与通知替代。
-- **`dsh` 命令依赖 `deb`**：AppImage 的资源在临时挂载点，从它安装命令会被拒绝并给出可操作的
   提示（解出目录树时可用 `DSH_DESKTOP_RESOURCES` 兜底）。
 - **平台标识**：Linux 构建会向 DeepSeek Platform 上报 macOS 桌面标识，因为共享账号包对
   `x-client-platform` 只定义了 `darwin`/`win32`（省略会退化成 `web`）。

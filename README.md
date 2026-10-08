@@ -3,22 +3,14 @@ English | [中文](README.zh.md)
 # deepseek-harness-linux-desktop
 
 Unofficial patch set that gives the **DeepSeek Harness desktop app** a Linux x64 release
-target (`AppImage` + `deb`) and brings its behaviour in line with the macOS build.
+target (`deb`) and brings its behaviour in line with the macOS build.
 
 Upstream ships macOS and Windows only — its own `apps/desktop/README.md` states
 "Linux is not a supported Desktop release target", and the packaging tests assert that a
 `linux-x64` target must be rejected. This repository is the set of diffs that opens that
 path up.
 
-> **Status: Linux x64 verified on Ubuntu 24.04 LTS and Debian 13 (trixie) in GitHub Actions, and
-> locally.** The fourteen-patch series applies cleanly to the upstream tag and has been compiled,
-> packaged, and smoke-tested on Ubuntu 24.04 x86_64, and the whole chain (including installing the
-> deb and booting the AppImage) also runs inside a Debian 13 container. The verified build produced both an AppImage and a
-> deb; the AppImage was also started from its self-extracting mode because the authors' host
-> does not have `libfuse.so.2`. `patches/0009`–`0012` fix what the first real Linux runs
-> surfaced: a `TS2339` failure in the typecheck, a `dsh` launcher that could never find its
-> payload, an upload-plan error message that dropped the environment name, and four style /
-> repository-reference errors that upstream's own Linux gate rejects.
+> **Status: Linux x64 verified on Ubuntu 24.04 LTS and Debian 13 (trixie) in GitHub Actions, and locally.** The sixteen-patch series applies cleanly to the upstream tag and has been compiled, packaged, and smoke-tested on Ubuntu 24.04 x86_64; the deb installation chain also runs inside a Debian 13 container. Linux releases use the deb package. `patches/0009`–`0012` fix what the first real Linux runs surfaced: a `TS2339` typecheck failure, a `dsh` launcher that could not find its payload, an upload-plan error that dropped the environment name, and four style/repository-reference errors rejected by upstream's Linux gate.
 
 Base: upstream tag **`dsh-v0.2.0-rc.2`** (commit `639ed0153972`), 16 patches.
 
@@ -49,7 +41,7 @@ Base: upstream tag **`dsh-v0.2.0-rc.2`** (commit `639ed0153972`), 16 patches.
 | 4 | `dsh` command on `PATH` | New POSIX launcher plus a Linux branch of the command installer (`~/.local/bin/dsh`); an existing foreign command is reported and backed up, never silently overwritten |
 | 5 | `dsh://` deep links | Desktop entry carries `MimeType=x-scheme-handler/dsh`; the shell already registers the scheme |
 | 6 | Bundled runtime | Runtime preparation selects the Linux payload (Node/pnpm/Python, Electron binary, native packages) by *target* platform instead of assuming macOS or Windows |
-| 7 | Updates | Linux packages without a feed; set `DSH_DESKTOP_LINUX_UPDATE_ORIGIN` to opt into a self-hosted generic (AppImage) feed |
+| 7 | Updates | Linux packages do not have an automatic update feed |
 
 Office document conversion works out of the box: Linux uses the bundled **WASM** LibreOffice
 engine (`@deepseek-ai/libreoffice-kit-wasm`), **not** a system LibreOffice.
@@ -202,14 +194,14 @@ ls -d "$ARTIFACTS"/linux-unpacked                                    # unpacked 
 ls -l "$ARTIFACTS/linux-unpacked/DeepSeek Harness"                   # the Electron binary, executable
 ```
 
-### Step 5 — AppImage + deb
+### Step 5 — deb
 
 ```sh
 pnpm --dir apps/desktop run package:linux:x64
-ls -l "$ARTIFACTS"/*.AppImage "$ARTIFACTS"/*.deb
+ls -l "$ARTIFACTS"/*.deb
 ```
 
-Expect exactly two artifacts named from the product version (see [§6](#6-artifacts-and-where-they-land)).
+Expect one deb artifact named from the product version (see [§6](#6-artifacts-and-where-they-land)).
 No signing or notarization runs for Linux, so nothing else is needed here.
 
 Pass `--build-version` if you want your own numbering, e.g.
@@ -249,7 +241,7 @@ Run these in order; each one maps to a patch in `patches/`.
 | 4 | `dsh` on PATH | install the command from the app UI, then in a **new** shell: `command -v dsh && dsh --version` | `~/.local/bin/dsh`, runs the bundled CLI (ensure `~/.local/bin` is on `PATH`) |
 | 5 | Deep link | `xdg-mime query default x-scheme-handler/dsh` then `xdg-open 'dsh://open'` | a desktop file is registered and the window focuses |
 | 6 | Runtime + Office | in a session run a shell tool; ask for a DOCX→PDF conversion | bash tool works (Landlock, kernel ≥ 5.13); conversion succeeds via the bundled WASM engine |
-| 7 | Updates | launch with no `DSH_DESKTOP_LINUX_UPDATE_ORIGIN` | no update check; with a self-hosted generic feed origin set, the app reads `latest-linux.yml` |
+| 7 | Updates | Linux package update policy | no update check; there is no automatic update feed |
 
 ## 6. Artifacts and where they land
 
@@ -258,7 +250,6 @@ Everything is written under `apps/desktop/.desktop-build/targets/linux-x64/`:
 | Path | Contents |
 |---|---|
 | `artifacts/linux-unpacked/` | unpacked application (from `:dir`); executable `DeepSeek Harness` |
-| `artifacts/deepseek-harness-<version>-linux-x86_64.AppImage` | AppImage |
 | `artifacts/deepseek-harness-<version>-linux-amd64.deb` | Debian package |
 | `runtime/` | prepared Electron + pnpm + launcher for this target |
 | `dsh/` | the bundled `dsh` runtime tree that becomes `app.asar/dsh` |
@@ -266,7 +257,7 @@ Everything is written under `apps/desktop/.desktop-build/targets/linux-x64/`:
 | `packaging-runs/` | per-run logs and the release record |
 
 With the default version these are
-`deepseek-harness-0.2.0-rc.2-linux-x86_64.AppImage` and `…-linux-amd64.deb`.
+`deepseek-harness-…-linux-amd64.deb`.
 
 ## 7. Failure triage
 
@@ -275,13 +266,11 @@ With the default version these are
 | `desktop package: unsupported target "linux-x64"` | patches not applied | re-run step 1; verify the tree hash |
 | `desktop package: cannot read …/.env.linux; copy …` | required env file missing | `cp apps/desktop/.env.linux.example apps/desktop/.env.linux` |
 | `desktop package: linux-x64 requires a Linux x64 build host` | building on macOS/arm64 | build on Linux x86_64 |
-| `desktop package: unsupported setting X in …/.env.linux` | key not in the Linux template | use only `DSH_DESKTOP_APP_ID`, `DSH_DESKTOP_NPM_REGISTRY`, `DSH_DESKTOP_LINUX_UPDATE_ORIGIN`, the policy origins |
+| `desktop package: unsupported setting X in …/.env.linux` | key not in the Linux template | use only `DSH_DESKTOP_APP_ID`, `DSH_DESKTOP_NPM_REGISTRY`, and the policy origins |
 | `ERR_PNPM_UNSUPPORTED_ENGINE` / odd dependency errors | wrong Node or pnpm | Node `^22.19 \|\| >=24`, pnpm `11.7.0` |
 | Electron download timeouts / 404 | proxy or mirror | `ELECTRON_MIRROR`, or export `HTTPS_PROXY` |
 | `missing required LibreOffice engine wasm` | the WASM kit is absent from the runtime tree | confirm `@deepseek-ai/libreoffice-kit-wasm` installed (it is an optional dependency of `@deepseek-ai/libreoffice-kit`) |
 | Type errors from `tsc` in `main.ts` | first real type check | report them; the policy-branch narrowing is the most likely spot |
-| AppImage refuses to start (sandbox / user namespaces) | Ubuntu 23.10+ AppArmor restriction | install the `deb`, or add an AppArmor profile; `--no-sandbox` only as a last resort |
-| `dsh` install refused with "transient AppImage mount" | AppImage resources live in a temporary mount | install the `deb`, or extract the AppImage and set `DSH_DESKTOP_RESOURCES` |
 | Deep link does nothing | desktop file not registered | confirm `xdg-mime query default x-scheme-handler/dsh`; reinstall the deb |
 
 ## 8. Verified / not verified
@@ -293,7 +282,7 @@ This section records *what the suite covers* and *what it concluded*, so a failu
 triaged without re-deriving what the jobs do.
 
 **CI keeps the useful package signal and skips the headless false failure.** A push to `main`
-applies the patches, installs dependencies, typechecks, builds the Linux AppImage and deb, installs
+applies the patches, installs dependencies, typechecks, builds the Linux deb, installs
 the deb, and checks startup, close behaviour and `dsh://` activation. Only the plain second-launch
 window assertion is skipped under Xvfb; Ubuntu and Debian real desktop sessions confirmed that
 path. Longer upstream gates and checks against already-published bytes remain manual.
@@ -302,9 +291,8 @@ The workflow's jobs and what each one establishes:
 
 | Job | Establishes | Runs on |
 |---|---|---|
-| `install + typecheck + package preflight + Linux package smoke` | patches apply, typecheck and package preflight pass, AppImage/deb build, installed deb starts and handles close/`dsh://` | push |
+| `install + typecheck + package preflight + Linux package smoke` | patches apply, typecheck and package preflight pass, deb build, installed deb starts and handles close/`dsh://` | push |
 | `upstream Linux gates, sandbox confinement, keyless agent smoke` | upstream's own Linux gate, bwrap/Landlock confinement, and a keyless agent turn | manual |
-| `published artifacts - checksums, install, desktop session, AppImage` | the **published** bytes (not a fresh build) match `SHA256SUMS`, the deb installs, a real desktop session behaves, the AppImage boots without FUSE | manual |
 | `deb upgrade path and AppArmor-hardened launch` | upgrading `…linux.2` → `…linux.3` cleans the legacy launcher, and the app starts under `kernel.apparmor_restrict_unprivileged_userns=1` **without** `--no-sandbox` | manual |
 | `Wayland` | the deb boots as a pure Wayland client under a headless compositor | manual |
 
@@ -337,8 +325,6 @@ Verified:
 - The Linux installer uses the Debian-safe executable name `deepseek-harness`; its generated
   `postinst` registers that name with `update-alternatives` instead of using the display name,
   and removes the legacy `/usr/bin/DeepSeek Harness` symlink during upgrades.
-- The **AppImage boots without FUSE** via `--appimage-extract-and-run` (also the Ubuntu 23.10+
-  path) and the artifact is an ELF 64-bit x86_64 executable.
 - The bundled runtime answers from *inside* the archive:
   `ELECTRON_RUN_AS_NODE=1 <launcher> --expose-internals resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js --version`
   prints `0.2.0-rc.2` and exits 0. The payload lives inside `app.asar`; `asarUnpack` holds
@@ -383,7 +369,6 @@ Not verified in this environment:
 
 - **Not achievable 1:1**: macOS traffic-light buttons, sidebar `vibrancy`, Dock bounce. The
   patch set substitutes native overlay window controls, a flat sidebar, and notifications.
-- **The `dsh` command requires the `deb`**: an AppImage's resources live in a transient
   mount, so installing a command from it is refused with an actionable message
   (`DSH_DESKTOP_RESOURCES` is the escape hatch for an extracted tree).
 - **Platform identity**: a Linux build reports the macOS desktop identity to DeepSeek

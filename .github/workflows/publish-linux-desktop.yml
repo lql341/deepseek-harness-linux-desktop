@@ -1,6 +1,6 @@
 name: Publish a Linux desktop release
 
-# Builds the AppImage + deb from the patch series on the one host that can build them and
+# Builds the deb from the patch series on the one host that can build it and
 # publishes them as a GitHub release. The verification that must pass *before* these bytes are
 # published lives in the `Linux desktop verification` workflow; this workflow publishes only what
 # that workflow already proved, and it re-verifies the bytes it is about to publish.
@@ -77,7 +77,7 @@ jobs:
         working-directory: ${{ env.UPSTREAM_DIR }}
         run: pnpm install --frozen-lockfile
 
-      - name: Build the AppImage and the deb
+      - name: Build the deb
         # One command, not the :dir step followed by the real one: the artifacts published here
         # must come from a single build of the whole tree.
         working-directory: ${{ env.UPSTREAM_DIR }}
@@ -85,7 +85,7 @@ jobs:
           set -euo pipefail
           pnpm --dir apps/desktop run package:linux:x64 2>&1 | tee package.log
           ART="apps/desktop/.desktop-build/targets/linux-x64/artifacts"
-          ls -l "$ART"/*.AppImage "$ART"/*.deb
+          ls -l "$ART"/*.deb
         env:
           DSH_DESKTOP_TARGET_PLATFORM: linux
           DSH_DESKTOP_TARGET_ARCH: x64
@@ -98,19 +98,18 @@ jobs:
           set -euo pipefail
           ART="apps/desktop/.desktop-build/targets/linux-x64/artifacts"
           mkdir -p publish
-          cp "$ART"/*.deb "$ART"/*.AppImage publish/
+          cp "$ART"/*.deb publish/
           cd publish
           # Bare filenames, matching the manifests already published, so `sha256sum -c` works in
           # any directory the assets are downloaded into.
-          sha256sum *.deb *.AppImage > SHA256SUMS
+          sha256sum *.deb > SHA256SUMS
           sha256sum -c SHA256SUMS
           cat SHA256SUMS
-          file ./*.AppImage
 
       - name: Re-verify the exact bytes before publishing them
         # The published bytes, not a fresh build: install this deb, drive the session harness
-        # against it, and boot this AppImage. This is release-verify's job performed pre-publish,
-        # so a regression cannot reach a tag.
+        # against it. This is release-verify's job performed pre-publish, so a regression
+        # cannot reach a tag.
         working-directory: ${{ env.UPSTREAM_DIR }}
         run: |
           set -euo pipefail
@@ -138,20 +137,6 @@ jobs:
           if [ "$status" -ne 0 ]; then exit "$status"; fi
           echo "PUBLISH-SESSION: OK"
 
-      - name: AppImage boot of the bytes being published (no FUSE)
-        run: |
-          set -uo pipefail
-          APPIMAGE=$(ls "$GITHUB_WORKSPACE"/upstream/publish/*.AppImage | head -1)
-          chmod +x "$APPIMAGE"
-          set +e
-          timeout 40 xvfb-run -a ./"$APPIMAGE" --appimage-extract-and-run --no-sandbox --enable-logging > appimage.log 2>&1
-          echo "APPIMAGE exit=$? (124 = it ran the full 40s)"
-          set -e
-          grep -q "dsh web: http" appimage.log || { echo "the AppImage never served its endpoint"; exit 1; }
-          grep -qi "unsupported platform" appimage.log && { echo "desktop policy rejected the platform"; exit 1; }
-          grep -q "transient AppImage mount" appimage.log && { echo "the shell refused the AppImage mount"; exit 1; }
-          echo "PUBLISH-APPIMAGE: OK"
-
       - name: Write the release notes
         # Generated, not hand-written. A release body that accumulates per-run claims becomes a
         # ledger that has to be maintained by hand and drifts; the run list is the source of truth
@@ -159,7 +144,6 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(basename "$(ls "$UPSTREAM_DIR"/publish/*.deb | head -1)")
-          APPIMAGE=$(basename "$(ls "$UPSTREAM_DIR"/publish/*.AppImage | head -1)")
           {
             echo "Unofficial Linux x86_64 desktop build, produced from this repository's patch series"
             echo "against upstream \`$BASE_TAG\`."
@@ -182,7 +166,6 @@ jobs:
             echo "## Assets"
             echo
             echo "- \`$DEB\` — Debian, Ubuntu and compatible distributions"
-            echo "- \`$APPIMAGE\` — portable use"
             echo "- \`SHA256SUMS\` — download verification (\`sha256sum -c SHA256SUMS\`)"
             echo
             echo '```sh'
@@ -193,9 +176,8 @@ jobs:
             echo
             echo "These exact bytes were built, checksummed, installed and driven in the run linked"
             echo "above: the deb installs through apt, \`dsh://\` resolves to the package's desktop"
-            echo "entry, the session harness exercises window creation / close-does-not-quit /"
-            echo "relaunch / \`dsh://\` activation, and the AppImage boots with"
-            echo "\`--appimage-extract-and-run\`. Full step-by-step logs are in that run."
+            echo "entry, and the session harness exercises window creation / close-does-not-quit /"
+            echo "relaunch / \`dsh://\` activation. Full step-by-step logs are in that run."
             echo
             echo "Verification that covers the product core rather than the packaging — upstream's"
             echo "own Linux gate, the bwrap and Landlock sandbox legs, the keyless agent turn, and"
@@ -233,7 +215,6 @@ jobs:
           name: release-publish-logs
           path: |
             upstream/package.log
-            upstream/appimage.log
             session-publish/*.log
             session-publish/*.png
             upstream/publish/SHA256SUMS

@@ -18,7 +18,7 @@ on:
   workflow_dispatch:
     inputs:
       upload-artifacts:
-        description: Also upload the AppImage and deb (large)
+        description: Also upload the deb package (large)
         type: boolean
         default: false
       run-gates:
@@ -26,7 +26,7 @@ on:
         type: boolean
         default: true
       run-core:
-        description: Verify the published artifacts (checksums, install, desktop session, AppImage)
+        description: Verify the published deb (checksum, install and desktop session)
         type: boolean
         default: true
       run-hardening:
@@ -38,7 +38,7 @@ on:
         type: boolean
         default: true
       release-tag:
-        description: Release tag whose published deb/AppImage the published-artifact jobs verify
+        description: Release tag whose published deb the published-artifact jobs verify
         type: string
         default: v0.2.0-rc.2-linux.3
       previous-release-tag:
@@ -144,7 +144,7 @@ jobs:
           # check:package resolves the host target, which is linux-x64 on this runner.
           DSH_DESKTOP_TARGET_PLATFORM: linux
 
-      - name: Build AppImage and deb
+      - name: Build deb
         working-directory: ${{ env.UPSTREAM_DIR }}
         run: pnpm --dir apps/desktop run package:linux:x64
         env:
@@ -160,11 +160,9 @@ jobs:
           set -euo pipefail
           ART="apps/desktop/.desktop-build/targets/linux-x64/artifacts"
           shopt -s nullglob
-          appimages=("$ART"/*.AppImage)
           debs=("$ART"/*.deb)
-          test "${#appimages[@]}" -eq 1
           test "${#debs[@]}" -eq 1
-          file "${appimages[@]}" "${debs[@]}"
+          file "${debs[@]}"
           sudo apt-get update -q
           sudo apt-get install -yq xvfb openbox xdotool dbus-x11 imagemagick libglib2.0-bin
           sudo apt-get install -yq "$PWD"/"${debs[0]}"
@@ -359,8 +357,8 @@ jobs:
     # Verifies the bytes that were actually published, not a fresh CI build: download the release
     # assets, check them against the bundled SHA256SUMS, install the deb and drive a real
     # (headless) desktop session - window creation, close-does-not-quit, single-instance routing
-    # and dsh:// activation - then boot the published AppImage without FUSE.
-    name: published artifacts - checksums, install, desktop session, AppImage
+    # and dsh:// activation.
+    name: published deb - checksum, install and desktop session
     runs-on: ubuntu-24.04
     # Manual only. This leg verifies already-published bytes, which cannot change between
     # pushes to this repository -- so on push it only ever re-checked the same release.
@@ -375,7 +373,7 @@ jobs:
         run: |
           mkdir -p release
           gh release download "$RELEASE_TAG" -R "$GITHUB_REPOSITORY" \
-            -p '*.deb' -p '*.AppImage' -p 'SHA256SUMS' -D release
+            -p '*.deb' -p 'SHA256SUMS' -D release
           ls -l release
 
       - name: Verify the published checksums
@@ -399,27 +397,12 @@ jobs:
           dbus-run-session -- xvfb-run -a -s "-screen 0 1280x900x24" \
             bash ci/desktop-session.sh 2>&1 | tee session.log
 
-      - name: Published AppImage boot (no FUSE)
-        run: |
-          set -uo pipefail
-          APPIMAGE=$(ls release/*.AppImage | head -1)
-          chmod +x "$APPIMAGE"
-          file "$APPIMAGE" || true
-          set +e
-          timeout 40 xvfb-run -a ./"$APPIMAGE" --appimage-extract-and-run --no-sandbox --enable-logging > appimage.log 2>&1
-          echo "APPIMAGE exit=$? (124 = it ran the full 40s)"
-          set -e
-          grep -q "dsh web: http" appimage.log || { echo "the published AppImage never served its endpoint"; exit 1; }
-          grep -qi "unsupported platform" appimage.log && { echo "desktop policy rejected the platform"; exit 1; }
-          echo "PUBLISHED-APPIMAGE: OK"
-
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: release-verify-logs
           path: |
             session.log
-            appimage.log
             session/*.png
             app.log
             activation.log

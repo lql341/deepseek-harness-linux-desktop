@@ -85,7 +85,7 @@ cat <<'EOF'
     cd <这个目录>
     pnpm install --frozen-lockfile                    # 若用了 --install 则已完成
     pnpm --dir apps/desktop run package:linux:x64:dir # 先出目录产物，验证能否启动
-    pnpm --dir apps/desktop run package:linux:x64     # 再出 AppImage + deb
+    pnpm --dir apps/desktop run package:linux:x64     # 再出 deb
 
 验收清单见 LINUX-DESKTOP.md 第 4 节；已知限制见第 5 节；
 必须在 Linux 现场确认的项见第 7 节（第一次真类型检查、DE 下的窗口控件、CLI/深链、Office WASM 引擎）。

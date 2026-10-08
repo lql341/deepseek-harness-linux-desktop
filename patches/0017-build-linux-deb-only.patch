@@ -1,0 +1,25 @@
+From c7f70a3334e4f40e8cab9c93b494505bff0cde36 Mon Sep 17 00:00:00 2001
+From: verify <verify@localhost>
+Date: Thu, 8 Oct 2026 14:32:29 +0800
+Subject: [PATCH] build(desktop): publish Linux deb only
+
+---
+ apps/desktop/scripts/electron-builder-config.mjs | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/apps/desktop/scripts/electron-builder-config.mjs b/apps/desktop/scripts/electron-builder-config.mjs
+index b0d6a99..4a28b36 100644
+--- a/apps/desktop/scripts/electron-builder-config.mjs
++++ b/apps/desktop/scripts/electron-builder-config.mjs
+@@ -255,7 +255,7 @@ export function createElectronBuilderConfig(
+       description: 'An open-source agent harness developed by DeepSeek AI.',
+       // deb carries no upstream identity to inherit, so name the product itself as the maintainer.
+       maintainer: 'DeepSeek Harness',
+-      target: ['AppImage', 'deb'],
++      target: ['deb'],
+       desktop: {
+         // Name, Comment, and Icon come from productName, description, and the Linux icon above.
+         // electron-builder re-emits MimeType from the top-level protocols entry, so the dsh:// deep
+-- 
+2.43.0
+

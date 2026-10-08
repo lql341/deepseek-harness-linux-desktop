@@ -1,7 +1,6 @@
 # DeepSeek Harness Desktop — Linux（mac-like）移植补丁集
 
-> 本文档对应的 Linux x64 路径已在本机实际编译、打包并启动验证。验证产物为 AppImage
-> 和 deb；当前主机缺少 `libfuse.so.2`，AppImage 使用自解压运行模式完成启动检查。
+> 本文档对应的 Linux x64 路径已在本机实际编译、打包并启动验证，发布产物为 deb。
 > 另在 **ubuntu-24.04 与 Debian 13（trixie）** 的 GitHub Actions（workflow
 > `Linux desktop verification`）上完整跑通。最新一轮是**13 个补丁**的完整门禁集
 > （run `37411910000`，2026-10-06，head `d70585e`）：8 个 job 中 7 个绿，涵盖
@@ -10,10 +9,10 @@
 > **未打补丁基线 tag** 上挂的是同样两个任务、同样四个测试，与本补丁集无关。
 > 更早的一轮（run `36982274054`，当时 9 个补丁）即已跑通 `pnpm install` →
 > `pnpm run typecheck` → 应用构建 → `check:package` → `package:linux:x64:dir` →
-> 产物体检 → 无头 runtime 冒烟 → Xvfb GUI 冒烟 → AppImage + deb。
+> 产物体检 → 无头 runtime 冒烟 → Xvfb GUI 冒烟 → deb。
 
 > 基线：上游 `deepseek-ai/deepseek-harness` tag **`dsh-v0.2.0-rc.2`**（commit `639ed0153972`）。
-> 目标：在 Linux x64 上得到与 macOS 版**行为一致**的 Electron 桌面壳，产物为 AppImage + deb。
+> 目标：在 Linux x64 上得到与 macOS 版**行为一致**的 Electron 桌面壳，产物为 deb。
 > 性质：非官方补丁集。上游 README 明确写有 “Linux is not a supported Desktop release target”，
 > 且打包脚本的测试断言 `linux-x64` 必须被拒绝 —— 本补丁集就是把这层限制打开并把 Linux 路径补齐。
 
@@ -32,7 +31,6 @@
 | Node | `^22.19 \|\| >=24`（上游 CI 用 Node 24） |
 | pnpm | `11.7.0`（`package.json` 的 `packageManager`；`corepack enable` 最省事） |
 | 本地环境文件 | 打包前**必须**存在 `apps/desktop/.env.linux`：读不到会直接抛 `cannot read … copy … .example`。`apply.sh` 会自动从模板生成 |
-| 系统包 | `rpm`/`fpm` 视目标而定（deb 需要 `dpkg`/`fakeroot`）；AppImage 需要 `libfuse2`（仅运行旧内核） |
 | 图形依赖 | 构建不需要 GUI；**验证**需要 X11/Wayland，或 `xvfb-run` |
 | LibreOffice | **不需要安装**：Linux 走随包内置的 WASM 引擎（见 §5） |
 | 字体 | 若在极简容器里跑，WASM 引擎只用导入的字体；无字体时转换会以 `unavailable` 拒绝，需要装字体或配置 `fontDirectories` |
@@ -63,7 +61,7 @@ pnpm install --frozen-lockfile
 # 先出目录产物（最快，用来确认能不能启动）
 pnpm --dir apps/desktop run package:linux:x64:dir
 
-# 再出 AppImage + deb
+# 再出 deb
 pnpm --dir apps/desktop run package:linux:x64
 ```
 
@@ -81,11 +79,11 @@ pnpm --dir apps/desktop run package:linux:x64
    显式 Quit 能真正退出。
 4. **CLI 进 PATH**：安装/卸载 `dsh` 命令后，新开 shell 能直接跑 `dsh --version`；
    已存在非本应用的同名命令时应报告冲突而不是覆盖。
-5. **深链**：`xdg-open 'dsh://...'` 能唤回并聚焦应用（deb 安装后生效；AppImage 需桌面项已注册）。
+5. **深链**：`xdg-open 'dsh://...'` 能唤回并聚焦应用（deb 安装后生效； 需桌面项已注册）。
 6. **内置运行时**：`Resources/runtime/primary-runtime/dependencies/{node,pnpm,python}` 是 Linux 版，
    agent 能跑 bash 工具、Office 技能能跑 python 脚本。
 7. **更新策略**：默认不联网检查更新（无官方 Linux feed）；设了
-   `DSH_DESKTOP_LINUX_UPDATE_ORIGIN` 才启用自建 feed。
+   `` 才启用自建 feed。
 
 ## 5. 已知限制与坑
 
@@ -110,21 +108,19 @@ pnpm --dir apps/desktop run package:linux:x64
   - `primary-runtime` 的 Linux 表项上游已有：Node `node-v24.21.0-linux-{x64,arm64}.tar.gz`、
     Python `cpython-3.12.14+…-linux-gnu-install_only_stripped.tar.gz` 的 sha256 已与
     nodejs.org / astral 的校验文件核对一致。
-- **Ubuntu 23.10+ 的 AppArmor 限制**：未特权 user namespace 受限时，Electron/AppImage 的沙箱可能
+- **Ubuntu 23.10+ 的 AppArmor 限制**：未特权 user namespace 受限时，Electron/ 的沙箱可能
   起不来（典型报错与 `chrome-sandbox` 相关）。**优先用 deb**（自带 setuid 沙箱助手），
-  AppImage 走不通时再考虑 AppArmor profile 或 `--no-sandbox`（会降低安全性，仅作兜底）。
+   走不通时再考虑 AppArmor profile 或 `--no-sandbox`（会降低安全性，仅作兜底）。
 - **bash 沙箱**：Linux 侧走 Landlock（`@deepseek-ai/node-addon-system-linux-*`）。首次运行请确认
   内核 ≥ 5.13，否则沙箱策略会退化，需要按提示调整策略配置。
 - **托盘**：mac 版没有托盘，补丁**不给 Linux 加托盘**（GNOME 下 AppIndicator 也不可靠）；
   窗口关掉后用菜单/再次启动唤回。
-- **自动更新**：官方 feed 只有 `mac-arm64` / `mac-x64` / `win-x64`。Linux 默认关闭；
-  自建 feed 时按 electron-updater 的 generic provider 放 `latest-linux.yml` + AppImage 产物。
+- **自动更新**：官方 feed 只有 `mac-arm64` / `mac-x64` / `win-x64`。Linux deb 不使用应用内自动更新，
+  通过发行版包更新流程安装新版本。
   另外 **Linux 下的"强制更新 policy"是惰性的**：共享身份模型与 `x-client-platform`
   只有 `web`/`darwin`/`win32`，没有 Linux 取值，因此补丁让 Linux 显式跳过整套 policy
   （不构造强制更新窗口、不检查）；manifest 里仍带着 `dshMandatoryUpdatePolicy` 也不会拦启动。
-- **CLI 进 PATH 只在 deb 下可用**：AppImage 的资源目录在临时挂载点，应用退出即失效，
-  所以补丁在 AppImage 里**拒绝**安装 `dsh` 命令并给出提示（逃生口 `DSH_DESKTOP_RESOURCES`，
-  用于解包后的稳定目录）。要"和 mac 一样有 `dsh` 命令"，请装 deb。
+- **CLI 通过 deb 安装**：包安装时把 `dsh` 命令放入用户 PATH。
 - **平台身份上报**：Linux 打包版向 DeepSeek Platform 上报的桌面身份沿用 macOS 分支
   （`x-client-platform: darwin`）。原因：共享账号包只定义了 `darwin`/`win32`，省略则退化成
   `web`。这会让服务端把你的客户端当成 macOS 客户端——若在意统计/服务端策略，需要先在上游
@@ -142,15 +138,15 @@ pnpm --dir apps/desktop run package:linux:x64
 - `linux-arm64` 目标（脚本结构与 Linux x64 相同，主要是原生包与 Node/Python 归档换架构）。
 - 自建更新 feed 的完整流水线（签名不需要，但需要静态托管与 `latest-linux.yml` 生成）。
 - 桌面环境的个性化适配：GNOME/KDE 下的窗口控件位置、Wayland 下的全局快捷键差异。
-- `smoke-packaged-runtime` 的 Linux（AppImage/deb）布局；`desktop-toolchain-preflight` 目前
-  对 Linux 复用通用探测（tar 等），未加 deb/AppImage 专用工具探测。
+- `smoke-packaged-runtime` 的 Linux（deb）布局；`desktop-toolchain-preflight` 目前
+  对 Linux 复用通用探测（tar 等），未加 deb/ 专用工具探测。
 - Linux 侧新增测试：CLI launcher 的 Linux fixture 已补；PATH 提示文案与 `~/.local/bin`
   不在 PATH 时的警告未做。
 
 ## 7. 本补丁集仍未验证什么
 
-本机已经完成 Linux x64 编译、runtime 准备、AppImage/deb 打包和基础启动验证；ubuntu-24.04 CI
-另外把 **deb 安装/运行/卸载**、**AppImage 无 FUSE 启动**和**桌面测试套件基线**也跑完了。
+本机已经完成 Linux x64 编译、runtime 准备、deb 打包和基础启动验证；ubuntu-24.04 CI
+另外把 **deb 安装/运行/卸载**、** 无 FUSE 启动**和**桌面测试套件基线**也跑完了。
 以下项目仍需要在目标桌面环境上确认：
 
 - 桌面环境相关的窗口控件观感；
