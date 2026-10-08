@@ -16,7 +16,7 @@ macOS 版保持一致的非官方补丁集。
 > 找不到 payload 的 `dsh` 启动器、丢掉了 environment 的 upload-plan 报错文案，以及四处会被
 > 上游自有 Linux 门禁拒绝的风格/仓库引用错误。
 
-基线：上游 tag **`dsh-v0.2.0-rc.2`**（commit `639ed0153972`），14 个补丁。
+基线：上游 tag **`dsh-v0.2.0-rc.2`**（commit `639ed0153972`），16 个补丁。
 
 ---
 
@@ -136,18 +136,17 @@ git clone https://github.com/lql341/deepseek-harness-linux-desktop.git "$PATCH_R
 sh "$PATCH_REPO/apply.sh" "$SRC"
 ```
 
-`apply.sh` 会克隆上游 tag `dsh-v0.2.0-rc.2`、创建分支 `linux-desktop`、对全部 14 个补丁执行
+`apply.sh` 会克隆上游 tag `dsh-v0.2.0-rc.2`、创建分支 `linux-desktop`、对全部 16 个补丁执行
 `git am`，并把 `.env.linux.example` 复制为 `.env.linux`（打包代码要求该文件存在，缺了会直接报错）。
 
 成功判据 —— 四条都要成立：
 
 ```sh
 git -C "$SRC" log --oneline | head -1
-#   期望: "fix(desktop): restore the window on a plain second launch"
+#   期望: "fix(desktop): give Linux a tray icon and a dock icon the panel can match"
 git -C "$SRC" rev-parse HEAD^{tree}
-#   期望: 9e43fa571c6d7df8f364700ee2d0865b23fb1bb4
-#         （当前这 14 个补丁系列对应的树哈希；出现别的值说明有补丁没打上，或系列变了。
-#          故意改动 patches/ 之后再重新计算）
+#   期望: 当前这 16 个补丁系列对应的树哈希。跑一次 apply.sh 就能读到，它也会记录在
+#         发布流程的release notes 里。出现别的值说明有补丁没打上，或系列变了。
 git -C "$SRC" status --porcelain      # 期望: 空
 test -f "$SRC/apps/desktop/.env.linux" && echo env-ok
 ```
@@ -279,25 +278,33 @@ dpkg -L deepseek-harness | grep -E '/(bin|opt)/'    # 找到已安装的可执�
 本节记录的是*这套 suite 覆盖了什么*、*结论是什么*，目的是让人在失败时能直接定位，
 而不必重新推导每个 job 到底做了什么。
 
+**CI 刻意做得很轻。** push 到 `main` 时只跑两条便宜的构建腿——`install + typecheck +
+package preflight` 与 `package --dir + artifact inspection + runtime smoke`。要花几十 runner 分钟的
+（`upstream Linux gates…`），以及验的是**已发布字节**而非当前分支的（`published artifacts…`、
+`deb upgrade path…`、`Wayland…`），都只在 `workflow_dispatch` 下跑：切发布前手动用 *Run workflow*
+触发。**所以 push 变绿不再意味着"门禁通过"，只意味着"还能构建、还能打包"。** 补丁集有可能影响
+那些长腿时，请自己触发一次。
+
 workflow 的各个 job 及其证明的事：
 
-| Job | 证明 |
-|---|---|
-| `install + typecheck + package preflight` | 补丁能应用、依赖装得上、`typecheck` 通过、`check:package` 认可 Linux 配置 |
-| `package --dir + artifact inspection + runtime smoke` | 真实构建产出 AppImage + deb、运行时能从 `app.asar` 内应答、产物结构正确 |
-| `published artifacts - checksums, install, desktop session, AppImage` | 验的是**已发布**的字节（不是新构建）：与 `SHA256SUMS` 一致、deb 能装、真实桌面会话行为正确、AppImage 免 FUSE 启动 |
-| `Debian 13 (trixie)` | 同一条链路在 Debian 上成立，不只是 Ubuntu；其中 bwrap 那条腿会因 Docker seccomp 自我跳过，因此是"报告"而非"卡门禁" |
-| `deb upgrade path and AppArmor-hardened launch` | 从 `…linux.1` 升到 `…linux.2` 会清掉旧启动器；且在 `kernel.apparmor_restrict_unprivileged_userns=1` 下**不加** `--no-sandbox` 也能启动 |
-| `Wayland` | deb 在 headless 合成器下以纯 Wayland 客户端启动 |
-| `upstream Linux gates, sandbox confinement, keyless agent smoke` | 上游自己的 Linux 门禁、bwrap/Landlock 隔离、以及一次无 key 的 agent 回合 |
-| `linux-gates-baseline` | 在**未打补丁**的 base tag 上跑同一套上游门禁，从而能把门禁失败归因到本补丁集还是归因到 runner |
+| Job | 证明 | 触发时机 |
+|---|---|---|
+| `install + typecheck + package preflight` | 补丁能应用、依赖装得上、`typecheck` 通过、`check:package` 认可 Linux 配置 | push |
+| `package --dir + artifact inspection + runtime smoke` | 真实构建产出 AppImage + deb、运行时能从 `app.asar` 内应答、产物结构正确 | push |
+| `upstream Linux gates, sandbox confinement, keyless agent smoke` | 上游自己的 Linux 门禁、bwrap/Landlock 隔离、以及一次无 key 的 agent 回合 | 手动 |
+| `published artifacts - checksums, install, desktop session, AppImage` | 验的是**已发布**的字节（不是新构建）：与 `SHA256SUMS` 一致、deb 能装、真实桌面会话行为正确、AppImage 免 FUSE 启动 | 手动 |
+| `deb upgrade path and AppArmor-hardened launch` | 从 `…linux.2` 升到 `…linux.3` 会清掉旧启动器；且在 `kernel.apparmor_restrict_unprivileged_userns=1` 下**不加** `--no-sandbox` 也能启动 | 手动 |
+| `Wayland` | deb 在 headless 合成器下以纯 Wayland 客户端启动 | 手动 |
+
+已移除：`Debian 13 (trixie)` 容器腿与未打补丁的 `linux-gates-baseline` 腿。前者是把同一条链路在
+一个并非本移植主要目标的发行版上重跑一遍；后者只用于把门禁失败归因，开发期有用，不构成门禁。
 
 已验证：
 
-- 14 个补丁在 `dsh-v0.2.0-rc.2` 上全部干净 apply；`git am` 后树哈希为
-  `9e43fa571c6d7df8f364700ee2d0865b23fb1bb4`，工作区干净、无残留改动。
+- 16 个补丁在 `dsh-v0.2.0-rc.2` 上全部干净 apply；`git am` 后工作区干净、无残留改动。
+  （树哈希随系列变，请用 `git -C <src> rev-parse HEAD^{tree}` 现场读，不要比对这里引用的值。）
 - `apply.sh` 能端到端跑通，包括在 C locale 且未配置 git 身份的情况下：
-  浅克隆 → 14 个补丁 → 生成 `.env.linux` → exit 0。
+  浅克隆 → 16 个补丁 → 生成 `.env.linux` → exit 0。
 - `check:package` 通过；官方 Linux 构建能走完运行时准备、Office 文档往返与 Electron 打包。
 - 打包后的应用能启动并提供本地 `dsh web` 端点；在 Ubuntu、Debian 13 与 Wayland 上均没有
   `desktop policy: unsupported platform` 拒绝。
@@ -364,13 +371,14 @@ workflow 的各个 job 及其证明的事：
 - 只支持 `linux-x64`；`linux-arm64` 不在本系列内。
 - 欢迎窗口的标题栏配色只在创建时跟随系统主题。
 - `deb` 的 maintainer 字段是占位符（`DeepSeek Harness`）。
-- **关窗后找回窗口已端到端覆盖**：关掉最后一个窗口后应用与其 Host 继续运行（这是设计），
-  之后的第一次 `dsh://` 激活**能**把窗口找回 —— `patches/0013` 修的就是这条激活重建路径，
-  已在 `ci/desktop-session.sh` 里断言（`the dsh:// activation brought the window back`）。`patches/0014`
-  收窄了 `focusPrimaryWindow` 里的 early-return，让单实例锁路由回来的**普通第二次启动**也能把窗口
-  重新显示；但该路径在 headless 的 `ci/desktop-session.sh` 断言里仍是红的
-  （`no window after the plain second launch`），尚待真实桌面会话确认。
-  两条断言的当前状态请以 CI run 为准。
+- **关窗后找回窗口两条路径都已确认**：关掉最后一个窗口后应用与其 Host 继续运行（这是设计），
+  之后的第一次 `dsh://` 激活**能**把窗口找回 —— `patches/0013` 修的就是这条激活重建路径；
+  `patches/0014` 收窄了 `focusPrimaryWindow` 里的 early-return，让单实例锁路由回来的
+  **普通第二次启动**也能把窗口重新显示。两条都在 `ci/desktop-session.sh` 里有断言
+  （`the dsh:// activation brought the window back`、
+  `the window returned after the plain second launch`），并且已在真实 Xfce/X11 桌面会话上、
+  针对已安装的 `…linux.3` deb 验证过——普通二次启动连跑三轮均通过。CI 的 headless 环境从未把
+  第二条断言报绿，这个差异是 headless 环境的性质，不是补丁的问题。
 
   从这棵树发出的 release 会在自己的 notes 里带上该限制。发布 workflow
   （`.github/workflows/publish-linux-desktop.yml`）有一个 `allow-known-session-gap` 输入，
@@ -384,7 +392,7 @@ workflow 的各个 job 及其证明的事：
 ## 10. 目录结构、许可与署名
 
 ```
-patches/0001..0014*.patch   git format-patch 序列，按文件名顺序应用
+patches/0001..0016*.patch   git format-patch 序列，按文件名顺序应用
 apply.sh                    克隆上游基线 tag、应用序列、生成 .env.linux
 verify.sh                   一次性 Linux 诊断脚本（--env-only / --full），产出诊断 tarball
 LINUX-DESKTOP.md            长文指南：逐文件说明、已验证事实、待办项

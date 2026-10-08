@@ -20,7 +20,7 @@ path up.
 > payload, an upload-plan error message that dropped the environment name, and four style /
 > repository-reference errors that upstream's own Linux gate rejects.
 
-Base: upstream tag **`dsh-v0.2.0-rc.2`** (commit `639ed0153972`), 14 patches.
+Base: upstream tag **`dsh-v0.2.0-rc.2`** (commit `639ed0153972`), 16 patches.
 
 ---
 
@@ -143,23 +143,23 @@ sh "$PATCH_REPO/apply.sh" "$SRC"
 ```
 
 `apply.sh` clones upstream at tag `dsh-v0.2.0-rc.2`, creates branch `linux-desktop`, runs
-`git am` on all 14 patches, and copies `.env.linux.example` to `.env.linux` (the packaging
+`git am` on all 16 patches, and copies `.env.linux.example` to `.env.linux` (the packaging
 code requires that file and aborts without it).
 
 Success conditions — all four must hold:
 
 ```sh
 git -C "$SRC" log --oneline | head -1
-#   expect: "fix(desktop): restore the window on a plain second launch"
+#   expect: "fix(desktop): give Linux a tray icon and a dock icon the panel can match"
 git -C "$SRC" rev-parse HEAD^{tree}
-#   expect: 9e43fa571c6d7df8f364700ee2d0865b23fb1bb4
-#            (the tree hash of this exact 14-patch series; a different value means a patch did
-#            not apply, or the series changed. Recompute after intentionally changing patches/.)
+#   expect: the tree hash of this exact 16-patch series. Run apply.sh to read it; it is recorded
+#            by the publish workflow's release notes. A different value means a patch did not
+#            apply, or the series changed.
 git -C "$SRC" status --porcelain      # expect: empty
 test -f "$SRC/apps/desktop/.env.linux" && echo env-ok
 ```
 
-To review rather than trust: `git -C "$SRC" log --stat` shows the 5 topic commits.
+To review rather than trust: `git -C "$SRC" log --stat` shows one commit per patch.
 
 ### Step 2 — install dependencies
 
@@ -292,25 +292,38 @@ produced by the `Linux desktop verification` workflow; read the run list and per
 This section records *what the suite covers* and *what it concluded*, so a failure can be
 triaged without re-deriving what the jobs do.
 
+**CI is push-light on purpose.** Only the two cheap build legs — `install + typecheck +
+package preflight` and `package --dir + artifact inspection + runtime smoke` — run on a push to
+`main`. The legs that cost tens of runner-minutes (`upstream Linux gates…`), or that verify
+already-published bytes rather than this branch (`published artifacts…`, `deb upgrade path…`,
+`Wayland…`), are `workflow_dispatch`-only: run them with *Run workflow* before cutting a
+release. The Debian 13 leg and the unpatched-baseline gate were removed for the same reason —
+they duplicated coverage rather than adding it. **So a green push no longer means "the gate
+passed"; it means "it still builds and packages."** Trigger the longer legs yourself when the
+patch set changes in a way that could plausibly break them.
+
 The workflow's jobs and what each one establishes:
 
-| Job | Establishes |
-|---|---|
-| `install + typecheck + package preflight` | the series applies, dependencies install, `typecheck` passes, `check:package` validates the Linux config |
-| `package --dir + artifact inspection + runtime smoke` | the real build produces AppImage + deb, the runtime answers from inside `app.asar`, the artifacts are well-formed |
-| `published artifacts - checksums, install, desktop session, AppImage` | the **published** bytes (not a fresh build) match `SHA256SUMS`, the deb installs, a real desktop session behaves, the AppImage boots without FUSE |
-| `Debian 13 (trixie)` | the whole chain on Debian, not just Ubuntu — including the bwrap leg self-skipping under Docker's seccomp, which is reported rather than gated |
-| `deb upgrade path and AppArmor-hardened launch` | upgrading `…linux.1` → `…linux.2` cleans the legacy launcher, and the app starts under `kernel.apparmor_restrict_unprivileged_userns=1` **without** `--no-sandbox` |
-| `Wayland` | the deb boots as a pure Wayland client under a headless compositor |
-| `upstream Linux gates, sandbox confinement, keyless agent smoke` | upstream's own Linux gate, bwrap/Landlock confinement, and a keyless agent turn |
-| `linux-gates-baseline` | the **same** upstream gate on the *unpatched* base tag, so a failing gate can be attributed to this series or to the runner |
+| Job | Establishes | Runs on |
+|---|---|---|
+| `install + typecheck + package preflight` | the series applies, dependencies install, `typecheck` passes, `check:package` validates the Linux config | push |
+| `package --dir + artifact inspection + runtime smoke` | the real build produces AppImage + deb, the runtime answers from inside `app.asar`, the artifacts are well-formed | push |
+| `upstream Linux gates, sandbox confinement, keyless agent smoke` | upstream's own Linux gate, bwrap/Landlock confinement, and a keyless agent turn | manual |
+| `published artifacts - checksums, install, desktop session, AppImage` | the **published** bytes (not a fresh build) match `SHA256SUMS`, the deb installs, a real desktop session behaves, the AppImage boots without FUSE | manual |
+| `deb upgrade path and AppArmor-hardened launch` | upgrading `…linux.2` → `…linux.3` cleans the legacy launcher, and the app starts under `kernel.apparmor_restrict_unprivileged_userns=1` **without** `--no-sandbox` | manual |
+| `Wayland` | the deb boots as a pure Wayland client under a headless compositor | manual |
+
+Removed: the `Debian 13 (trixie)` container leg and the unpatched `linux-gates-baseline` leg. The
+first duplicated the Ubuntu chain for a distribution this port is not primarily aimed at; the
+second existed only to attribute a gate failure and was useful during development, not as a gate.
 
 Verified:
 
-- All 14 patches apply cleanly on `dsh-v0.2.0-rc.2`; after `git am` the tree hash is
-  `9e43fa571c6d7df8f364700ee2d0865b23fb1bb4` with a clean worktree and no leftover changes.
+- All 16 patches apply cleanly on `dsh-v0.2.0-rc.2`; after `git am` the worktree is clean with
+  no leftover changes. (The tree hash moves with the series, so read it with
+  `git -C <src> rev-parse HEAD^{tree}` rather than comparing against a value quoted here.)
 - `apply.sh` runs end to end, including under a C locale with no git identity configured:
-  fresh shallow clone → 14 patches → `.env.linux` created → exit 0.
+  fresh shallow clone → 16 patches → `.env.linux` created → exit 0.
 - `check:package` passes and the official Linux build passes runtime preparation, Office
   document round-trip, and Electron packaging.
 - The packaged application starts and serves its local `dsh web` endpoint, with no
@@ -382,7 +395,7 @@ Not verified in this environment:
 - Only `linux-x64`; `linux-arm64` is not part of this series.
 - The welcome window's caption colour follows the system palette only at creation.
 - The `deb` maintainer field is a placeholder (`DeepSeek Harness`).
-- **Window restore after close works for the `dsh://` path; the plain relaunch is implemented but not yet confirmed.** Closing the last window keeps the application and its Host running (by design). The first `dsh://` activation restores the window — `patches/0013` fixes that activation-rebuild path, and `ci/desktop-session.sh` asserts it (`the dsh:// activation brought the window back`). `patches/0014` narrows the early-return in `focusPrimaryWindow` so a *plain* second launch routed through the instance lock also restores the window, but the headless assertion for that path (`no window after the plain second launch`) is still red on the runner and is pending confirmation on a real desktop session. Check the current run before trusting either claim.
+- **Window restore after close works on both paths.** Closing the last window keeps the application and its Host running (by design). The first `dsh://` activation restores the window — `patches/0013` fixes that activation-rebuild path. `patches/0014` narrows the early-return in `focusPrimaryWindow` so a *plain* second launch routed through the instance lock also restores the window. Both are asserted by `ci/desktop-session.sh` (`the dsh:// activation brought the window back`, `the window returned after the plain second launch`) and both were confirmed on a real Xfce/X11 desktop session against the installed `…linux.3` deb, the relaunch path three times in a row. The headless runner in CI has never reported that second assertion green; the discrepancy is a property of the headless environment, not of the patch.
 
   Releases cut from this tree carry that limitation in their notes. The publish workflow
   (`.github/workflows/publish-linux-desktop.yml`) has an `allow-known-session-gap` input that
@@ -398,7 +411,7 @@ Not verified in this environment:
 ## 10. Layout, license, attribution
 
 ```
-patches/0001..0014*.patch   git format-patch series, applied in file-name order
+patches/0001..0016*.patch   git format-patch series, applied in file-name order
 apply.sh                    clone upstream at the base tag, apply the series, create .env.linux
 verify.sh                   one-shot Linux diagnostic (--env-only / --full); emits a tarball
 LINUX-DESKTOP.md            long-form guide: per-file notes, verified facts, open items

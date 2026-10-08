@@ -1,0 +1,189 @@
+From c81fc3728bb8ba79ef27ef337cb68938c8e13bac Mon Sep 17 00:00:00 2001
+From: Marshall Lew <luqilinheu@gmail.com>
+Date: Thu, 8 Oct 2026 10:06:24 +0800
+Subject: [PATCH] fix(desktop): give Linux a tray icon and a dock icon the
+ panel can match
+
+Two things a Linux desktop needs from this application, neither of which it
+had.
+
+The tray. Upstream wraps the whole DesktopTray construction in
+`if (process.platform === 'win32')`, so on Linux no tray icon is ever
+created. That interacts badly with the macOS-like behaviour this series
+implements: closing the last window keeps the process and its Host running
+by design, so a Linux user who closed the last window had a live application
+with no way to reach it -- no dock icon either (see below), and the running
+instance would swallow a second launch through the single-instance lock.
+Windows gets the tray, macOS gets the Dock, Linux got nothing. Enable the
+tray there too, and ship it a PNG: a StatusNotifier panel resolves the icon
+at whatever size its theme asks for, and the multi-size Windows ICO is not
+something libappindicator can consume.
+
+The dock icon. StartupWMClass was left to electron-builder, which derives it
+from productName -- "DeepSeek Harness" -- while the running window reports
+WM_CLASS "deepseek-ai-dsh-desktop". Panels and docks match the two to decide
+whether an icon belongs to a running window, so the mismatch made the dock
+render a question mark for a window that was open and mapped. State the real
+class.
+
+patches/0004 notes that the tray icon is rendered the way
+scripts/render-tray-icon.ts does for Windows; the same artwork is already
+sized per-pixel in resources/icons, so the Linux tray reuses 32x32 from there.
+---
+ apps/desktop/electron-builder.config.d.mts    |  2 ++
+ .../scripts/electron-builder-config.mjs       |  9 +++++++
+ apps/desktop/src/main.ts                      |  9 +++++--
+ .../desktop/tests/installer-packaging.spec.ts | 25 ++++++++++++++++++-
+ apps/desktop/tests/main-startup.spec.ts       | 20 +++++++++++++++
+ 5 files changed, 62 insertions(+), 3 deletions(-)
+
+diff --git a/apps/desktop/electron-builder.config.d.mts b/apps/desktop/electron-builder.config.d.mts
+index 3c04365..76d52c0 100644
+--- a/apps/desktop/electron-builder.config.d.mts
++++ b/apps/desktop/electron-builder.config.d.mts
+@@ -22,6 +22,7 @@ export interface DesktopElectronBuilderConfig {
+     { readonly from: string, readonly to: 'runtime' },
+     { readonly from: string, readonly to: 'icon.png' },
+     ...{ readonly from: string, readonly to: 'tray.ico' }[],
++    ...{ readonly from: string, readonly to: 'tray.png' }[],
+   ]
+   readonly mac: {
+     readonly extendInfo: { readonly NSMicrophoneUsageDescription: string }
+@@ -46,6 +47,7 @@ export interface DesktopElectronBuilderConfig {
+   }
+   readonly linux: {
+     readonly executableName: string
++    readonly desktop?: { readonly entry: { readonly MimeType: string }, readonly StartupWMClass: string }
+   }
+   readonly deb: {
+     readonly afterInstall: string
+diff --git a/apps/desktop/scripts/electron-builder-config.mjs b/apps/desktop/scripts/electron-builder-config.mjs
+index be27629..d5ca053 100644
+--- a/apps/desktop/scripts/electron-builder-config.mjs
++++ b/apps/desktop/scripts/electron-builder-config.mjs
+@@ -152,6 +152,10 @@ export function createElectronBuilderConfig(
+       { from: fileURLToPath(new URL('../resources/icon-windows.png', import.meta.url)), to: 'icon.png' },
+       // Windows tray bitmaps; macOS keeps the Dock and ships no menu bar icon.
+       ...(packagesWindows ? [{ from: fileURLToPath(new URL('../resources/tray-windows.ico', import.meta.url)), to: 'tray.ico' }] : []),
++      // The Linux tray reads a PNG, not the multi-size ICO: a StatusNotifier panel picks its own
++      // size from the theme, and Electron cannot hand a Windows ICO to libappindicator. 32x32 is
++      // the size panels ask for most often; the same artwork is in resources/icons at every size.
++      ...(packagesLinux ? [{ from: fileURLToPath(new URL('../resources/icons/32x32.png', import.meta.url)), to: 'tray.png' }] : []),
+     ],
+     mac: {
+       icon: fileURLToPath(new URL('../resources/icon-macos.png', import.meta.url)),
+@@ -257,6 +261,11 @@ export function createElectronBuilderConfig(
+         // electron-builder re-emits MimeType from the top-level protocols entry, so the dsh:// deep
+         // link stays registered even though this entry states the same value.
+         entry: { MimeType: 'x-scheme-handler/dsh;' },
++        // Without this, StartupWMClass is derived from productName ("DeepSeek Harness"), which is
++        // not the WM_CLASS the running window reports ("deepseek-ai-dsh-desktop"). Panels and docks
++        // match the two to decide an icon belongs to a running window, so the mismatch made the
++        // dock show a question mark for a window that was open and mapped.
++        StartupWMClass: 'deepseek-ai-dsh-desktop',
+       },
+     },
+     deb: {
+diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
+index b32870d..8097d59 100644
+--- a/apps/desktop/src/main.ts
++++ b/apps/desktop/src/main.ts
+@@ -1005,8 +1005,13 @@ async function main(): Promise<void> {
+     tray?.relabel()
+   }
+   refreshApplicationMenu()
+-  const trayIconPath = development ? join(app.getAppPath(), 'resources', 'tray-windows.ico') : join(process.resourcesPath, 'tray.ico')
+-  if (process.platform === 'win32') {
++  const trayIconPath = development
++    ? join(app.getAppPath(), 'resources', process.platform === 'linux' ? 'icons/32x32.png' : 'tray-windows.ico')
++    : join(process.resourcesPath, process.platform === 'linux' ? 'tray.png' : 'tray.ico')
++  // Windows and Linux both need the tray: closing the last window keeps the process and its Host
++  // alive, so without a tray icon there is no way back to the window -- the window is gone and the
++  // application is still running. macOS has the Dock for this, so it keeps neither.
++  if (process.platform === 'win32' || process.platform === 'linux') {
+     // The tray is the way back to a hidden window; without it, relaunching the application still focuses it.
+     try {
+       tray = new DesktopTray({ iconPath: trayIconPath, locale: currentDesktopLocale,
+diff --git a/apps/desktop/tests/installer-packaging.spec.ts b/apps/desktop/tests/installer-packaging.spec.ts
+index bbfd938..3293ce8 100644
+--- a/apps/desktop/tests/installer-packaging.spec.ts
++++ b/apps/desktop/tests/installer-packaging.spec.ts
+@@ -40,13 +40,16 @@ describe('installer preparation preserves application dependencies', () => {
+       const aboutIcon = config.extraResources.find(resource => resource.to === 'icon.png')
+       expect(aboutIcon).toBeDefined()
+       expect(readFileSync(aboutIcon!.from)).toEqual(readFileSync(new URL('../resources/icon-windows.png', import.meta.url)))
+-      // Only the Windows package carries the tray bitmaps; macOS keeps the Dock.
++      // Only the Windows package carries the multi-size ICO; macOS keeps the Dock. Linux gets a
++      // single PNG instead (asserted in the Linux case below), because a StatusNotifier panel picks
++      // its own size from the theme and cannot consume an ICO.
+       const trayIcon = config.extraResources.find(resource => resource.to === 'tray.ico')
+       if (platform === 'win32') {
+         expect(readFileSync(trayIcon!.from)).toEqual(readFileSync(new URL('../resources/tray-windows.ico', import.meta.url)))
+       } else {
+         expect(trayIcon).toBeUndefined()
+       }
++      expect(config.extraResources.find(resource => resource.to === 'tray.png')).toBeUndefined()
+       const packager = new Packager({ projectDir: tmpdir() })
+       // A foreign source-build target avoids rebuilding modules; the real dependency ownership decision still runs.
+       Object.defineProperties(packager, {
+@@ -90,6 +93,26 @@ describe('installer preparation preserves application dependencies', () => {
+     expect(readFileSync(config.deb.afterInstall, 'utf8')).toContain('/usr/bin/DeepSeek Harness')
+   })
+ 
++  it('gives the Linux package a PNG tray icon and a dock icon the panel can match', async () => {
++    const { createElectronBuilderConfig } = await import('../scripts/electron-builder-config.mjs')
++    const config = createElectronBuilderConfig({
++      DSH_DESKTOP_APP_ID: 'com.example.installer',
++      DSH_DESKTOP_TARGET_PLATFORM: 'linux',
++      DSH_DESKTOP_TARGET_ARCH: 'x64',
++      DSH_DESKTOP_UNSIGNED: '0',
++    }, 'linux', 'x64')
++    // Closing the last window keeps the process running on Linux too, so the tray is the only way
++    // back to the window. It needs a PNG: a StatusNotifier panel sizes the icon from its theme.
++    const trayPng = config.extraResources.find(resource => resource.to === 'tray.png')
++    expect(trayPng).toBeDefined()
++    expect(readFileSync(trayPng!.from)).toEqual(readFileSync(new URL('../resources/icons/32x32.png', import.meta.url)))
++    expect(config.extraResources.find(resource => resource.to === 'tray.ico')).toBeUndefined()
++    // electron-builder would derive StartupWMClass from productName ("DeepSeek Harness"), which is
++    // not the WM_CLASS the window reports ("deepseek-ai-dsh-desktop"); a dock then shows a question
++    // mark for a window that is open. State the real class.
++    expect(config.linux.desktop?.StartupWMClass).toBe('deepseek-ai-dsh-desktop')
++  })
++
+   it('packages every preload entry point the shell loads', async () => {
+     const { readdirSync, readFileSync } = await import('node:fs')
+     const sourceDirectory = new URL('../src/', import.meta.url)
+diff --git a/apps/desktop/tests/main-startup.spec.ts b/apps/desktop/tests/main-startup.spec.ts
+index fd4d1d1..25f78f7 100644
+--- a/apps/desktop/tests/main-startup.spec.ts
++++ b/apps/desktop/tests/main-startup.spec.ts
+@@ -1147,6 +1147,26 @@ describe('desktop main startup', () => {
+     expect(harness.trays[0]!.destroy).toHaveBeenCalledOnce()
+   })
+ 
++  it('creates the Linux tray, because closing the last window leaves no other way back', async () => {
++    // The tray used to be Windows-only, so on Linux closing the last window left the process and
++    // its Host running with nothing to click: the application was alive but unreachable.
++    vi.stubGlobal('process', { ...process, platform: 'linux', arch: 'x64', resourcesPath: 'desktop-test-resources' })
++    const host = await readyWorkspace()
++    expect(harness.trays).toHaveLength(1)
++    // A PNG, not the Windows ICO: a StatusNotifier panel resolves the icon at its own size.
++    expect(harness.trays[0]!.image).toEqual({ path: join('desktop-test-resources', 'tray.png') })
++    // The Windows-only one-time background notice stays out of the Linux flow.
++    expect(harness.backgroundNotice.markerPath).toBeUndefined()
++    const window = harness.windows[0]!
++    window.show.mockClear()
++    window.close()
++    expect(window.hide).toHaveBeenCalledOnce()
++    expect(host.stop).not.toHaveBeenCalled()
++    harness.trays[0]!.emit('click')
++    expect(window.show).toHaveBeenCalledOnce()
++    expect(window.focus).toHaveBeenCalled()
++  })
++
+   it('routes closing through the tray confirmation and keeps the Host running', async () => {
+     const host = await readyWorkspace()
+     const window = harness.windows[0]!
+-- 
+2.43.0
+

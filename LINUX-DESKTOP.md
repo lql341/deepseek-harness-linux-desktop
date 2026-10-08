@@ -200,7 +200,18 @@ Playwright 浏览器）：打过补丁 78/80 通过，未打补丁的上游 tag 
 会话复验成功（均报告 `the dsh:// activation brought the window back`）；**普通第二次启动路径**由
 `patches/0014` 修复——它收窄了 `focusPrimaryWindow` 里的 early-return，让单实例锁路由回来的二次启动
 把窗口重新显示，而不是只剩 10x10 托盘窗口。`ci/desktop-session.sh` 对两条路径都做断言，窗口若找不回
-会让该 run 失败（见下"待 CI 复验"）。
+会让该 run 失败（见下"待CI 复验"）。
+
+**真实桌面已确认**：在 Xfce/X11 桌面会话上针对已安装的 `…linux.3` deb 实测，两条路径都通过，其中
+普通二次启动连跑三轮均成功唤回窗口。CI 的 headless（Xvfb）环境从未把第二条断言报绿——那是headless
+环境的性质，不是补丁的问题。
+
+**Linux 上的托盘此前是缺失的**：上游 `main.ts` 把 `DesktopTray` 整个包在 `process.platform === 'win32'`
+里，Linux 上从不创建托盘。于是"关掉最后一个窗口后应用继续驻留"这条设计在没有托盘的系统上等同于
+"进程活着但无法唤回"。`patches/0016` 在 Linux 上启用托盘，并随包投放 `tray.png`（StatusNotifier 面板
+按主题自选尺寸，不能用 Windows 的多尺寸 ICO）。同一补丁还修了 dock 上的问号图标：
+`StartupWMClass` 原本由 `productName` 推导成 `DeepSeek Harness`，而窗口实际报告的 `WM_CLASS` 是
+`deepseek-ai-dsh-desktop`，面板匹配不上就显示问号。
 
 本次验证覆盖的运行时检查与仍建议确认的项目（标 ✅ 的在上述 ubuntu-24.04 CI 中已确认）：
 

@@ -33,13 +33,20 @@ known_issue() { echo "[session] KNOWN ISSUE: $*"; }
 
 command -v xdotool >/dev/null || { echo "[session] FAIL: xdotool is required" >&2; exit 1; }
 
-# A window manager is needed for WM_DELETE_WINDOW to mean anything.
+# A window manager is needed for WM_DELETE_WINDOW to mean anything. Without one, `$!` below is
+# unbound and `set -u` would abort the run with an "unbound variable" error instead of naming the
+# real cause, so require one explicitly.
+WM_PID=''
 if command -v openbox >/dev/null; then
   openbox >openbox.log 2>&1 &
+  WM_PID=$!
 elif command -v fluxbox >/dev/null; then
   fluxbox >fluxbox.log 2>&1 &
+  WM_PID=$!
+else
+  echo "[session] FAIL: a window manager (openbox or fluxbox) is required" >&2
+  exit 1
 fi
-WM_PID=$!
 sleep 2
 
 # A tray/indicator helper window is small and always present, so the assertions look for a window
@@ -177,7 +184,6 @@ else
   # launch path by narrowing the early-return in focusPrimaryWindow so the instance-lock-routed
   # relaunch shows the window. If this still fails, the fix regressed -- fail the run.
   fail "no window after the plain second launch; patches/0014 should have restored it"
-  diagnose "$APP_PID"
   diagnose "$APP_PID"
 fi
 import -window root "$SHOT_DIR/session-relaunch.png" 2>/dev/null || true

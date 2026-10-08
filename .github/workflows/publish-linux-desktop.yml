@@ -129,14 +129,15 @@ jobs:
           xdg-mime query default x-scheme-handler/dsh
 
       - name: Desktop session against the bytes being published
-        # One assertion is known to fail: patches/0014 implements plain-relaunch window restore
-        # but it is unconfirmed on a real desktop session, so `no window after the plain second
-        # launch` is red. `allow-known-session-gap` tolerates *that line only* - any other
-        # session failure still blocks the release, and the allowance is recorded in the notes so
-        # a reader of the release sees it. Set it once the behaviour is confirmed on a real
-        # desktop and this step can go back to failing outright.
+        # One assertion used to fail here: `no window after the plain second launch`. patches/0014
+        # implements that path and it has since been confirmed on a real desktop session, so
+        # `allow-known-session-gap` now exists only for older branches; the default false means this
+        # step fails outright on any session regression.
         env:
           ALLOW_KNOWN_SESSION_GAP: ${{ inputs.allow-known-session-gap }}
+          # Without this the screenshots and per-step logs land in the workspace root, while the
+          # artifact upload below looks for them under session-publish/.
+          SHOT_DIR: ${{ github.workspace }}/session-publish
         run: |
           set -o pipefail
           mkdir -p "$GITHUB_WORKSPACE/session-publish"
