@@ -1,4 +1,4 @@
-From c81fc3728bb8ba79ef27ef337cb68938c8e13bac Mon Sep 17 00:00:00 2001
+From 65fcf768350f1def6a19381a01c360679f5891a0 Mon Sep 17 00:00:00 2001
 From: Marshall Lew <luqilinheu@gmail.com>
 Date: Thu, 8 Oct 2026 10:06:24 +0800
 Subject: [PATCH] fix(desktop): give Linux a tray icon and a dock icon the
@@ -30,15 +30,15 @@ patches/0004 notes that the tray icon is rendered the way
 scripts/render-tray-icon.ts does for Windows; the same artwork is already
 sized per-pixel in resources/icons, so the Linux tray reuses 32x32 from there.
 ---
- apps/desktop/electron-builder.config.d.mts    |  2 ++
- .../scripts/electron-builder-config.mjs       |  9 +++++++
+ apps/desktop/electron-builder.config.d.mts    |  5 ++++
+ .../scripts/electron-builder-config.mjs       | 15 ++++++++++-
  apps/desktop/src/main.ts                      |  9 +++++--
  .../desktop/tests/installer-packaging.spec.ts | 25 ++++++++++++++++++-
  apps/desktop/tests/main-startup.spec.ts       | 20 +++++++++++++++
- 5 files changed, 62 insertions(+), 3 deletions(-)
+ 5 files changed, 70 insertions(+), 4 deletions(-)
 
 diff --git a/apps/desktop/electron-builder.config.d.mts b/apps/desktop/electron-builder.config.d.mts
-index 3c04365..76d52c0 100644
+index 3c04365..b97f74a 100644
 --- a/apps/desktop/electron-builder.config.d.mts
 +++ b/apps/desktop/electron-builder.config.d.mts
 @@ -22,6 +22,7 @@ export interface DesktopElectronBuilderConfig {
@@ -49,16 +49,19 @@ index 3c04365..76d52c0 100644
    ]
    readonly mac: {
      readonly extendInfo: { readonly NSMicrophoneUsageDescription: string }
-@@ -46,6 +47,7 @@ export interface DesktopElectronBuilderConfig {
+@@ -46,6 +47,10 @@ export interface DesktopElectronBuilderConfig {
    }
    readonly linux: {
      readonly executableName: string
-+    readonly desktop?: { readonly entry: { readonly MimeType: string }, readonly StartupWMClass: string }
++    // Only `entry` and `desktopActions` are accepted here; electron-builder rejects the rest.
++    readonly desktop?: {
++      readonly entry: { readonly MimeType: string, readonly StartupWMClass: string }
++    }
    }
    readonly deb: {
      readonly afterInstall: string
 diff --git a/apps/desktop/scripts/electron-builder-config.mjs b/apps/desktop/scripts/electron-builder-config.mjs
-index be27629..d5ca053 100644
+index be27629..b0d6a99 100644
 --- a/apps/desktop/scripts/electron-builder-config.mjs
 +++ b/apps/desktop/scripts/electron-builder-config.mjs
 @@ -152,6 +152,10 @@ export function createElectronBuilderConfig(
@@ -72,15 +75,21 @@ index be27629..d5ca053 100644
      ],
      mac: {
        icon: fileURLToPath(new URL('../resources/icon-macos.png', import.meta.url)),
-@@ -257,6 +261,11 @@ export function createElectronBuilderConfig(
+@@ -256,7 +260,16 @@ export function createElectronBuilderConfig(
+         // Name, Comment, and Icon come from productName, description, and the Linux icon above.
          // electron-builder re-emits MimeType from the top-level protocols entry, so the dsh:// deep
          // link stays registered even though this entry states the same value.
-         entry: { MimeType: 'x-scheme-handler/dsh;' },
-+        // Without this, StartupWMClass is derived from productName ("DeepSeek Harness"), which is
-+        // not the WM_CLASS the running window reports ("deepseek-ai-dsh-desktop"). Panels and docks
-+        // match the two to decide an icon belongs to a running window, so the mismatch made the
-+        // dock show a question mark for a window that was open and mapped.
-+        StartupWMClass: 'deepseek-ai-dsh-desktop',
+-        entry: { MimeType: 'x-scheme-handler/dsh;' },
++        // StartupWMClass belongs in `entry`, not beside it: the desktop object accepts only
++        // `entry` and `desktopActions`, and rejects anything else. Left unset, electron-builder
++        // derives it from productName ("DeepSeek Harness"), which is not the WM_CLASS the running
++        // window reports ("deepseek-ai-dsh-desktop"). Panels and docks match the two to decide an
++        // icon belongs to a running window, so the mismatch made the dock show a question mark for
++        // a window that was open and mapped.
++        entry: {
++          MimeType: 'x-scheme-handler/dsh;',
++          StartupWMClass: 'deepseek-ai-dsh-desktop',
++        },
        },
      },
      deb: {
@@ -105,7 +114,7 @@ index b32870d..8097d59 100644
      try {
        tray = new DesktopTray({ iconPath: trayIconPath, locale: currentDesktopLocale,
 diff --git a/apps/desktop/tests/installer-packaging.spec.ts b/apps/desktop/tests/installer-packaging.spec.ts
-index bbfd938..3293ce8 100644
+index bbfd938..1dc6eae 100644
 --- a/apps/desktop/tests/installer-packaging.spec.ts
 +++ b/apps/desktop/tests/installer-packaging.spec.ts
 @@ -40,13 +40,16 @@ describe('installer preparation preserves application dependencies', () => {
@@ -147,7 +156,7 @@ index bbfd938..3293ce8 100644
 +    // electron-builder would derive StartupWMClass from productName ("DeepSeek Harness"), which is
 +    // not the WM_CLASS the window reports ("deepseek-ai-dsh-desktop"); a dock then shows a question
 +    // mark for a window that is open. State the real class.
-+    expect(config.linux.desktop?.StartupWMClass).toBe('deepseek-ai-dsh-desktop')
++    expect(config.linux.desktop?.entry?.StartupWMClass).toBe('deepseek-ai-dsh-desktop')
 +  })
 +
    it('packages every preload entry point the shell loads', async () => {
