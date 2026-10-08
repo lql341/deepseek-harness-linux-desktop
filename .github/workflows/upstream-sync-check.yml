@@ -1,0 +1,186 @@
+name: Check upstream Harness sync
+
+# Detect upstream tags that are newer than the Linux port's pinned base, then
+# check whether the current patch series still applies and builds a Linux deb.
+# This workflow reports compatibility; it never changes BASE_TAG or publishes.
+
+on:
+  schedule:
+    - cron: '23 7 * * *'
+  workflow_dispatch:
+    inputs:
+      upstream-tag:
+        description: Optional upstream tag to check (defaults to the latest release tag)
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+env:
+  UPSTREAM_REPO: https://github.com/deepseek-ai/deepseek-harness.git
+  CURRENT_BASE_TAG: dsh-v0.2.0-rc.2
+  UPSTREAM_DIR: ${{ github.workspace }}/upstream
+
+jobs:
+  check:
+    name: detect, apply patches and build deb
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Resolve the upstream tag
+        id: upstream
+        env:
+          REQUESTED_TAG: ${{ inputs.upstream-tag }}
+        run: |
+          set -euo pipefail
+          if [ -n "$REQUESTED_TAG" ]; then
+            tag=$REQUESTED_TAG
+          else
+            tag=$(git ls-remote --tags --refs "$UPSTREAM_REPO" 'dsh-v*' \
+              | awk '{sub("refs/tags/", "", $2); print $2}' \
+              | sort -V | tail -n1)
+          fi
+          if [ -z "$tag" ]; then
+            echo "::error::could not resolve an upstream dsh-v* tag"
+            exit 1
+          fi
+          git init upstream-tag-lookup
+          git -C upstream-tag-lookup remote add origin "$UPSTREAM_REPO"
+          git -C upstream-tag-lookup fetch --quiet --depth=1 origin "refs/tags/$tag"
+          sha=$(git -C upstream-tag-lookup rev-parse 'FETCH_HEAD^{commit}')
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "UPSTREAM_TAG=$tag" >> "$GITHUB_ENV"
+          echo "UPSTREAM_SHA=$sha" >> "$GITHUB_ENV"
+          echo "Resolved $tag at $sha"
+
+      - name: Compare with the pinned base
+        id: compare
+        run: |
+          set -euo pipefail
+          if [ "$UPSTREAM_TAG" = "$CURRENT_BASE_TAG" ]; then
+            echo "newer=false" >> "$GITHUB_OUTPUT"
+            echo "Upstream remains at the pinned tag $CURRENT_BASE_TAG."
+            exit 0
+          fi
+          git init upstream-tags
+          git -C upstream-tags remote add origin "$UPSTREAM_REPO"
+          git -C upstream-tags fetch --quiet --depth=200 origin \
+            "refs/tags/$CURRENT_BASE_TAG:refs/tags/$CURRENT_BASE_TAG" \
+            "refs/tags/$UPSTREAM_TAG"
+          candidate=$(git -C upstream-tags rev-parse 'FETCH_HEAD^{commit}')
+          if git -C upstream-tags merge-base --is-ancestor "$CURRENT_BASE_TAG" "$candidate"; then
+            echo "newer=true" >> "$GITHUB_OUTPUT"
+            echo "$UPSTREAM_TAG is newer than $CURRENT_BASE_TAG."
+          else
+            echo "newer=false" >> "$GITHUB_OUTPUT"
+            echo "$UPSTREAM_TAG is not a descendant of $CURRENT_BASE_TAG; manual review required."
+          fi
+
+      - name: Write no-update report
+        if: steps.compare.outputs.newer == 'false'
+        run: |
+          {
+            echo "# Upstream sync check"
+            echo
+            echo "No newer descendant release tag was found."
+            echo
+            echo "- Pinned base: `$CURRENT_BASE_TAG`"
+            echo "- Checked tag: `$UPSTREAM_TAG` (`$UPSTREAM_SHA`)"
+            echo "- Repository commit: `$GITHUB_SHA`"
+          } > upstream-sync-report.md
+
+      - name: Free disk space
+        if: steps.compare.outputs.newer == 'true'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/share/swift /opt/ghc /usr/local/lib/android \
+            /usr/local/share/boost /opt/hostedtoolcache/CodeQL || true
+          df -h / | tail -1
+
+      - name: Clone the candidate upstream tag
+        if: steps.compare.outputs.newer == 'true'
+        run: |
+          git clone --branch "$UPSTREAM_TAG" --depth 1 "$UPSTREAM_REPO" "$UPSTREAM_DIR"
+
+      - name: Apply the Linux patch series
+        id: apply
+        if: steps.compare.outputs.newer == 'true'
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          git -C "$UPSTREAM_DIR" checkout -b linux-desktop-sync
+          git -C "$UPSTREAM_DIR" -c user.name=sync-check -c user.email=sync-check@localhost \
+            am "$GITHUB_WORKSPACE"/patches/*.patch 2>&1 | tee patch-apply.log
+
+      - name: Install dependencies and build the Linux deb
+        id: build
+        if: steps.compare.outputs.newer == 'true' && steps.apply.outcome == 'success'
+        continue-on-error: true
+        working-directory: ${{ env.UPSTREAM_DIR }}
+        env:
+          DSH_DESKTOP_TARGET_PLATFORM: linux
+          DSH_DESKTOP_TARGET_ARCH: x64
+        run: |
+          set -euo pipefail
+          cp apps/desktop/.env.linux.example apps/desktop/.env.linux
+          pnpm install --frozen-lockfile 2>&1 | tee "$GITHUB_WORKSPACE/dependencies.log"
+          pnpm run typecheck 2>&1 | tee "$GITHUB_WORKSPACE/typecheck.log"
+          pnpm --dir apps/desktop run check:package 2>&1 | tee "$GITHUB_WORKSPACE/package-preflight.log"
+          pnpm --dir apps/desktop run package:linux:x64 2>&1 | tee "$GITHUB_WORKSPACE/package.log"
+          ls -lh apps/desktop/.desktop-build/targets/linux-x64/artifacts/*.deb
+
+      - name: Write sync report
+        if: always()
+        env:
+          PATCH_OUTCOME: ${{ steps.apply.outcome }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          NEWER: ${{ steps.compare.outputs.newer }}
+        run: |
+          if [ "$NEWER" = false ]; then
+            exit 0
+          fi
+          {
+            echo "# Upstream sync check"
+            echo
+            echo "- Pinned base: `$CURRENT_BASE_TAG`"
+            echo "- Candidate tag: `$UPSTREAM_TAG` (`$UPSTREAM_SHA`)"
+            echo "- Candidate is a newer descendant: `$NEWER`"
+            echo "- Patch application: `$PATCH_OUTCOME`"
+            echo "- Typecheck and deb build: `$BUILD_OUTCOME`"
+            echo "- Repository commit: `$GITHUB_SHA`"
+            echo "- Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo
+            echo "This check does not update the pinned base or publish a release. Review changes and real Ubuntu/Debian desktop behaviour before updating the base."
+          } > upstream-sync-report.md
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: upstream-sync-${{ steps.upstream.outputs.tag || 'unresolved' }}
+          path: |
+            upstream-sync-report.md
+            patch-apply.log
+            dependencies.log
+            typecheck.log
+            package-preflight.log
+            package.log
+          if-no-files-found: warn
+
+      - name: Fail when the candidate could not be validated
+        if: steps.compare.outputs.newer == 'true'
+        env:
+          PATCH_OUTCOME: ${{ steps.apply.outcome }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+        run: |
+          [ "$PATCH_OUTCOME" = success ] && [ "$BUILD_OUTCOME" = success ]
