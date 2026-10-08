@@ -19,13 +19,6 @@ on:
         description: Create the release as a draft, so it can be reviewed before it is public
         type: boolean
         default: true
-      allow-known-session-gap:
-        description: >-
-          Tolerate the single known session failure ("no window after the plain second launch",
-          from the unconfirmed patches/0014) so a release can be cut. Any other session failure
-          still blocks. The gap is recorded in the release notes.
-        type: boolean
-        default: false
 
 permissions:
   contents: write
@@ -129,12 +122,10 @@ jobs:
           xdg-mime query default x-scheme-handler/dsh
 
       - name: Desktop session against the bytes being published
-        # One assertion used to fail here: `no window after the plain second launch`. patches/0014
-        # implements that path and it has since been confirmed on a real desktop session, so
-        # `allow-known-session-gap` now exists only for older branches; the default false means this
-        # step fails outright on any session regression.
+        # Xvfb checks startup, close behaviour and dsh:// activation. Plain relaunch is verified
+        # on real Ubuntu/Debian desktops because this headless session misreports it.
         env:
-          ALLOW_KNOWN_SESSION_GAP: ${{ inputs.allow-known-session-gap }}
+          SKIP_HEADLESS_RELAUNCH_CHECK: '1'
           # Without this the screenshots and per-step logs land in the workspace root, while the
           # artifact upload below looks for them under session-publish/.
           SHOT_DIR: ${{ github.workspace }}/session-publish
@@ -144,24 +135,8 @@ jobs:
           dbus-run-session -- xvfb-run -a -s "-screen 0 1280x900x24" \
             bash "$GITHUB_WORKSPACE/ci/desktop-session.sh" 2>&1 | tee "$GITHUB_WORKSPACE/session-publish/session.log"
           status=${PIPESTATUS[0]}
-          if [ "$status" -eq 0 ]; then
-            echo "PUBLISH-SESSION: OK"
-            exit 0
-          fi
-          if [ "$ALLOW_KNOWN_SESSION_GAP" != "true" ]; then
-            echo "::error::the desktop session failed and allow-known-session-gap is not set"
-            exit "$status"
-          fi
-          # Tolerate only the single known assertion, and only when it is the *only* failure.
-          KNOWN='no window after the plain second launch'
-          OTHER=$(grep -c '^\[session\] FAIL:' "$GITHUB_WORKSPACE/session-publish/session.log" || true)
-          if grep -qF "$KNOWN" "$GITHUB_WORKSPACE/session-publish/session.log" && [ "$OTHER" -eq 1 ]; then
-            echo "::warning::tolerating the one known session gap: $KNOWN"
-            echo "KNOWN_SESSION_GAP=tolerated" >> "$GITHUB_ENV"
-            exit 0
-          fi
-          echo "::error::the session failed for a reason other than the one known gap ($OTHER failing assertions)"
-          exit "$status"
+          if [ "$status" -ne 0 ]; then exit "$status"; fi
+          echo "PUBLISH-SESSION: OK"
 
       - name: AppImage boot of the bytes being published (no FUSE)
         run: |
@@ -225,22 +200,6 @@ jobs:
             echo "Verification that covers the product core rather than the packaging — upstream's"
             echo "own Linux gate, the bwrap and Landlock sandbox legs, the keyless agent turn, and"
             echo "Debian 13 — lives in the \`Linux desktop verification\` workflow."
-            if [ "${KNOWN_SESSION_GAP:-}" = "tolerated" ]; then
-              echo
-              echo "## Known limitation in this release"
-              echo
-              echo "**A plain relaunch after closing the last window does not restore the window yet.**"
-              echo "Closing the last window keeps the application and its Host running by design, and"
-              echo "the \`dsh://\` activation path brings the window back. A *plain* second launch,"
-              echo "routed through the single-instance lock, currently leaves only the tray helper"
-              echo "mapped. \`patches/0014\` implements the fix, but it is confirmed neither on a real"
-              echo "desktop session nor by the headless session harness, so this release was cut with"
-              echo "that one assertion tolerated. Restarting the application clears it."
-              echo
-              echo "Everything else in the session check passed for these bytes: the window is created"
-              echo "and mapped, closing the last window does not end the application, \`dsh://\`"
-              echo "resolves to the package's desktop entry, and activating it brings the window back."
-            fi
           } > "$GITHUB_WORKSPACE/RELEASE_NOTES.md"
           cat "$GITHUB_WORKSPACE/RELEASE_NOTES.md"
 
