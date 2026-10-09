@@ -28,6 +28,7 @@ Base: upstream tag **`dsh-v0.2.0-rc.2`** (commit `639ed0153972`), 16 patches.
 - [8. Verified / not verified](#8-verified--not-verified)
 - [9. Known limits](#9-known-limits)
 - [10. Layout, license, attribution](#10-layout-license-attribution)
+- [11. SCNet integration roadmap](#11-scnet-integration-roadmap)
 
 ---
 
@@ -416,3 +417,11 @@ which is MIT-licensed, Copyright (c) 2026 DeepSeek; that notice is retained here
 
 Not affiliated with, endorsed by, or supported by DeepSeek. Upstream is in developer preview
 and iterates quickly, so expect conflicts when rebasing onto newer tags.
+
+## 11. SCNet integration roadmap
+
+The long-term plan for SCNet OAuth2, the preinstalled `dsh-scnet` bundle, Linux Desktop login,
+Android, iOS, HarmonyOS, and enterprise Linux distributions is documented in
+[`docs/roadmap/SCNET-PLATFORM-DEVELOPMENT-PLAN.zh-CN.md`](docs/roadmap/SCNET-PLATFORM-DEVELOPMENT-PLAN.zh-CN.md).
+It separates the desktop plugin from mobile connectors and treats OAuth2 + PKCE, secure storage,
+account linking, and cross-platform acceptance as release gates.

@@ -26,6 +26,7 @@ macOS 版保持一致的非官方补丁集。
 - [8. 已验证 / 未验证](#8-已验证--未验证)
 - [9. 已知限制](#9-已知限制)
 - [10. 目录结构、许可与署名](#10-目录结构许可与署名)
+- [11. SCNet 集成路线图](#11-scnet-集成路线图)
 
 ---
 
@@ -398,3 +399,7 @@ LICENSE                     MIT（上游 DeepSeek + 本补丁集）
 
 与 DeepSeek 无关联、未获其背书或支持。上游处于开发者预览、迭代很快，向更新的 tag 变基时
 预计会有冲突。
+
+## 11. SCNet 集成路线图
+
+SCNet OAuth2、预制 `dsh-scnet` Bundle、Linux Desktop 登录、Android、iOS、HarmonyOS 和信创 Linux 的长期开发计划见 [`docs/roadmap/SCNET-PLATFORM-DEVELOPMENT-PLAN.zh-CN.md`](docs/roadmap/SCNET-PLATFORM-DEVELOPMENT-PLAN.zh-CN.md)。其中明确区分了桌面插件与移动端连接器，并将 OAuth2 + PKCE、安全存储、账户关联和跨平台验收作为发布门槛。
