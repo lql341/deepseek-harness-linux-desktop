@@ -10,9 +10,9 @@ Upstream ships macOS and Windows only — its own `apps/desktop/README.md` state
 `linux-x64` target must be rejected. This repository is the set of diffs that opens that
 path up.
 
-> **Status: Linux x64 verified on Ubuntu 24.04 LTS and Debian 13 (trixie) in GitHub Actions, and locally.** The sixteen-patch series applies cleanly to the upstream tag and has been compiled, packaged, and smoke-tested on Ubuntu 24.04 x86_64; the deb installation chain also runs inside a Debian 13 container. Linux releases use the deb package. `patches/0009`–`0012` fix what the first real Linux runs surfaced: a `TS2339` typecheck failure, a `dsh` launcher that could not find its payload, an upload-plan error that dropped the environment name, and four style/repository-reference errors rejected by upstream's Linux gate.
+> **Status: Linux x64 verified on Ubuntu 24.04 LTS and Debian 13 (trixie) in GitHub Actions, and locally.** The existing Linux release path has been compiled, packaged, and smoke-tested on Ubuntu 24.04 x86_64; the deb installation chain also runs inside a Debian 13 container. The eighteen-patch series applies cleanly, and the new bundle patch is typechecked with targeted Desktop tests. Linux releases use the deb package. `patches/0009`–`0012` fix what the first real Linux runs surfaced: a `TS2339` typecheck failure, a `dsh` launcher that could not find its payload, an upload-plan error that dropped the environment name, and four style/repository-reference errors rejected by upstream's Linux gate. `patches/0018` preinstalls the fixed `dsh-scnet@0.6.6` bundle in the Desktop runtime.
 
-Base: upstream tag **`dsh-v0.2.0-rc.2`** (commit `639ed0153972`), 16 patches.
+Base: upstream tag **`dsh-v0.2.0-rc.2`** (commit `639ed0153972`), 18 patches.
 
 ---
 
@@ -136,16 +136,16 @@ sh "$PATCH_REPO/apply.sh" "$SRC"
 ```
 
 `apply.sh` clones upstream at tag `dsh-v0.2.0-rc.2`, creates branch `linux-desktop`, runs
-`git am` on all 16 patches, and copies `.env.linux.example` to `.env.linux` (the packaging
+`git am` on all 18 patches, and copies `.env.linux.example` to `.env.linux` (the packaging
 code requires that file and aborts without it).
 
 Success conditions — all four must hold:
 
 ```sh
 git -C "$SRC" log --oneline | head -1
-#   expect: "fix(desktop): give Linux a tray icon and a dock icon the panel can match"
+#   expect: "feat(desktop): preinstall the fixed SCNet bundle"
 git -C "$SRC" rev-parse HEAD^{tree}
-#   expect: the tree hash of this exact 16-patch series. Run apply.sh to read it; it is recorded
+#   expect: the tree hash of this exact 18-patch series. Run apply.sh to read it; it is recorded
 #            by the publish workflow's release notes. A different value means a patch did not
 #            apply, or the series changed.
 git -C "$SRC" status --porcelain      # expect: empty
@@ -306,11 +306,11 @@ Removed, and what each cost:
 
 Verified:
 
-- All 16 patches apply cleanly on `dsh-v0.2.0-rc.2`; after `git am` the worktree is clean with
+- All 18 patches apply cleanly on `dsh-v0.2.0-rc.2`; after `git am` the worktree is clean with
   no leftover changes. (The tree hash moves with the series, so read it with
   `git -C <src> rev-parse HEAD^{tree}` rather than comparing against a value quoted here.)
 - `apply.sh` runs end to end, including under a C locale with no git identity configured:
-  fresh shallow clone → 16 patches → `.env.linux` created → exit 0.
+  fresh shallow clone → 18 patches → `.env.linux` created → exit 0.
 - `check:package` passes and the official Linux build passes runtime preparation, Office
   document round-trip, and Electron packaging.
 - The packaged application starts and serves its local `dsh web` endpoint, with no
@@ -392,7 +392,7 @@ Not verified in this environment:
 ## 10. Layout, license, attribution
 
 ```
-patches/0001..0016*.patch   git format-patch series, applied in file-name order
+patches/0001..0018*.patch   git format-patch series, applied in file-name order
 apply.sh                    clone upstream at the base tag, apply the series, create .env.linux
 verify.sh                   one-shot Linux diagnostic (--env-only / --full); emits a tarball
 LINUX-DESKTOP.md            long-form guide: per-file notes, verified facts, open items

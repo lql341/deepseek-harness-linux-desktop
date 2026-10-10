@@ -1,6 +1,6 @@
 # SCNet 集成与多平台客户端开发计划
 
-- 文档状态：`proposed`
+- 文档状态：`in progress`
 - 版本：`1.0.0`
 - 日期：2026-10-09
 - 适用仓库：`deepseek-harness-linux-desktop`、`dsh-scnet`、上游 `deepseek-harness`
@@ -207,3 +207,10 @@ Android 可以通过内置 connector tools 或受控远程 DSH Host 调用 SCNet
 3. 在 Linux Desktop 预置固定版本 `dsh-scnet`，完成 profile 激活、Python/Keyring 和深链回调。
 4. 完成真实 SCNet 沙盒登录、刷新、注销和一个只读资源查询。
 5. 再开始 Android；移动端只复用协议和 OpenAPI connector，不复制桌面 shell 能力。
+
+当前进度：第 2 项的离线协议骨架已完成，第 3 项已完成 Desktop 预置的第一步。
+`dsh-scnet/connector` 提供版本化操作定义、平台能力状态、PKCE 授权请求、授权回调校验、
+token exchange/refresh 请求构造和内存凭据存储抽象；Linux Desktop 补丁 `0018` 固定携带
+`dsh-scnet@0.6.6`，首次启动默认激活、旧默认 profile 自动迁移，并保留显式禁用状态。
+Python/Keyring、深链回调和真实 SCNet issuer、scope、redirect URI、账户关联 endpoint
+仍待 M0 外部合同确认，因此当前实现不执行网络登录，也不代表 SCNet OAuth2 已完成。

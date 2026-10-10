@@ -8,9 +8,9 @@ macOS 版保持一致的非官方补丁集。
 上游只发布 macOS 与 Windows —— 其 `apps/desktop/README.md` 明确写着 Linux 不是受支持的桌面
 发布目标，打包测试也断言 `linux-x64` 目标必须被拒绝。本仓库就是把这层限制打开的那组 diff。
 
-> **状态：Linux x64 已在 GitHub Actions 的 Ubuntu 24.04 LTS 与 Debian 13（trixie）上验证通过，本机亦通过。** 十六个补丁干净应用到上游 tag，并在 Ubuntu 24.04 x86_64 上完成编译、打包与冒烟；deb 安装链路也在 Debian 13 容器里跑通。Linux 发行包使用 deb。`patches/0009`–`0012` 修复了首次 Linux 验证发现的类型错误、dsh 启动器 payload 路径、上传计划报错信息以及上游门禁拒绝的风格与仓库引用。
+> **状态：Linux x64 已在 GitHub Actions 的 Ubuntu 24.04 LTS 与 Debian 13（trixie）上验证通过，本机亦通过。** 既有 Linux 发布链路已在 Ubuntu 24.04 x86_64 上完成编译、打包与冒烟，deb 安装链路也在 Debian 13 容器里跑通。十八个补丁可干净应用到上游 tag；新增的预置 Bundle 补丁已通过类型检查和针对性 Desktop 测试。Linux 发行包使用 deb。`patches/0009`–`0012` 修复了首次 Linux 验证发现的类型错误、dsh 启动器 payload 路径、上传计划报错信息以及上游门禁拒绝的风格与仓库引用；`patches/0018` 将固定版本 `dsh-scnet@0.6.6` 预置进 Desktop runtime。
 
-基线：上游 tag **`dsh-v0.2.0-rc.2`**（commit `639ed0153972`），16 个补丁。
+基线：上游 tag **`dsh-v0.2.0-rc.2`**（commit `639ed0153972`），18 个补丁。
 
 ---
 
@@ -130,16 +130,16 @@ git clone https://github.com/lql341/deepseek-harness-linux-desktop.git "$PATCH_R
 sh "$PATCH_REPO/apply.sh" "$SRC"
 ```
 
-`apply.sh` 会克隆上游 tag `dsh-v0.2.0-rc.2`、创建分支 `linux-desktop`、对全部 16 个补丁执行
+`apply.sh` 会克隆上游 tag `dsh-v0.2.0-rc.2`、创建分支 `linux-desktop`、对全部 18 个补丁执行
 `git am`，并把 `.env.linux.example` 复制为 `.env.linux`（打包代码要求该文件存在，缺了会直接报错）。
 
 成功判据 —— 四条都要成立：
 
 ```sh
 git -C "$SRC" log --oneline | head -1
-#   期望: "fix(desktop): give Linux a tray icon and a dock icon the panel can match"
+#   期望: "feat(desktop): preinstall the fixed SCNet bundle"
 git -C "$SRC" rev-parse HEAD^{tree}
-#   期望: 当前这 16 个补丁系列对应的树哈希。跑一次 apply.sh 就能读到，它也会记录在
+#   期望: 当前这 18 个补丁系列对应的树哈希。跑一次 apply.sh 就能读到，它也会记录在
 #         发布流程的release notes 里。出现别的值说明有补丁没打上，或系列变了。
 git -C "$SRC" status --porcelain      # 期望: 空
 test -f "$SRC/apps/desktop/.env.linux" && echo env-ok
@@ -291,10 +291,10 @@ workflow 的各个 job 及其证明的事：
 
 已验证：
 
-- 16 个补丁在 `dsh-v0.2.0-rc.2` 上全部干净 apply；`git am` 后工作区干净、无残留改动。
+- 18 个补丁在 `dsh-v0.2.0-rc.2` 上全部干净 apply；`git am` 后工作区干净、无残留改动。
   （树哈希随系列变，请用 `git -C <src> rev-parse HEAD^{tree}` 现场读，不要比对这里引用的值。）
 - `apply.sh` 能端到端跑通，包括在 C locale 且未配置 git 身份的情况下：
-  浅克隆 → 16 个补丁 → 生成 `.env.linux` → exit 0。
+  浅克隆 → 18 个补丁 → 生成 `.env.linux` → exit 0。
 - `check:package` 通过；官方 Linux 构建能走完运行时准备、Office 文档往返与 Electron 打包。
 - 打包后的应用能启动并提供本地 `dsh web` 端点；在 Ubuntu、Debian 13 与 Wayland 上均没有
   `desktop policy: unsupported platform` 拒绝。
@@ -377,7 +377,7 @@ workflow 的各个 job 及其证明的事：
 ## 10. 目录结构、许可与署名
 
 ```
-patches/0001..0016*.patch   git format-patch 序列，按文件名顺序应用
+patches/0001..0018*.patch   git format-patch 序列，按文件名顺序应用
 apply.sh                    克隆上游基线 tag、应用序列、生成 .env.linux
 verify.sh                   一次性 Linux 诊断脚本（--env-only / --full），产出诊断 tarball
 LINUX-DESKTOP.md            长文指南：逐文件说明、已验证事实、待办项

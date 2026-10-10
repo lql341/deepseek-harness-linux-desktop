@@ -2,7 +2,8 @@
 
 > 本文档对应的 Linux x64 路径已在本机实际编译、打包并启动验证，发布产物为 deb。
 > 另在 **ubuntu-24.04 与 Debian 13（trixie）** 的 GitHub Actions（workflow
-> `Linux desktop verification`）上完整跑通。最新一轮是**13 个补丁**的完整门禁集
+> `Linux desktop verification`）上完整跑通。当前仓库的补丁序列为 **18 个补丁**；
+> 下述 run 是历史验证记录，完整门禁集
 > （run `37411910000`，2026-10-06，head `d70585e`）：8 个 job 中 7 个绿，涵盖
 > `install + typecheck + package preflight`、打包、Debian 13、deb 升级路径与硬化启动、
 > 已发布产物校验与 Wayland 冒烟；唯一报红的是上游门禁聚合腿，且在同一次运行的
@@ -82,8 +83,7 @@ pnpm --dir apps/desktop run package:linux:x64
 5. **深链**：`xdg-open 'dsh://...'` 能唤回并聚焦应用（deb 安装后生效； 需桌面项已注册）。
 6. **内置运行时**：`Resources/runtime/primary-runtime/dependencies/{node,pnpm,python}` 是 Linux 版，
    agent 能跑 bash 工具、Office 技能能跑 python 脚本。
-7. **更新策略**：默认不联网检查更新（无官方 Linux feed）；设了
-   `` 才启用自建 feed。
+7. **更新策略**：当前只发布 deb，不启用应用内自动更新；新版本通过发行版包更新流程安装。
 
 ## 5. 已知限制与坑
 

@@ -1,0 +1,387 @@
+From 36a594ed9fa0620ecb4a0572d8620a0e7cdb4ddf Mon Sep 17 00:00:00 2001
+From: codex <codex@localhost>
+Date: Sat, 10 Oct 2026 13:43:10 +0800
+Subject: [PATCH] feat(desktop): preinstall the fixed SCNet bundle
+
+---
+ .../desktop/scripts/desktop-build-paths.d.mts |  1 +
+ apps/desktop/scripts/desktop-build-paths.mjs  |  3 +-
+ apps/desktop/scripts/package-target.ts        | 11 +++++
+ apps/desktop/scripts/prepare-package-set.ts   |  5 +-
+ apps/desktop/src/core-package-set.ts          |  6 ++-
+ apps/desktop/src/project-manager.ts           | 46 +++++++++++++++++--
+ apps/desktop/src/scnet-bundle.ts              | 18 ++++++++
+ .../desktop/tests/desktop-build-paths.spec.ts |  1 +
+ .../tests/package-target-stages.spec.ts       |  3 ++
+ .../desktop/tests/prepare-package-set.spec.ts |  6 ++-
+ apps/desktop/tests/project-manager.spec.ts    | 29 +++++++++++-
+ 11 files changed, 119 insertions(+), 10 deletions(-)
+ create mode 100644 apps/desktop/src/scnet-bundle.ts
+
+diff --git a/apps/desktop/scripts/desktop-build-paths.d.mts b/apps/desktop/scripts/desktop-build-paths.d.mts
+index d366e9e..d758c72 100644
+--- a/apps/desktop/scripts/desktop-build-paths.d.mts
++++ b/apps/desktop/scripts/desktop-build-paths.d.mts
+@@ -13,6 +13,7 @@ export interface DesktopTargetBuildPaths {
+   readonly packedDsh: string
+   readonly packedVendor: string
+   readonly packedLandlock: string
++  readonly packedScnet: string
+   readonly downloads: string
+ }
+ 
+diff --git a/apps/desktop/scripts/desktop-build-paths.mjs b/apps/desktop/scripts/desktop-build-paths.mjs
+index ad876a6..f6850fa 100644
+--- a/apps/desktop/scripts/desktop-build-paths.mjs
++++ b/apps/desktop/scripts/desktop-build-paths.mjs
+@@ -38,7 +38,7 @@ function assertSupportedTarget(target) {
+ /**
+  * Return the mutable preparation and artifact directories owned by one release target.
+  * @param {'mac-arm64' | 'mac-x64' | 'win-x64' | 'linux-x64'} target - Supported Desktop target name.
+- * @returns {{ root: string, artifacts: string, unsignedArtifacts: string, runtime: string, packageSet: string, dsh: string, dshPnpm: string, electron: string, packedDsh: string, packedVendor: string, packedLandlock: string, downloads: string }} Target paths plus the shared immutable download cache.
++ * @returns {{ root: string, artifacts: string, unsignedArtifacts: string, runtime: string, packageSet: string, dsh: string, dshPnpm: string, electron: string, packedDsh: string, packedVendor: string, packedLandlock: string, packedScnet: string, downloads: string }} Target paths plus the shared immutable download cache.
+  */
+ export function desktopTargetBuildPaths(target) {
+   assertSupportedTarget(target)
+@@ -56,6 +56,7 @@ export function desktopTargetBuildPaths(target) {
+     packedDsh: join(packed, 'dsh'),
+     packedVendor: join(packed, 'vendor'),
+     packedLandlock: join(packed, 'landlock'),
++    packedScnet: join(packed, 'scnet'),
+     downloads: join(BUILD_ROOT, 'downloads'),
+   }
+ }
+diff --git a/apps/desktop/scripts/package-target.ts b/apps/desktop/scripts/package-target.ts
+index 6aa054a..4bd8979 100644
+--- a/apps/desktop/scripts/package-target.ts
++++ b/apps/desktop/scripts/package-target.ts
+@@ -24,6 +24,7 @@ import { suggestDesktopBuildVersion } from './desktop-build-version-discovery.ts
+ import { desktopBuildCommitEnvironment, readDesktopBuildCommit, resolveDesktopBuildCommit } from './desktop-build-commit.mjs'
+ import { requireDesktopToolchain } from './desktop-toolchain-preflight.ts'
+ import { withMacOSNotarizationProxy } from './macos-notarization-proxy.ts'
++import { SCNET_BUNDLE_SPEC } from '../src/scnet-bundle.ts'
+ 
+ const APP_ROOT = resolve(import.meta.dirname, '..')
+ const REPOSITORY_ROOT = resolve(APP_ROOT, '..', '..')
+@@ -467,6 +468,16 @@ export async function packageTarget(
+     '--pack-destination',
+     buildPaths.packedDsh,
+   ], buildEnv, REPOSITORY_ROOT)
++  rmSync(buildPaths.packedScnet, { recursive: true, force: true })
++  mkdirSync(buildPaths.packedScnet, { recursive: true })
++  await execute([
++    'dlx',
++    'npm@12',
++    'pack',
++    SCNET_BUNDLE_SPEC,
++    '--pack-destination',
++    buildPaths.packedScnet,
++  ], buildEnv, REPOSITORY_ROOT)
+   await execute(['run', 'release:pack', '--family', 'vendor', '--out', buildPaths.packedVendor, ...packArguments], buildEnv, REPOSITORY_ROOT)
+   rmSync(buildPaths.packedLandlock, { recursive: true, force: true })
+   mkdirSync(buildPaths.packedLandlock, { recursive: true })
+diff --git a/apps/desktop/scripts/prepare-package-set.ts b/apps/desktop/scripts/prepare-package-set.ts
+index 7e7d62e..9a4f373 100644
+--- a/apps/desktop/scripts/prepare-package-set.ts
++++ b/apps/desktop/scripts/prepare-package-set.ts
+@@ -23,12 +23,13 @@ import {
+   parseDesktopCorePackageSet,
+   type DesktopCorePackageRecord,
+ } from '../src/core-package-set.ts'
++import { SCNET_BUNDLE_PACKAGE } from '../src/scnet-bundle.ts'
+ import { capture } from '../../../scripts/release/process.ts'
+ import { tarballFiles } from '../../../scripts/release/tarball.ts'
+ import { resolveDesktopTargetBuildPaths } from './desktop-build-paths.mjs'
+ 
+ const DSH_PACKAGE = '@deepseek-ai/dsh'
+-const ROOT_PACKAGES = [DSH_PACKAGE, DESKTOP_HOST_PACKAGE] as const
++const ROOT_PACKAGES = [DSH_PACKAGE, DESKTOP_HOST_PACKAGE, SCNET_BUNDLE_PACKAGE] as const
+ const APP_ROOT = resolve(import.meta.dirname, '..')
+ const REPOSITORY_ROOT = resolve(APP_ROOT, '..', '..')
+ 
+@@ -152,6 +153,7 @@ export function prepareDesktopPackageSet(inputs: readonly string[], output: stri
+       file,
+       bytes: statSync(destination).size,
+       integrity: `sha512-${createHash('sha512').update(body).digest('base64')}`,
++      ...(typeof packed.manifest.license === 'string' ? { license: packed.manifest.license } : {}),
+     }
+   })
+   const packageSet = parseDesktopCorePackageSet({ schemaVersion: 1, packages: records })
+@@ -164,6 +166,7 @@ function main(): void {
+     buildPaths.packedDsh,
+     buildPaths.packedVendor,
+     buildPaths.packedLandlock,
++    buildPaths.packedScnet,
+   ]
+   const { values } = parseArgs({
+     options: { from: { type: 'string', multiple: true }, out: { type: 'string' } },
+diff --git a/apps/desktop/src/core-package-set.ts b/apps/desktop/src/core-package-set.ts
+index 0c148e2..a023582 100644
+--- a/apps/desktop/src/core-package-set.ts
++++ b/apps/desktop/src/core-package-set.ts
+@@ -26,6 +26,8 @@ export interface DesktopCorePackageRecord {
+   readonly file: string
+   readonly bytes: number
+   readonly integrity: string
++  /** SPDX expression or package-declared license carried for release audit. */
++  readonly license?: string
+ }
+ 
+ /** Complete union of the first-party package closures rooted at dsh and its private Desktop Host. */
+@@ -63,7 +65,8 @@ export function parseDesktopCorePackageSet(
+       || typeof entry.version !== 'string' || !VERSION_PATTERN.test(entry.version)
+       || typeof entry.file !== 'string' || !FILE_PATTERN.test(entry.file)
+       || typeof entry.bytes !== 'number' || !Number.isSafeInteger(entry.bytes) || entry.bytes < 0
+-      || typeof entry.integrity !== 'string' || !INTEGRITY_PATTERN.test(entry.integrity)) {
++      || typeof entry.integrity !== 'string' || !INTEGRITY_PATTERN.test(entry.integrity)
++      || (entry.license !== undefined && (typeof entry.license !== 'string' || entry.license.trim() === ''))) {
+       throw new Error('desktop package set: invalid package record')
+     }
+     return {
+@@ -72,6 +75,7 @@ export function parseDesktopCorePackageSet(
+       file: entry.file,
+       bytes: entry.bytes,
+       integrity: entry.integrity,
++      ...(entry.license === undefined ? {} : { license: entry.license }),
+     }
+   })
+   const names = new Set(packages.map(entry => entry.name))
+diff --git a/apps/desktop/src/project-manager.ts b/apps/desktop/src/project-manager.ts
+index 270d87d..0809723 100644
+--- a/apps/desktop/src/project-manager.ts
++++ b/apps/desktop/src/project-manager.ts
+@@ -19,17 +19,25 @@ import {
+   desktopCorePackageOverrides,
+   verifyDesktopCorePackageSet,
+ } from './core-package-set.ts'
++import {
++  SCNET_BUNDLE_PACKAGE,
++  SCNET_BUNDLE_VERSION,
++  SCNET_DISABLED_MARKER,
++  desktopProfileBundles,
++} from './scnet-bundle.ts'
+ import type { DesktopPaths } from './paths.ts'
+ import type { DesktopRelease } from './release.ts'
+ import { readDesktopRuntime } from './runtime-tree.ts'
+ import {
+-  initProfile, PROFILE_TEMPLATES, removeLinkProjections, sanitizeProfile, type ProfileTemplate,
++  initProfile, PROFILE_TEMPLATES, readProfileManifest, removeLinkProjections, sanitizeProfile,
++  writeProfileBundles, type ProfileTemplate,
+ } from '@deepseek-ai/dsh-app-boot'
+ 
+ const PROJECT_NAME = '@deepseek-ai/dsh-desktop-runtime'
+ const DSH_PACKAGE = '@deepseek-ai/dsh'
+ const CORE_BUILD_PACKAGE = '@deepseek-ai/dsh-subprocess-local'
+ const WEB_PROFILE = PROFILE_TEMPLATES.web as ProfileTemplate
++const DESKTOP_PROFILE_BUNDLES = desktopProfileBundles(WEB_PROFILE.bundles)
+ const WORKSPACE_SETTINGS = 'nodeLinker: hoisted\nautoInstallPeers: false\n'
+ function writeJson(path: string, value: unknown): void {
+   writeFileSync(path, `${JSON.stringify(value, undefined, 2)}\n`, { mode: 0o600 })
+@@ -74,7 +82,13 @@ export class DesktopProjectManager {
+    * @returns Backup path after the locked profile write, or undefined if the patch was absent.
+    */
+   async disableAllPlugins(): Promise<string | undefined> {
+-    return this.withLock(() => sanitizeProfile('dsh', this.paths.profile, WEB_PROFILE.bundles))
++    return this.withLock(() => {
++      const backup = sanitizeProfile('dsh', this.paths.profile, WEB_PROFILE.bundles)
++      if (existsSync(join(this.paths.profile, 'package.json'))) {
++        writeFileSync(join(this.paths.profile, SCNET_DISABLED_MARKER), `${SCNET_BUNDLE_VERSION}\n`, { mode: 0o600 })
++      }
++      return backup
++    })
+   }
+ 
+   /**
+@@ -134,12 +148,16 @@ export class DesktopProjectManager {
+ export function createRuntimeProjectMetadata(projectDir: string, release: DesktopRelease): void {
+   mkdirSync(projectDir, { recursive: true, mode: 0o700 })
+   const packageSet = verifyDesktopCorePackageSet(projectDir, release.version)
++  const scnet = packageSet.packages.find(entry => entry.name === SCNET_BUNDLE_PACKAGE)
++  if (scnet?.version !== SCNET_BUNDLE_VERSION || scnet.license !== 'MIT') {
++    throw new Error(`desktop package set: expected ${SCNET_BUNDLE_PACKAGE}@${SCNET_BUNDLE_VERSION}`)
++  }
+   const manifest = {
+     name: PROJECT_NAME,
+     private: true,
+     version: '0.0.0',
+     dependencies: desktopCorePackageOverrides(packageSet),
+-    dsh: { profile: { bundles: [...WEB_PROFILE.bundles] } },
++    dsh: { profile: { bundles: [...DESKTOP_PROFILE_BUNDLES] } },
+   }
+   writeJson(join(projectDir, 'package.json'), manifest)
+   writeFileSync(
+@@ -163,8 +181,9 @@ export function createDevelopmentProjectMetadata(projectDir: string, release: De
+     dependencies: {
+       [DSH_PACKAGE]: release.version,
+       [DESKTOP_HOST_PACKAGE]: release.version,
++      [SCNET_BUNDLE_PACKAGE]: SCNET_BUNDLE_VERSION,
+     },
+-    dsh: { profile: { bundles: [...WEB_PROFILE.bundles] } },
++    dsh: { profile: { bundles: [...DESKTOP_PROFILE_BUNDLES] } },
+   }
+   writeJson(join(projectDir, 'package.json'), manifest)
+   writeFileSync(join(projectDir, 'pnpm-workspace.yaml'), workspaceFile(), { mode: 0o600 })
+@@ -172,5 +191,22 @@ export function createDevelopmentProjectMetadata(projectDir: string, release: De
+ 
+ /** Create the first external plugin profile without running a package manager. */
+ export function createPluginProfile(projectDir: string): void {
+-  initProfile(projectDir, WEB_PROFILE.bundles)
++  const manifestPath = join(projectDir, 'package.json')
++  if (!existsSync(manifestPath)) {
++    initProfile(projectDir, DESKTOP_PROFILE_BUNDLES)
++    return
++  }
++  initProfile(projectDir, DESKTOP_PROFILE_BUNDLES)
++  const manifest = readProfileManifest('dsh', projectDir)
++  const bundles = manifest.dsh?.profile?.bundles
++  if (bundles?.includes(SCNET_BUNDLE_PACKAGE)) {
++    const marker = join(projectDir, SCNET_DISABLED_MARKER)
++    if (existsSync(marker)) unlinkSync(marker)
++    return
++  }
++  const oldDefault = bundles !== undefined && bundles.length === WEB_PROFILE.bundles.length
++    && bundles.every((bundle, index) => bundle === WEB_PROFILE.bundles[index])
++  if (oldDefault && !existsSync(join(projectDir, SCNET_DISABLED_MARKER))) {
++    writeProfileBundles(projectDir, manifest, DESKTOP_PROFILE_BUNDLES)
++  }
+ }
+diff --git a/apps/desktop/src/scnet-bundle.ts b/apps/desktop/src/scnet-bundle.ts
+new file mode 100644
+index 0000000..7ae8061
+--- /dev/null
++++ b/apps/desktop/src/scnet-bundle.ts
+@@ -0,0 +1,18 @@
++/** Fixed SCNet bundle identity carried by Desktop releases. */
++
++/** npm package name used by the Desktop profile and runtime package set. */
++export const SCNET_BUNDLE_PACKAGE = 'dsh-scnet'
++
++/** Exact published bundle version embedded in this Desktop release. */
++export const SCNET_BUNDLE_VERSION = '0.6.6'
++
++/** Package spec fetched only while assembling a Desktop release. */
++export const SCNET_BUNDLE_SPEC = `${SCNET_BUNDLE_PACKAGE}@${SCNET_BUNDLE_VERSION}`
++
++/** Profile-local marker that prevents upgrades from re-enabling an explicitly disabled bundle. */
++export const SCNET_DISABLED_MARKER = '.dsh-scnet.disabled'
++
++/** Add the SCNet bundle after the shared Web application layers. */
++export function desktopProfileBundles(base: readonly string[]): string[] {
++  return base.includes(SCNET_BUNDLE_PACKAGE) ? [...base] : [...base, SCNET_BUNDLE_PACKAGE]
++}
+diff --git a/apps/desktop/tests/desktop-build-paths.spec.ts b/apps/desktop/tests/desktop-build-paths.spec.ts
+index 182e067..094be0e 100644
+--- a/apps/desktop/tests/desktop-build-paths.spec.ts
++++ b/apps/desktop/tests/desktop-build-paths.spec.ts
+@@ -25,6 +25,7 @@ describe('desktop build paths', () => {
+       'packedDsh',
+       'packedVendor',
+       'packedLandlock',
++      'packedScnet',
+     ] as const
+ 
+     for (const key of mutableKeys) {
+diff --git a/apps/desktop/tests/package-target-stages.spec.ts b/apps/desktop/tests/package-target-stages.spec.ts
+index 41e1ee8..b1a720d 100644
+--- a/apps/desktop/tests/package-target-stages.spec.ts
++++ b/apps/desktop/tests/package-target-stages.spec.ts
+@@ -140,6 +140,9 @@ it.each([undefined, '2'])('passes macOS pack concurrency %s only to workspace pa
+   const calls = run.run.mock.calls
+   const packs = calls.filter(call => call[0].startsWith('run release:pack'))
+   expect(packs).toHaveLength(2)
++  expect(calls.map(call => call[0])).toContainEqual(expect.stringMatching(
++    /^dlx npm@12 pack dsh-scnet@0\.6\.6 --pack-destination .*packed[/\\]scnet$/u,
++  ))
+   for (const call of packs) expect(call[2].slice(-2)).toEqual(['--concurrency', concurrency ?? '4'])
+   for (const call of calls) {
+     expect(call[3].env.HTTP_PROXY).toBe(/^run prepare:(?:runtime|dsh)$/u.test(call[0]) ? 'http://downloads.example:8080' : undefined)
+diff --git a/apps/desktop/tests/prepare-package-set.spec.ts b/apps/desktop/tests/prepare-package-set.spec.ts
+index 6db1ccb..3a6fa04 100644
+--- a/apps/desktop/tests/prepare-package-set.spec.ts
++++ b/apps/desktop/tests/prepare-package-set.spec.ts
+@@ -4,6 +4,7 @@ import {
+   selectDesktopPackageClosure,
+   type PackedDesktopPackage,
+ } from '../scripts/prepare-package-set.ts'
++import { SCNET_BUNDLE_PACKAGE } from '../src/scnet-bundle.ts'
+ 
+ function packed(name: string, manifest: Record<string, unknown> = {}): PackedDesktopPackage {
+   return { tarball: `${name}.tgz`, manifest: { name, version: '1.0.0', ...manifest } }
+@@ -35,6 +36,7 @@ describe('desktop package-set selection', () => {
+       })],
+       ['@deepseek-ai/cordis', packed('@deepseek-ai/cordis')],
+       ['@deepseek-ai/platform-package', packed('@deepseek-ai/platform-package')],
++      [SCNET_BUNDLE_PACKAGE, packed(SCNET_BUNDLE_PACKAGE)],
+       ['@deepseek-ai/unused', packed('@deepseek-ai/unused')],
+     ])
+     expect(selectDesktopPackageClosure(available).map(entry => entry.manifest.name)).toEqual([
+@@ -43,6 +45,7 @@ describe('desktop package-set selection', () => {
+       '@deepseek-ai/dsh-base',
+       '@deepseek-ai/dsh-desktop-host',
+       '@deepseek-ai/platform-package',
++      SCNET_BUNDLE_PACKAGE,
+     ])
+   })
+ 
+@@ -72,9 +75,10 @@ describe('desktop package-set selection', () => {
+         },
+       })],
+       ['@deepseek-ai/dsh-desktop-host', packed('@deepseek-ai/dsh-desktop-host')],
++      [SCNET_BUNDLE_PACKAGE, packed(SCNET_BUNDLE_PACKAGE)],
+     ])
+     expect(selectDesktopPackageClosure(available).map(entry => entry.manifest.name)).toEqual([
+-      '@deepseek-ai/dsh', '@deepseek-ai/dsh-desktop-host',
++      '@deepseek-ai/dsh', '@deepseek-ai/dsh-desktop-host', SCNET_BUNDLE_PACKAGE,
+     ])
+   })
+ 
+diff --git a/apps/desktop/tests/project-manager.spec.ts b/apps/desktop/tests/project-manager.spec.ts
+index 1dd76b3..133fd79 100644
+--- a/apps/desktop/tests/project-manager.spec.ts
++++ b/apps/desktop/tests/project-manager.spec.ts
+@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
+ import { afterEach, describe, expect, it, vi } from 'vitest'
+ import { resolveDesktopPaths } from '../src/paths.ts'
+ import { DesktopProjectManager } from '../src/project-manager.ts'
++import { SCNET_BUNDLE_PACKAGE, SCNET_DISABLED_MARKER } from '../src/scnet-bundle.ts'
+ import { readProfilePlugins } from '@deepseek-ai/dsh-app-boot'
+ import { runtimeFixture } from './runtime-fixture.ts'
+ 
+@@ -191,7 +192,33 @@ describe('desktop external plugin profile', () => {
+     await expect(manager.applyRelease()).resolves.toBeUndefined()
+     await expect(manager.applyRelease()).resolves.toBeUndefined()
+     expect(plugins(manager)).toEqual([])
+-    expect(JSON.parse(readFileSync(join(manager.paths.profile, 'package.json'), 'utf8'))).toMatchObject({ dependencies: {} })
++    expect(JSON.parse(readFileSync(join(manager.paths.profile, 'package.json'), 'utf8'))).toMatchObject({
++      dependencies: {},
++      dsh: { profile: { bundles: expect.arrayContaining([SCNET_BUNDLE_PACKAGE]) } },
++    })
++  })
++
++  it('adds SCNet to an untouched legacy profile and preserves an explicit disable across releases', async () => {
++    const { manager } = setup()
++    await manager.applyRelease()
++    const manifestPath = join(manager.paths.profile, 'package.json')
++    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
++      dsh: { profile: { bundles: string[] } }
++    }
++    manifest.dsh.profile.bundles = manifest.dsh.profile.bundles.filter(bundle => bundle !== SCNET_BUNDLE_PACKAGE)
++    writeFileSync(manifestPath, JSON.stringify(manifest))
++
++    await manager.applyRelease()
++    expect((JSON.parse(readFileSync(manifestPath, 'utf8')) as {
++      dsh: { profile: { bundles: string[] } }
++    }).dsh.profile.bundles).toContain(SCNET_BUNDLE_PACKAGE)
++
++    await manager.disableAllPlugins()
++    expect(existsSync(join(manager.paths.profile, SCNET_DISABLED_MARKER))).toBe(true)
++    await manager.applyRelease()
++    expect((JSON.parse(readFileSync(manifestPath, 'utf8')) as {
++      dsh: { profile: { bundles: string[] } }
++    }).dsh.profile.bundles).not.toContain(SCNET_BUNDLE_PACKAGE)
+   })
+ 
+   it.skipIf(process.platform !== 'win32')('reuses the profile when the launch path changes only Windows letter casing', async () => {
+-- 
+2.43.0
+
