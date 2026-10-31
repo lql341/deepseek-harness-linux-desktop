@@ -29,8 +29,6 @@ permissions:
 
 env:
   UPSTREAM_DIR: ${{ github.workspace }}/upstream
-  # Upstream tag the patch series is based on; apply.sh reads the same default.
-  BASE_TAG: dsh-v0.2.1-rc.2
   RELEASE_TAG: ${{ inputs.tag }}
 
 jobs:
@@ -47,6 +45,9 @@ jobs:
           df -h / | tail -1
 
       - uses: actions/checkout@v4
+
+      - name: Read the pinned upstream base
+        run: echo "BASE_TAG=$(cat ci/upstream-base-tag)" >> "$GITHUB_ENV"
 
       - uses: pnpm/action-setup@v4
         with:
@@ -244,6 +245,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Read the pinned upstream base
+        run: echo "BASE_TAG=$(cat ci/upstream-base-tag)" >> "$GITHUB_ENV"
+
       - name: Download and verify the existing draft assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -266,3 +270,4 @@ jobs:
             draft-release/SHA256SUMS
           if-no-files-found: error
           compression-level: 0
+

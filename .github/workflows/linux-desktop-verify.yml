@@ -67,6 +67,14 @@ on:
           predates the SCNet bundle contract.
         type: string
         default: default
+  pull_request:
+    branches: [main]
+    paths:
+      - 'patches/**'
+      - 'apply.sh'
+      - 'verify.sh'
+      - 'ci/**'
+      - '.github/workflows/**'
   push:
     branches: [main]
     paths:
@@ -76,6 +84,7 @@ on:
       - 'ci/**'
       - '.github/workflows/linux-desktop-verify.yml'
       - '.github/workflows/publish-linux-desktop.yml'
+      - '.github/workflows/upstream-sync-check.yml'
 
 permissions:
   actions: read
@@ -83,8 +92,6 @@ permissions:
 
 env:
   UPSTREAM_DIR: ${{ github.workspace }}/upstream
-  # Upstream tag the patch series is based on; apply.sh reads the same default.
-  BASE_TAG: dsh-v0.2.1-rc.2
   # Release tags the published-artifact jobs verify. They point at published bytes, not at this
   # tree, and only the manual legs use them, so they follow the input defaults above.
   RELEASE_TAG: ${{ inputs.release-tag || 'v0.2.0-rc.2-linux.3' }}
@@ -116,6 +123,9 @@ jobs:
           df -h / | tail -1
 
       - uses: actions/checkout@v4
+
+      - name: Read the pinned upstream base
+        run: echo "BASE_TAG=$(cat ci/upstream-base-tag)" >> "$GITHUB_ENV"
 
       - uses: pnpm/action-setup@v4
         with:
@@ -238,6 +248,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Read the pinned upstream base
+        run: echo "BASE_TAG=$(cat ci/upstream-base-tag)" >> "$GITHUB_ENV"
+
       - uses: actions/download-artifact@v4
         with:
           name: linux-deb-build
@@ -272,6 +285,9 @@ jobs:
       CANDIDATE_BASE_TAG: ${{ inputs.candidate-base-tag || 'v0.2.0-rc.2-linux.4' }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Read the pinned upstream base
+        run: echo "BASE_TAG=$(cat ci/upstream-base-tag)" >> "$GITHUB_ENV"
 
       - uses: actions/download-artifact@v4
         with:
@@ -361,6 +377,9 @@ jobs:
           df -h / | tail -1
 
       - uses: actions/checkout@v4
+
+      - name: Read the pinned upstream base
+        run: echo "BASE_TAG=$(cat ci/upstream-base-tag)" >> "$GITHUB_ENV"
 
       - uses: pnpm/action-setup@v4
         with:
@@ -528,6 +547,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Read the pinned upstream base
+        run: echo "BASE_TAG=$(cat ci/upstream-base-tag)" >> "$GITHUB_ENV"
+
       - name: Download the published release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -591,6 +613,9 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.run-hardening }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Read the pinned upstream base
+        run: echo "BASE_TAG=$(cat ci/upstream-base-tag)" >> "$GITHUB_ENV"
 
       - name: Download the previous and the current release
         env:
@@ -667,6 +692,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Read the pinned upstream base
+        run: echo "BASE_TAG=$(cat ci/upstream-base-tag)" >> "$GITHUB_ENV"
+
       - name: Download the published deb
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -722,3 +750,4 @@ jobs:
             weston.log
             wayland-app.log
           if-no-files-found: warn
+
