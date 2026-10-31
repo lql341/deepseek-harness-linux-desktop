@@ -10,7 +10,7 @@
 set -eu
 
 PATCH_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/patches" && pwd -P)
-BASE_TAG=${BASE_TAG:-dsh-v0.2.1-rc.2}
+BASE_TAG=${BASE_TAG:-$(cat "$PATCH_DIR/../ci/upstream-base-tag")}
 BRANCH=${BRANCH:-linux-desktop}
 UPSTREAM=${UPSTREAM:-https://github.com/deepseek-ai/deepseek-harness.git}
 
@@ -40,8 +40,8 @@ fi
 
 # --- 克隆并切到工作分支 -------------------------------------------------------
 if [ ! -d "$DEST/.git" ]; then
-  echo "==> 克隆 ${UPSTREAM}（tag ${BASE_TAG}，浅克隆）到 $DEST"
-  git clone --branch "$BASE_TAG" --depth 1 "$UPSTREAM" "$DEST"
+  echo "==> 克隆 ${UPSTREAM}（tag ${BASE_TAG}）到 $DEST"
+  git clone --branch "$BASE_TAG" "$UPSTREAM" "$DEST"
 fi
 
 cd "$DEST"
@@ -82,3 +82,4 @@ cat <<'EOF'
 验收清单见 LINUX-DESKTOP.md 第 4 节；已知限制见第 5 节；
 必须在 Linux 现场确认的项见第 7 节（第一次真类型检查、DE 下的窗口控件、CLI/深链、Office WASM 引擎）。
 EOF
+

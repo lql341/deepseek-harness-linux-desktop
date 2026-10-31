@@ -12,7 +12,7 @@ set -Eeuo pipefail
 
 REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 UPSTREAM_REPO=${DSH_UPSTREAM_REPOSITORY:-https://github.com/deepseek-ai/deepseek-harness.git}
-BASE_TAG=${DSH_BASE_TAG:-dsh-v0.2.1-rc.2}
+BASE_TAG=${DSH_BASE_TAG:-$(cat "$REPO_ROOT/ci/upstream-base-tag")}
 REQUESTED_TAG=''
 BUILD_VERSION=''
 INSTALL=0
@@ -34,7 +34,7 @@ Environment:
                         Upstream repository URL.
                         Default: https://github.com/deepseek-ai/deepseek-harness.git
   DSH_BASE_TAG         Existing patch-series base tag used for three-way migration.
-                        Default: dsh-v0.2.1-rc.2
+                        Default: contents of ci/upstream-base-tag
   DSH_UPSTREAM_DIR      Optional checkout path. Without it a temporary directory is used.
 EOF
 }
@@ -204,3 +204,4 @@ if ((KEEP)); then
   echo "==> Keeping checkout and artifacts: $BUILD_ROOT"
 fi
 echo "==> Upstream migration and Linux build completed successfully."
+
