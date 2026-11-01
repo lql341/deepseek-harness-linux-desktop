@@ -301,6 +301,14 @@ jobs:
           echo "::error::Generated diagnostic contracts or bilingual source documentation did not pass."
           exit 1
 
+      - name: Real-desktop acceptance kit (headless smoke)
+        # The kit is what an operator runs on a real X11/Wayland desktop. Running it headless
+        # here proves it executes and records the package facts; the interactive checks stay manual.
+        working-directory: ${{ github.workspace }}
+        run: |
+          bash ci/real-desktop-acceptance.sh --non-interactive --skip-session \
+            --report-dir "$GITHUB_WORKSPACE/real-desktop-report"
+
       - name: Collect diagnostics
         if: always()
         run: |
@@ -320,6 +328,7 @@ jobs:
           path: |
             typecheck-summary.txt
             scnet-release-audit.json
+            real-desktop-report/**
           if-no-files-found: warn
 
       - uses: actions/upload-artifact@v4
