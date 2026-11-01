@@ -331,7 +331,7 @@ index 948a88e..8e38dea 100644
      this.readyReject(error)
      for (const request of this.controlRequests.values()) request.reject(error)
 diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
-index 08b79d1..c9057d0 100644
+index 08b79d1..b29b073 100644
 --- a/apps/desktop/src/main.ts
 +++ b/apps/desktop/src/main.ts
 @@ -65,6 +65,8 @@ import { HarnessUpdateCoordinator } from './harness-update.ts'
@@ -456,25 +456,36 @@ index 08b79d1..c9057d0 100644
          if (!updateStoppedHost) await host.updateTasks('unlock').catch((unlockError: unknown) => { console.error(unlockError) })
          throw error
        } finally {
-@@ -840,7 +898,7 @@ async function main(): Promise<void> {
+@@ -833,14 +891,16 @@ async function main(): Promise<void> {
+       read: () => readScnetDiagnostics({ profilePath: paths.profile, environment: process.env }),
+       setup: () => {
+         return openScnetSetup({ dshRoot: resources.dsh, environment: process.env,
+-          failureMessage: currentDesktopLocale().messages.scnetSetupFailed, closeMessage: currentDesktopLocale().messages.scnetSetupClose })
++          failureMessage: currentDesktopLocale().messages.scnetSetupFailed,
++          closeMessage: currentDesktopLocale().messages.scnetSetupClose })
+       },
+     })
+   })
    ipcMain.handle(DESKTOP_IPC.scnetSetup, (event) => {
      assertProductSender(event)
      return openScnetSetup({ dshRoot: resources.dsh, environment: process.env,
 -          failureMessage: currentDesktopLocale().messages.scnetSetupFailed, closeMessage: currentDesktopLocale().messages.scnetSetupClose })
-+      failureMessage: currentDesktopLocale().messages.scnetSetupFailed, closeMessage: currentDesktopLocale().messages.scnetSetupClose })
++      failureMessage: currentDesktopLocale().messages.scnetSetupFailed,
++      closeMessage: currentDesktopLocale().messages.scnetSetupClose })
    })
    ipcMain.handle(DESKTOP_IPC.deviceInfo, (event) => {
      assertProductSender(event)
-@@ -1070,7 +1128,7 @@ async function main(): Promise<void> {
+@@ -1070,7 +1130,8 @@ async function main(): Promise<void> {
          read: () => readScnetDiagnostics({ profilePath: paths.profile, environment: process.env }),
          setup: () => {
            return openScnetSetup({ dshRoot: resources.dsh, environment: process.env,
 -          failureMessage: currentDesktopLocale().messages.scnetSetupFailed, closeMessage: currentDesktopLocale().messages.scnetSetupClose })
-+            failureMessage: currentDesktopLocale().messages.scnetSetupFailed, closeMessage: currentDesktopLocale().messages.scnetSetupClose })
++            failureMessage: currentDesktopLocale().messages.scnetSetupFailed,
++            closeMessage: currentDesktopLocale().messages.scnetSetupClose })
          },
        }).catch((error: unknown) => { console.error(error) })
      } },
-@@ -1384,7 +1442,11 @@ async function main(): Promise<void> {
+@@ -1384,7 +1445,11 @@ async function main(): Promise<void> {
      updateSchedule.dispose()
      updateDialog.dispose()
      mandatoryUI?.dispose()
@@ -1741,6 +1752,42 @@ index 92f648d..b58c6cb 100644
    {
      entry: ['lib/types/command-manager-entry.js'],
      plugins: [packagedImportsPlugin({ packages: new Set(), nodeBuiltins: true })],
+diff --git a/docs/event-producer-consumer.md b/docs/event-producer-consumer.md
+index 4aebd22..ab7ab53 100644
+--- a/docs/event-producer-consumer.md
++++ b/docs/event-producer-consumer.md
+@@ -56,9 +56,10 @@ This matrix shows which packages dispatch each harness-owned event and which pac
+ | `llm/adapters-updated` | `emit` | [`packages/llm/llm/src/types.ts:23`](../packages/llm/llm/src/types.ts) | [`llm`](../packages/llm/llm) (`events.dispatch`) | [`acp`](../packages/acp/acp), `remotes` |
+ | `llm/stream` | `waterfall` | [`packages/llm/llm/src/index.ts:75`](../packages/llm/llm/src/index.ts) | [`llm`](../packages/llm/llm) (`waterfall`) | [`llm-replay`](../packages/test-support/llm-replay), [`session-checkpoint-policy`](../packages/session/session-checkpoint-policy), [`session-title`](../packages/session/session-title) |
+ | `permission-presets/catalog-changed` | `emit` | [`packages/interaction/permission-presets/src/types.ts:48`](../packages/interaction/permission-presets/src/types.ts) | [`permission-presets`](../packages/interaction/permission-presets) (`events.dispatch`) | `remotes` |
+-| `plugin-manager/changed` | `emit` | [`packages/boot/plugin-manager/src/types.ts:269`](../packages/boot/plugin-manager/src/types.ts) | [`plugin-manager`](../packages/boot/plugin-manager) (`emit`) | `remotes` |
+-| `plugin-manager/install-log` | `emit` | [`packages/boot/plugin-manager/src/types.ts:275`](../packages/boot/plugin-manager/src/types.ts) | [`plugin-manager`](../packages/boot/plugin-manager) (`emit`) | `remotes` |
+-| `plugin-manager/install-state` | `emit` | [`packages/boot/plugin-manager/src/types.ts:282`](../packages/boot/plugin-manager/src/types.ts) | [`plugin-manager`](../packages/boot/plugin-manager) (`emit`) | `remotes` |
++| `plugin-manager/changed` | `emit` | [`packages/boot/plugin-manager/src/types.ts:302`](../packages/boot/plugin-manager/src/types.ts) | [`plugin-manager`](../packages/boot/plugin-manager) (`emit`) | `remotes` |
++| `plugin-manager/install-log` | `emit` | [`packages/boot/plugin-manager/src/types.ts:308`](../packages/boot/plugin-manager/src/types.ts) | [`plugin-manager`](../packages/boot/plugin-manager) (`emit`) | `remotes` |
++| `plugin-manager/install-state` | `emit` | [`packages/boot/plugin-manager/src/types.ts:315`](../packages/boot/plugin-manager/src/types.ts) | [`plugin-manager`](../packages/boot/plugin-manager) (`emit`) | `remotes` |
++| `plugin-manager/operation` | `parallel` | [`packages/boot/plugin-manager/src/types.ts:294`](../packages/boot/plugin-manager/src/types.ts) | [`plugin-manager`](../packages/boot/plugin-manager) (`parallel`) | - |
+ | `plugin-market/changed` | `emit` | [`packages/boot/plugin-market/src/types.ts:136`](../packages/boot/plugin-market/src/types.ts) | [`plugin-market`](../packages/boot/plugin-market) (`emit`) | `remotes` |
+ | `schedule/changed` | `emit` | [`packages/schedule/schedule/src/types.ts:478`](../packages/schedule/schedule/src/types.ts) | [`schedule`](../packages/schedule/schedule) (`emit`) | `remotes` |
+ | `session-telemetry/record` | `waterfall` | [`packages/session/session-telemetry/src/index.ts:44`](../packages/session/session-telemetry/src/index.ts) | [`session-telemetry`](../packages/session/session-telemetry) (`waterfall`) | - |
+diff --git a/docs/event-producer-consumer.zh.md b/docs/event-producer-consumer.zh.md
+index 901dfca..02cae52 100644
+--- a/docs/event-producer-consumer.zh.md
++++ b/docs/event-producer-consumer.zh.md
+@@ -58,9 +58,10 @@
+ | `llm/adapters-updated` | `emit` | [`packages/llm/llm/src/types.ts:23`](../packages/llm/llm/src/types.ts) | [`llm`](../packages/llm/llm) (`events.dispatch`) | [`acp`](../packages/acp/acp), `remotes` |
+ | `llm/stream` | `waterfall` | [`packages/llm/llm/src/index.ts:75`](../packages/llm/llm/src/index.ts) | [`llm`](../packages/llm/llm) (`waterfall`) | [`llm-replay`](../packages/test-support/llm-replay), [`session-checkpoint-policy`](../packages/session/session-checkpoint-policy), [`session-title`](../packages/session/session-title) |
+ | `permission-presets/catalog-changed` | `emit` | [`packages/interaction/permission-presets/src/types.ts:48`](../packages/interaction/permission-presets/src/types.ts) | [`permission-presets`](../packages/interaction/permission-presets) (`events.dispatch`) | `remotes` |
+-| `plugin-manager/changed` | `emit` | [`packages/boot/plugin-manager/src/types.ts:269`](../packages/boot/plugin-manager/src/types.ts) | [`plugin-manager`](../packages/boot/plugin-manager) (`emit`) | `remotes` |
+-| `plugin-manager/install-log` | `emit` | [`packages/boot/plugin-manager/src/types.ts:275`](../packages/boot/plugin-manager/src/types.ts) | [`plugin-manager`](../packages/boot/plugin-manager) (`emit`) | `remotes` |
+-| `plugin-manager/install-state` | `emit` | [`packages/boot/plugin-manager/src/types.ts:282`](../packages/boot/plugin-manager/src/types.ts) | [`plugin-manager`](../packages/boot/plugin-manager) (`emit`) | `remotes` |
++| `plugin-manager/changed` | `emit` | [`packages/boot/plugin-manager/src/types.ts:302`](../packages/boot/plugin-manager/src/types.ts) | [`plugin-manager`](../packages/boot/plugin-manager) (`emit`) | `remotes` |
++| `plugin-manager/install-log` | `emit` | [`packages/boot/plugin-manager/src/types.ts:308`](../packages/boot/plugin-manager/src/types.ts) | [`plugin-manager`](../packages/boot/plugin-manager) (`emit`) | `remotes` |
++| `plugin-manager/install-state` | `emit` | [`packages/boot/plugin-manager/src/types.ts:315`](../packages/boot/plugin-manager/src/types.ts) | [`plugin-manager`](../packages/boot/plugin-manager) (`emit`) | `remotes` |
++| `plugin-manager/operation` | `parallel` | [`packages/boot/plugin-manager/src/types.ts:294`](../packages/boot/plugin-manager/src/types.ts) | [`plugin-manager`](../packages/boot/plugin-manager) (`parallel`) | - |
+ | `plugin-market/changed` | `emit` | [`packages/boot/plugin-market/src/types.ts:136`](../packages/boot/plugin-market/src/types.ts) | [`plugin-market`](../packages/boot/plugin-market) (`emit`) | `remotes` |
+ | `schedule/changed` | `emit` | [`packages/schedule/schedule/src/types.ts:478`](../packages/schedule/schedule/src/types.ts) | [`schedule`](../packages/schedule/schedule) (`emit`) | `remotes` |
+ | `session-telemetry/record` | `waterfall` | [`packages/session/session-telemetry/src/index.ts:44`](../packages/session/session-telemetry/src/index.ts) | [`session-telemetry`](../packages/session/session-telemetry) (`waterfall`) | - |
 diff --git a/docs/subsystems/boot.i18n.yaml b/docs/subsystems/boot.i18n.yaml
 index 79070a4..ff33a90 100644
 --- a/docs/subsystems/boot.i18n.yaml
@@ -2439,6 +2486,32 @@ index 071a708..e431b47 100644
        if (live) setSnapshot(value)
      }, () => {
        if (live) setFailed(true)
+diff --git a/packages/extensions/cordis-client-runner/src/client/slot-catalog.ts b/packages/extensions/cordis-client-runner/src/client/slot-catalog.ts
+index 1847635..8d780f0 100644
+--- a/packages/extensions/cordis-client-runner/src/client/slot-catalog.ts
++++ b/packages/extensions/cordis-client-runner/src/client/slot-catalog.ts
+@@ -2946,6 +2946,8 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
+       'client-ui-permission-presets PermissionRow id \'permission\'',
+       'client-ui-settings-general DeveloperToolsRow id \'developer-tools\'',
+       'client-ui-settings-general CurrentVersionRow id \'current-version\'',
++      'client-ui-settings-general DesktopUpdateSettingsRow id \'desktop-update\'',
++      'client-ui-settings-general ScnetSettingsRow id \'scnet\'',
+       'client-ui-settings-session-log UploadRow',
+       'client-ui-shortcuts ShortcutsRow id \'shortcuts\'',
+       'client-ui-theme AppearanceRow id \'appearance\'',
+@@ -4618,10 +4620,8 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
+     hookContext: '',
+     slotInject: '',
+     declaredBy: 'an entry in \'sidebar\' (client-ui-sidebar), so it exists while that entry is mounted',
+-    occupants: [
+-      'client-ui-settings-general DesktopUpdateBadge',
+-    ],
+-    replaceRisk: 'shadows-shipped-ui',
++    occupants: [],
++    replaceRisk: 'none',
+     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'sidebar.toggle.badge\', () => ctx.slots.register(\n      { name: \'sidebar.toggle.badge\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
+     source: 'packages/client/ui-sidebar/src/client/contract/slots.ts:20',
+   },
 diff --git a/packages/extensions/tool-cordis/src/api-catalog.ts b/packages/extensions/tool-cordis/src/api-catalog.ts
 index 03fdcaa..765dac7 100644
 --- a/packages/extensions/tool-cordis/src/api-catalog.ts
