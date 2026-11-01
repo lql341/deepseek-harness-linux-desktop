@@ -30,7 +30,6 @@ History is local and bounded to two 256 KiB segments; report collection reads at
 | --- | --- |
 | CUA installation and permissions | The [macOS provider](https://github.com/deepseek-ai/deepseek-harness/tree/ce7073d51254c26cd63b22a60835b8f948deb447/packages/experimental/cua-macos) uses macOS APIs; Linux needs a native control/permission implementation and separate X11/Wayland approval, refusal, retry and revocation tests |
 | New file actions and dragging | Development file-actions/file-drag modules require shared file-action, drag and Host resource APIs absent from rc.5; backport provider, consumer and lifecycle together, including trusted-window IPC and temporary-file cleanup |
-
 | Real desktop acceptance | Verify focus, caption dragging/resizing, overlays, notifications, CLI, deep links, setup and update confirmation on actual X11/Wayland sessions |
 
 Linux PolicyKit installation and SCNet integrations must remain covered during future backports. macOS Dock/traffic lights, Windows installers and Linux compositor/keyring APIs have distinct implementations. Do not replace missing platform evidence with typecheck or a copied menu item.

@@ -168,6 +168,10 @@ jobs:
         working-directory: ${{ env.UPSTREAM_DIR }}
         run: pnpm install --frozen-lockfile
 
+      - name: Validate generated diagnostic contracts and bilingual source documentation
+        working-directory: ${{ env.UPSTREAM_DIR }}
+        run: bash "$GITHUB_WORKSPACE/ci/history-generated-check.sh"
+
       - name: Typecheck the repository
         working-directory: ${{ env.UPSTREAM_DIR }}
         run: pnpm run typecheck
@@ -198,10 +202,6 @@ jobs:
             packages/boot/plugin-manager/tests/manager.spec.ts \
             apps/desktop/tests/harness-update.spec.ts \
             apps/desktop/tests/scnet-diagnostics-window.spec.ts
-
-      - name: Validate generated diagnostic contracts and bilingual source documentation
-        working-directory: ${{ env.UPSTREAM_DIR }}
-        run: bash "$GITHUB_WORKSPACE/ci/history-generated-check.sh"
 
       - name: Build the desktop application
         working-directory: ${{ env.UPSTREAM_DIR }}

@@ -65,12 +65,15 @@ try {
   writeFileSync(reportPath, basic)
   const entry = join(resources, 'app.asar.unpacked', 'lib', 'operation-report-worker.js')
   assert.ok(existsSync(entry), 'The isolated Worker must be a physical packaged file')
+  const started = performance.now()
   worker = new Worker(pathToFileURL(entry), { workerData: { reportPath, directory,
     limits: { bytes: 65536, recordBytes: 4096, records: 100, outputBytes: 65536 },
     journal: { dropped: 0, failed: 0, repairedSegments: 0, queuedBytes: 0, disabled: false } },
     resourceLimits: { maxOldGenerationSizeMb: 32, maxYoungGenerationSizeMb: 8, stackSizeMb: 2 } })
   let appended = false
-  const deadline = setTimeout(() => { void worker.terminate() }, 5000)
+  // Match the shell's 500 ms total budget with 100 ms reserved for cancellation.
+  const cancellation = setTimeout(() => { worker.postMessage('cancel') }, Math.max(0, 400 - (performance.now() - started)))
+  const deadline = setTimeout(() => { void worker.terminate() }, Math.max(0, 500 - (performance.now() - started)))
   try {
     const exit = await new Promise((resolve, reject) => {
       worker.on('message', message => { appended = message === true })
@@ -78,7 +81,7 @@ try {
     })
     assert.equal(exit, 0, 'The shipped report Worker must exit successfully')
     assert.equal(appended, true)
-  } finally { clearTimeout(deadline) }
+  } finally { clearTimeout(cancellation); clearTimeout(deadline) }
   const report = readFileSync(reportPath, 'utf8')
   assert.ok(report.startsWith(basic))
   assert.ok(report.includes('operation history collection complete'))

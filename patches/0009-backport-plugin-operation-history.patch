@@ -2155,7 +2155,7 @@ index 0000000..816c4ca
 +  expect(parsePluginOperationRecord(record)).toEqual(record)
 +})
 diff --git a/packages/boot/plugin-manager/tests/manager.spec.ts b/packages/boot/plugin-manager/tests/manager.spec.ts
-index da58379..89baa5c 100644
+index da58379..1766e8d 100644
 --- a/packages/boot/plugin-manager/tests/manager.spec.ts
 +++ b/packages/boot/plugin-manager/tests/manager.spec.ts
 @@ -15,7 +15,7 @@ import {
@@ -2163,7 +2163,7 @@ index da58379..89baa5c 100644
    type ProfileContext, type RuntimeResolution,
  } from '@deepseek-ai/dsh-app-boot'
 -import PluginManager, { type Config, type PluginChange, type PluginInstallLogChunk, type PluginInstallProgress, type PluginInstallRequestId } from '../src/index.ts'
-+import PluginManager, { type Config, type PluginChange, type PluginOperation, type PluginInstallLogChunk, type PluginInstallProgress, type PluginInstallRequestId } from '../src/index.ts'
++import PluginManager, { type Config, type PluginChange, type PluginOperation, type PluginEntryId, type PluginInstallLogChunk, type PluginInstallProgress, type PluginInstallRequestId } from '../src/index.ts'
  import Hmr from '@deepseek-ai/dsh-hmr'
  import Timer from '@deepseek-ai/cordis-plugin-timer'
  import type { PatchOptions } from '@deepseek-ai/cordis-plugin-include'
