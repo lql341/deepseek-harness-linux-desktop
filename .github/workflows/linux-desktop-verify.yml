@@ -172,6 +172,10 @@ jobs:
         working-directory: ${{ env.UPSTREAM_DIR }}
         run: pnpm run typecheck
 
+      - name: Build the native system test dependency
+        working-directory: ${{ env.UPSTREAM_DIR }}
+        run: pnpm run build:native-system
+
       - name: Desktop backport and Linux integration regression tests
         working-directory: ${{ env.UPSTREAM_DIR }}
         run: |
@@ -184,8 +188,20 @@ jobs:
             apps/desktop/tests/keyboard.spec.ts \
             apps/desktop/tests/scnet-setup.spec.ts \
             apps/desktop/tests/installer-packaging.spec.ts \
+            apps/desktop/tests/operation-journal.spec.ts \
+            apps/desktop/tests/operation-history.spec.ts \
+            apps/desktop/tests/operation-report.spec.ts \
+            apps/desktop/tests/operation-report-job.spec.ts \
+            apps/desktop/tests/host-process.spec.ts \
+            apps/desktop-host/tests/operation-diagnostics.spec.ts \
+            packages/boot/plugin-manager/tests/diagnostic.spec.ts \
+            packages/boot/plugin-manager/tests/manager.spec.ts \
             apps/desktop/tests/harness-update.spec.ts \
             apps/desktop/tests/scnet-diagnostics-window.spec.ts
+
+      - name: Validate generated diagnostic contracts and bilingual source documentation
+        working-directory: ${{ env.UPSTREAM_DIR }}
+        run: bash "$GITHUB_WORKSPACE/ci/history-generated-check.sh"
 
       - name: Build the desktop application
         working-directory: ${{ env.UPSTREAM_DIR }}
@@ -228,6 +244,8 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -yq xvfb openbox xdotool dbus-x11 imagemagick libglib2.0-bin
           sudo apt-get install -yq "$PWD"/"${debs[0]}"
+          timeout 30 env ELECTRON_RUN_AS_NODE=1 /usr/bin/deepseek-harness \
+            "$GITHUB_WORKSPACE/ci/desktop-operation-audit.mjs" "/opt/DeepSeek Harness/resources"
           dbus-run-session -- xvfb-run -a -s "-screen 0 1280x900x24" \
             bash "$GITHUB_WORKSPACE/ci/desktop-session.sh"
 

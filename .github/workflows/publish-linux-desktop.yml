@@ -133,6 +133,8 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -yq xvfb openbox xdotool dbus-x11 imagemagick libglib2.0-bin
           sudo apt-get install -yq "$PWD"/publish/*.deb
+          timeout 30 env ELECTRON_RUN_AS_NODE=1 /usr/bin/deepseek-harness \
+            "$GITHUB_WORKSPACE/ci/desktop-operation-audit.mjs" "/opt/DeepSeek Harness/resources"
           dpkg -s deepseek-harness | sed -n '1,5p'
           ls -l /usr/bin/deepseek-harness
           xdg-mime query default x-scheme-handler/dsh

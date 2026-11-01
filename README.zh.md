@@ -58,7 +58,7 @@ pnpm --dir apps/desktop run package:linux:x64
 
 PR 和相关 main push 会应用补丁、检查全仓类型、运行定向桌面回归、构建 deb、审计 SCNet 内容，再在 Ubuntu 24.04 的 Xvfb 中安装并启动同一个候选包。普通第二次启动的窗口断言在无头会话中跳过，需要真实桌面验证。已发布字节、升级、AppArmor、Wayland 和 Debian 13 是单独的手动 job；跳过不等于平台检查通过。
 
-[PR #5](https://github.com/lql341/deepseek-harness-linux-desktop/pull/5) 在 [Run 41273560891](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41273560891) 通过 254 项桌面回归、全仓类型检查、打包和安装会话检查；合并后的 main 也在 [Run 41274912984](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41274912984) 通过。这些运行早于 SCNet 配置修复，当前改动仍需自己的 CI 证据。
+[PR #5](https://github.com/lql341/deepseek-harness-linux-desktop/pull/5) 在 [Run 41273560891](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41273560891) 通过 254 项桌面回归、全仓类型检查、打包和安装会话检查；合并后的 main 也在 [Run 41274912984](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41274912984) 通过。随后 SCNet 配置修复和双语文档在 [Run 41278271808](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41278271808) 通过 268 项桌面测试，并通过[文档 Run 41278271805](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41278271805)。插件操作历史是新的候选版本，仍需自己的 CI 证据。
 
 发布由 [publish-linux-desktop.yml](.github/workflows/publish-linux-desktop.yml) 手动触发：固定构建提交、记录暂存区补丁树、审计并安装构建字节，然后发布 deb 和 checksum。上游同步只创建可审查 PR，不会合并或发布，见[同步操作](ci/UPSTREAM-SYNC.zh-CN.md)。
 
@@ -73,7 +73,7 @@ PR 和相关 main push 会应用补丁、检查全仓类型、运行定向桌面
 - `patches/`：当前上游差异；`patches-legacy-dsh-v0.2.0-rc.2/`：历史补丁线
 - `apply.sh`、`verify.sh`、`ci/`：源码准备、诊断、审计和安装工具
 
-本仓库当前只维护 Linux x64 deb 交付。macOS Dock/vibrancy、Windows 安装器和 Linux 权限/合成器需要不同实现。原生 CUA、新文件交互和完整插件操作历史仍待实现，依赖见功能跟进。
+本仓库当前只维护 Linux x64 deb 交付。macOS Dock/vibrancy、Windows 安装器和 Linux 权限/合成器需要不同实现。原生 CUA 和新文件交互仍待实现。插件操作历史已加入候选源码，等待完整 CI，依赖见功能跟进。
 
 ## 许可
 
