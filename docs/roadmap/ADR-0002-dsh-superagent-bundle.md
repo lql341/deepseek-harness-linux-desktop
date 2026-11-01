@@ -53,7 +53,7 @@ A local experiment replaced every `@deepseek-ai/dsh-*` pin with `0.2.1-rc.5` and
 | Dependency resolution | All Harness peers resolve to `0.2.1-rc.5`; the declared engine range is satisfied |
 | Unit tests | 59 files and 1197 tests pass |
 | Bundle build | `tsdown` emits the server, watch, client and type outputs |
-| Typecheck | Fails with four errors in three files from two API drifts |
+| Typecheck | Fails with four errors in four files from two API drifts |
 
 The two drifts are small and known:
 

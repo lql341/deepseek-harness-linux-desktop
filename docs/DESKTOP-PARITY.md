@@ -26,7 +26,7 @@ Evidence for each row comes from the pinned upstream tree and the patched tree p
 | Single instance | Process-lifetime lock before profile access | Same lock; the headless session test covers plain relaunch and `dsh://open` | The ordinary second-launch window assertion needs a real desktop |
 | Microphone | System authorization, usage description and audio-input entitlement | The primary application frame is the only accepted requester; non-macOS requests are granted without an OS prompt | Verify PipeWire and PulseAudio capture, and decide whether a portal permission flow is needed |
 | Account sign-in and embedded Platform | Accepted desktop platform values are macOS and Windows; the Sign in button is disabled upstream | The port passes the macOS fallback because Linux is not an accepted value | Upstream must accept Linux before an honest client identity, embedded Platform view or sign-in can ship |
-| Updates | Signed artifacts from the official update service, with channels and a mandatory policy | GitHub release discovery, checksum verification and PolicyKit installation of the rebuilt deb | Sign the package, route the menu action through the real updater, and decide how mandatory updates apply |
+| Updates | Signed artifacts from the official update service, with channels and a mandatory policy | Settings discovers GitHub releases, verifies the checksum and installs the rebuilt deb with PolicyKit; the native Check for Updates action still uses the upstream updater, which reports a missing update source in a deb | Sign the package, route the menu action through the real updater, and decide how mandatory updates apply |
 | Mandatory update policy | Windows and macOS identities are accepted by the policy service | The policy client is deliberately not initialized because Linux has no accepted identity | Define a Linux identity and service contract, or document the exemption as a product decision |
 | Package signing | Developer ID signature and notarization | Unsigned deb with a SHA256SUMS file | Add a repository signing key or another verifiable trust chain before recommending automatic installs |
 | Packaging targets | macOS arm64 and x64 images; Windows installer | Linux x64 deb only | Linux arm64, rpm, AppImage and Flatpak need separate runtime and acceptance work |
@@ -35,14 +35,14 @@ Evidence for each row comes from the pinned upstream tree and the patched tree p
 | Crash recovery | Reports under the macOS logs directory, with a native dialog | Reports under the userData logs directory, plus retrieval of a saved report from the Settings-owned menu | Real-desktop check of the reveal action and the ten-report retention |
 | Computer use | The dedicated macOS provider uses Accessibility and Screen Recording | No Linux provider exists | Needs X11 and Wayland control, accessibility trees, capture and approval tests |
 | Native file drag and new file actions | Present in the development line, not in the official baseline | Absent from the pinned baseline | Backport the file-drag provider, Host resource API and cleanup lifecycle together |
-| Plugin operation history | Present in the development line, not in the official baseline | Backport candidate in patch 0009 | Merge and release it, then validate the journal and report Worker in an installed package |
+| Plugin operation history | Present in the development line, not in the official baseline | Merged as patch 0009; the published package still predates it | Validate the journal and report Worker in a released package |
 
 ## Gaps that need development
 
 | Priority | Gap | Dependency | Exit gate |
 | --- | --- | --- | --- |
-| P0 | The published package predates patches 0007, 0008 and 0009 | Merge the operation-history pull request and run the publish workflow | An installed package from the current series passes verification and is published |
-| P0 | The Check for Updates menu action uses the inert upstream channel on Linux | Small main-process change that calls the Harness update coordinator | The menu action reports the real Linux release state, and a focused test covers it |
+| P0 | The published package predates patches 0007, 0008 and 0009 | Run the publish workflow from the merged series | An installed package from the current series passes verification and is published |
+| P0 | The Check for Updates menu action fails on Linux because the deb has no upstream update source | Small main-process change that calls the Harness update coordinator | The menu action reports the real Linux release state, and a focused test covers it |
 | P0 | No trusted update chain | A signed repository or a signed package plus documented key handling | Update installation verifies the signature, not only a checksum |
 | P1 | Mandatory updates are not enforced | A Linux client identity and a policy service contract, or an explicit exemption | The policy either blocks an outdated client or the exemption is documented and tested |
 | P1 | Update attention is missing | A freedesktop notification with urgency or a launcher badge | A prepared update is noticeable from another workspace without focusing the window |
@@ -59,7 +59,7 @@ The official `dsh-v0.2.1-rc.5` baseline is not the newest source. Upstream `dsh-
 
 | Development feature | What it adds | Port status |
 | --- | --- | --- |
-| Plugin operation history | Manager lifecycle events, a bounded journal and an isolated report Worker | Patch 0009, waiting for the verification run and the release |
+| Plugin operation history | Manager lifecycle events, a bounded journal and an isolated report Worker | Patch 0009, merged; release pending |
 | Native file drag | Verified copy drags scoped to the product main frame and the active Host | Not backported |
 | Update window | A dedicated update window and revised overlay behavior | Partially present through the owner-attached dialogs from patch 0007 |
 | Locale cache | A cached desktop locale with change notification | Not backported |
