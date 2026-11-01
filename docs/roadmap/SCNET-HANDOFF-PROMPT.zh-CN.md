@@ -35,7 +35,7 @@ Desktop 固定携带 dsh-scnet@0.6.13，客户端与 Harness 整包更新。
 更新和 Configure SCNet 入口保留在设置，保留显式禁用和自定义 profile。
 补丁 0007 增加 DevTools、报告获取和更新视图；补丁 0008 修复外部 Python
 的 ASAR 路径、终端可见性和 spawn 失败。查询修复对应的当前 CI，旧成功运行不够。
-公开 v0.2.1-rc.5-linux.1 预发布早于这两个补丁。
+公开 v0.2.1-rc.5-linux.2 预发布已包含这两个补丁。
 
 正式 SCNet OAuth2/API 合同和沙盒凭证缺失时，继续有用的离线桌面工作。
 不猜测 issuer、endpoint、scope、client 凭据或账户关联。

@@ -77,7 +77,7 @@ English is the default documentation language. Every page has a Chinese counterp
 - `patches/`: active upstream diffs; `patches-legacy-dsh-v0.2.0-rc.2/`: historical series
 - `apply.sh`, `verify.sh`, `ci/`: source preparation, diagnostics, audits and installation tools
 
-Only Linux x64 deb delivery is currently maintained here. macOS Dock/vibrancy, Windows installers and Linux permissions/compositors require distinct implementations. Native CUA and newer file interactions remain pending. Plugin operation history is implemented in the candidate source and awaits full CI. See the follow-up for their dependencies.
+Only Linux x64 deb delivery is currently maintained here. macOS Dock/vibrancy, Windows installers and Linux permissions/compositors require distinct implementations. Native CUA, newer file interactions and macOS-only integrations are outside release parity; the [parity page](docs/DESKTOP-PARITY.md) records the verdict and the excluded scope.
 
 ## License
 

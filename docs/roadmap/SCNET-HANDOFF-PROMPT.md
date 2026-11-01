@@ -37,7 +37,7 @@ Keep update and Configure SCNet actions in settings. Preserve explicit disabled
 and custom profiles. Patch 0007 adds DevTools/report retrieval/update views.
 Patch 0008 repairs the ASAR external-Python setup path, terminal visibility and
 spawn failure. Check current CI for that repair; old passing runs are insufficient.
-The public v0.2.1-rc.5-linux.1 prerelease predates both patches.
+The public v0.2.1-rc.5-linux.2 prerelease contains both patches.
 
 Continue useful offline desktop work while formal SCNet OAuth2/API contracts and
 sandbox credentials are unavailable. Never guess issuer, endpoints, scopes,

@@ -77,7 +77,7 @@ PR 和相关 main push 会应用补丁、检查全仓类型、运行定向桌面
 - `patches/`：当前上游差异；`patches-legacy-dsh-v0.2.0-rc.2/`：历史补丁线
 - `apply.sh`、`verify.sh`、`ci/`：源码准备、诊断、审计和安装工具
 
-本仓库当前只维护 Linux x64 deb 交付。macOS Dock/vibrancy、Windows 安装器和 Linux 权限/合成器需要不同实现。原生 CUA 和新文件交互仍待实现。插件操作历史已加入候选源码，等待完整 CI，依赖见功能跟进。
+本仓库当前只维护 Linux x64 deb 交付。macOS Dock/vibrancy、Windows 安装器和 Linux 权限/合成器需要不同实现。原生 CUA、新文件交互和 macOS 专属集成不属于正式版对齐范围；结论与排除项见[能力对齐页](docs/DESKTOP-PARITY.zh-CN.md)。
 
 ## 许可
 

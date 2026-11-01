@@ -13,11 +13,11 @@
 | 最近合并的桌面回移 | PR #6，main 提交 `c23d3cb6c849307d6eaaa2640016ec9b26436c8c` |
 | PR 验证 | Run `41278271808`：十组/268 项测试、全仓类型、构建、deb 审计和安装后 Xvfb 会话通过 |
 | main 验证 | Run `41274912984`：通过 |
-| 已验证公开预发布 | `v0.2.1-rc.5-linux.1`，构建提交 `b860c05d4f771aa105290394e5d05fd2311e571f` |
-| 发布验证 | Run `41269979995`：通过 |
-| 已发 deb SHA-256 | `8ee9616ee40db44330c4b77dbae24173d0a48665a3478d075ff7c168422888c6` |
+| 已验证公开预发布 | `v0.2.1-rc.5-linux.2`，构建提交 `32a509c6e5db91d6210f4fe23d4f9290c0df310a` |
+| 发布验证 | Run `41311729795`：通过 |
+| 已发 deb SHA-256 | `6b7dc77e7757826e20d60834ae87c812411d2e3cb79ff22a9a3cefc4d1491cb3` |
 
-公开预发布不包含补丁 0007/0008/0009。补丁 0008 修复配置 SCNet，已通过上述 PR 验证。补丁 0009 为新的本地插件操作历史候选版本，完整 CI 和随包管理器/Worker 验收仍待完成。把本快照当作最新状态前必须查询 GitHub，见[发布页](https://github.com/lql341/deepseek-harness-linux-desktop/releases/tag/v0.2.1-rc.5-linux.1)和 [Actions](https://github.com/lql341/deepseek-harness-linux-desktop/actions)。
+`v0.2.1-rc.5-linux.2` 包含补丁 0001 到 0011，包括 SCNet 配置修复、插件操作历史和签名更新链。已发布字节在 Run `41317916316` 通过手动验收套件（签名清单、升级、AppArmor、Wayland、Debian 13 和候选升级）。把本快照当作最新状态前必须查询 GitHub，见[发布页](https://github.com/lql341/deepseek-harness-linux-desktop/releases/tag/v0.2.1-rc.5-linux.2)和 [Actions](https://github.com/lql341/deepseek-harness-linux-desktop/actions)。
 
 ## 已实现行为
 
