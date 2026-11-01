@@ -8,7 +8,7 @@
 
 [rc.2 到 rc.5](https://github.com/deepseek-ai/deepseek-harness/compare/dsh-v0.2.1-rc.2...dsh-v0.2.1-rc.5) 共 19 个提交，desktop 目录只修改包版本。共享客户端改进随 rc.5 升级，不代表具备开发线新增的原生壳能力。
 
-公开的 `v0.2.1-rc.5-linux.1` 早于补丁 0007、0008 和 0009，源码、CI 候选包和 release 必须分别核查。
+公开的 `v0.2.1-rc.5-linux.1` 早于补丁 0007、0008、0009 和 0010，源码、CI 候选包和 release 必须分别核查。
 
 ## 当前源码补丁已实现
 
@@ -19,9 +19,9 @@
 | 0007 | 主窗口内隔离更新视图、不独立激活原生窗口，适配标题栏/原生边框/全屏，清理输入和生命周期，处理取消与强更视图恢复 | 生命周期/导航定向测试，加 Linux 主进程/键盘/更新/SCNet 集成回归 |
 | 0008 | 修复配置 SCNet 的外部 Python ASAR 路径，解包完整 Bundle，保留终端输出并拒绝启动失败 | 源码测试和包审计要求物理文件哈希一致，并由外部 Python 执行帮助命令 |
 | 0009 | 关联管理操作事件、校验 Host IPC、跨 Host 重启的有界本地记录，以及隔离的诊断报告 Worker | [Run 41293513453](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41293513453) 完整验证：19 组、475 项测试、类型检查、deb 构建、SCNet 审计和安装后 Xvfb 会话 |
-| 0010 | Linux 菜单动作：“检查更新”改用 Git release 包路径并在安装前确认，Linux 显示“管理 dsh 命令” | 定向主进程/更新测试和全仓类型检查；完整 CI 待完成 |
+| 0010 | Linux 菜单动作：“检查更新”改用 Git release 包路径并在安装前确认，Linux 显示“管理 dsh 命令” | [Run 41300916542](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41300916542) 完整验证：19 组、478 项测试、类型检查、deb 构建和安装后 Xvfb 会话 |
 
-补丁 0007 在 [Run 41273560891](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41273560891) 通过八组共 254 项测试、全仓类型检查、构建、deb 审计和安装后的 Xvfb 会话；合并后 main 在 [Run 41274912984](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41274912984) 通过。补丁 0008 随后在 [Run 41278271808](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41278271808) 通过十组共 268 项测试、全仓类型检查、deb 构建、SCNet 物理文件与外部 Python 验收，以及安装后会话。26 页双语文档检查和十一项守卫测试通过 [Run 41278271805](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41278271805)。PR #6 已合并为 `c23d3cb6c849307d6eaaa2640016ec9b26436c8c`。补丁 0009 随后在 [Run 41293513453](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41293513453) 通过 19 组共 475 项测试、全仓类型检查、deb 构建和安装后 Xvfb 会话，并合并为 `c4605797d7cdc3b4bdda31c098210b8e26134ec0`。公开 release 仍早于补丁 0007、0008 和 0009，因此源码、CI 候选包和发布仍是不同状态。
+补丁 0007 在 [Run 41273560891](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41273560891) 通过八组共 254 项测试、全仓类型检查、构建、deb 审计和安装后的 Xvfb 会话；合并后 main 在 [Run 41274912984](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41274912984) 通过。补丁 0008 随后在 [Run 41278271808](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41278271808) 通过十组共 268 项测试、全仓类型检查、deb 构建、SCNet 物理文件与外部 Python 验收，以及安装后会话。26 页双语文档检查和十一项守卫测试通过 [Run 41278271805](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41278271805)。PR #6 已合并为 `c23d3cb6c849307d6eaaa2640016ec9b26436c8c`。补丁 0009 随后在 [Run 41293513453](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41293513453) 通过 19 组共 475 项测试、全仓类型检查、deb 构建和安装后 Xvfb 会话，并合并为 `c4605797d7cdc3b4bdda31c098210b8e26134ec0`。补丁 0010 随后在 [Run 41300916542](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41300916542) 通过 19 组共 478 项测试、全仓类型检查、deb 构建和安装后 Xvfb 会话，并合并为 `66ce96ebc7601c80b48be6b63b9e2f069c135a36`。公开 release 仍早于补丁 0007、0008、0009 和 0010，因此源码、CI 候选包和发布仍是不同状态。
 
 历史仅保存在本地，最多两个 256 KiB 分段；报告收集最多读取 64 KiB/100 条记录，并在独立基础报告保存后追加最多 64 KiB。原始安装参数、凭据和包管理器输出不进入记录。遗漏计数和完成标记说明不完整情况；没有记录不能证明没有操作。
 
