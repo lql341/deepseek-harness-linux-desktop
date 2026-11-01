@@ -150,10 +150,10 @@ jobs:
         run: |
           ./apply.sh "$UPSTREAM_DIR"
           cd "$UPSTREAM_DIR"
-          echo "== applied commits =="
-          git log --oneline "$BASE_TAG..HEAD"
+          echo "== staged patch summary =="
+          git diff --cached --stat
           echo "== patched tree hash (informational) =="
-          git rev-parse "HEAD^{tree}"
+          git write-tree
           echo "== required local env file =="
           test -f apps/desktop/.env.linux && echo "apps/desktop/.env.linux present"
 

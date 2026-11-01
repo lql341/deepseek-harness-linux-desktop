@@ -166,10 +166,10 @@ index a28e0a7..982e361 100644
      expect(config.deb.depends).toContain('libasound2')
      expect(readFileSync(config.deb.afterInstall, 'utf8')).toContain('/usr/bin/DeepSeek Harness')
 diff --git a/apps/desktop/tests/scnet-setup.spec.ts b/apps/desktop/tests/scnet-setup.spec.ts
-index 83e9051..f487d99 100644
+index 83e9051..730ed7e 100644
 --- a/apps/desktop/tests/scnet-setup.spec.ts
 +++ b/apps/desktop/tests/scnet-setup.spec.ts
-@@ -1,43 +1,68 @@
+@@ -1,43 +1,70 @@
  import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 +import { spawnSync } from 'node:child_process'
  import { tmpdir } from 'node:os'
@@ -246,7 +246,9 @@ index 83e9051..f487d99 100644
 +
 +  it('rejects asynchronous spawn errors instead of reporting launch success', async () => {
 +    const f = fixture()
-+    await expect(openScnetSetup({ ...f.options, environment: { PATH: '' }, commandExists: () => true, launch: undefined }))
++    await expect(openScnetSetup({ dshRoot: f.options.dshRoot,
++      failureMessage: f.options.failureMessage, closeMessage: f.options.closeMessage,
++      environment: { PATH: '' }, commandExists: () => true }))
 +      .rejects.toThrow(/ENOENT/u)
    })
  

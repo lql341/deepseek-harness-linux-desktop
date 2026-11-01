@@ -85,7 +85,7 @@ else
   cp "$UPSTREAM_DIR/apps/desktop/.env.linux.example" "$UPSTREAM_DIR/apps/desktop/.env.linux" \
     && pass "created apps/desktop/.env.linux from the template" || fail "cannot create .env.linux"
 fi
-run "11-patched-tree" bash -c "cd '$UPSTREAM_DIR' && git rev-parse 'HEAD^{tree}'"
+run "11-patched-tree" git -C "$UPSTREAM_DIR" write-tree
 
 step "L1 install"
 ( cd "$UPSTREAM_DIR" && pnpm install --frozen-lockfile ) >"$LOGROOT/20-install.log" 2>&1
@@ -139,7 +139,7 @@ else
   step "L2 SCNet release audit"
   PACKAGE_SET="$UPSTREAM_DIR/apps/desktop/.desktop-build/targets/linux-x64/package-set"
   if run "31-scnet-release-audit" node "$REPO_ROOT/ci/scnet-release-audit.mjs" \
-    --app "$APP" --package-set "$PACKAGE_SET" --expected-version 0.6.9 \
+    --app "$APP" --package-set "$PACKAGE_SET" --expected-version 0.6.13 --require-setup true \
     --output "$LOGROOT/scnet-release-audit.json"; then
     cat "$LOGROOT/31-scnet-release-audit.log" | tee -a "$LOGROOT/summary.txt"
   fi

@@ -91,7 +91,7 @@ CUA requires Linux-native permissions/control. New file actions and complete plu
 | SCNet setup unavailable | Physical unpacked script, executable configured Python, supported terminal and visible terminal output |
 | Sandbox rejection | Inspect user-namespace/AppArmor/SUID helper configuration; normal desktop operation must retain the sandbox |
 
-`verify.sh` records per-step PASS/FAIL and creates a diagnostic tarball. It does not use sudo and does not replace installed-desktop acceptance. Check its expected versions against the current release before using historical diagnostics as a gate.
+`verify.sh` records per-step PASS/FAIL and creates a diagnostic tarball. It does not use sudo and does not replace installed-desktop acceptance. Its full-mode SCNet audit uses the current fixed version and physical setup-file acceptance.
 
 ## 7. Verification boundaries
 

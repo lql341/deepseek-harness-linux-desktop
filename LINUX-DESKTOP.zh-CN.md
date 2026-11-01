@@ -91,7 +91,7 @@ CUA 需要 Linux 原生权限/控制实现，新文件交互和完整插件历�
 | SCNet 配置不可用 | 物理解包脚本、可执行的配置 Python、受支持终端和可见终端输出 |
 | Sandbox 拒绝 | 检查 user namespace、AppArmor、SUID helper 配置；正常桌面运行保留 sandbox |
 
-`verify.sh` 逐步记录 PASS/FAIL 并生成诊断 tarball，不使用 sudo，也不能替代安装后的桌面验收。用历史诊断作为门禁前，先确认它的预期版本与当前 release 一致。
+`verify.sh` 逐步记录 PASS/FAIL 并生成诊断 tarball，不使用 sudo，也不能替代安装后的桌面验收。完整模式的 SCNet 审计使用当前固定版本，并验收物理解包后的配置文件。
 
 ## 7. 验证边界
 
