@@ -1,3 +1,5 @@
+[English](ADR-0001-plugin-and-connector-architecture.md) | 中文
+
 # ADR-0001：插件与跨平台连接器分层
 
 - 状态：`accepted`

@@ -1,32 +1,15 @@
-# Upstream sync operation
+English | [中文](UPSTREAM-SYNC.zh-CN.md)
 
-`ci/upstream-base-tag` is the default upstream version used by apply.sh, local
-migration builds, verification and publishing. `BASE_TAG` (apply.sh) and
-`DSH_BASE_TAG` (local migration builds) still override it.
+# Upstream synchronization
 
-The daily sync workflow validates newer descendant tags. A migration PR changes
-only this ordinary configuration file, so it does not need workflow-file write
-permission. The PR job has contents/pull-requests write access; validation has
-only contents/actions read access. Enable GitHub Actions PR creation in repository
-Actions settings if repository policy currently disables it.
+`ci/upstream-base-tag` is the default version for apply.sh, local migration builds, verification and publishing. `BASE_TAG` and `DSH_BASE_TAG` override it in the corresponding local scripts.
 
-Successful builds and explicit patch conflicts are stored as 90-day artifacts,
-keyed by both the repository and upstream commit SHA. Later runs reuse the newest
-matching result. The original conflict run stays failed; subsequent summaries
-link to it and clearly show that migration is still blocked. No migration PR is
-created for a stored conflict. Changed inputs or expiration trigger validation
-again. Dependency, build and infrastructure failures are not stored and are retried.
+The daily workflow validates newer descendant tags. Migration PRs change the ordinary base file, so they need no workflow-file write permission. Validation has contents/actions read access; PR creation has contents/pull-requests write access. The repository must allow GitHub Actions to create PRs. This setting is enabled for this repository; the default token remains read-only and merging is separate.
 
-Use **Run workflow → force** to revalidate unchanged inputs. This also supersedes
-an earlier stored conflict. Reusing a successful build still retries PR creation,
-so a fixed repository permission does not require another full build. An existing
-automation branch left by a failed PR creation is reused only if its tree exactly
-matches the expected migration; differing branches require manual review.
+Successful builds and explicit patch conflicts are cached as 90-day artifacts keyed by both port-repository and upstream commit SHAs. Later runs reuse the newest exact match. An original conflict run remains failed; reuse summaries link to it and clearly report migration blocked. No PR is created for a stored conflict. Changed inputs or expiration require validation again. Dependency/build/infrastructure failures are not cached and are retried.
 
-Verification runs for pull requests to main, including version changes. A bot PR
-may need GitHub's workflow approval before those checks run; confirm its checks
-are green before merging. Creating a PR is not proof that all verification jobs
-ran. Publishing remains manual, and the sync workflow never merges or releases.
+Use **Run workflow → force** to revalidate unchanged inputs and supersede stored conflicts. Reusing success still retries PR creation, so fixing repository permissions does not require another build. A leftover automation branch is reused only when its tree exactly matches the expected migration; different trees require review. Existing matching PRs are reused rather than duplicated.
 
-The upstream checkout keeps history because three-way application of the original
-patches after a base upgrade needs the old blob objects.
+Relevant PRs to main run Linux verification, including version changes. A bot PR may require GitHub's workflow approval; confirm its actual checks passed before merging. Creating a PR is not evidence that verification ran. Publishing remains manual; synchronization never merges or releases.
+
+Upstream history is retained because three-way application after a base upgrade needs old blob objects. The script stages patches with `git apply --3way`: `git write-tree` records the patched tree, while `HEAD` still identifies the checked-out base.

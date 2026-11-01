@@ -1,40 +1,29 @@
-# SCNet Platform Roadmap
+English | [中文](README.zh-CN.md)
 
-This directory is the planning source of truth for integrating SCNet authentication,
-the `dsh-scnet` bundle, and platform-specific clients around the Linux Desktop port.
-The primary planning document is written in Chinese because the product requirements and
-operational users are currently Chinese-speaking.
+# SCNet platform roadmap
 
-## Documents
+Planning and handoff for SCNet authentication, the fixed `dsh-scnet` Bundle and platform clients around Linux Desktop. English is the default; each document links its Chinese version.
 
-| Document | Purpose | Update rule |
-|---|---|---|
-| [`SCNET-PLATFORM-DEVELOPMENT-PLAN.zh-CN.md`](SCNET-PLATFORM-DEVELOPMENT-PLAN.zh-CN.md) | A-G staged delivery plan, feasibility assessment, milestones, risks, and acceptance gates | Update when scope, dependencies, or release gates change |
-| [`SCNET-DEVELOPMENT-HANDOFF.zh-CN.md`](SCNET-DEVELOPMENT-HANDOFF.zh-CN.md) | Current implementation evidence, repository/commit mapping, delivery boundaries, and prioritized handoff TODOs | Update at each cross-repository handoff or milestone close |
-| [`SCNET-HANDOFF-PROMPT.zh-CN.md`](SCNET-HANDOFF-PROMPT.zh-CN.md) | Copy-ready prompt for handing the current repository to the next coding model | Refresh when the active release gate, branch, or repository workflow changes |
-| [`ADR-0001-plugin-and-connector-architecture.zh-CN.md`](ADR-0001-plugin-and-connector-architecture.zh-CN.md) | Decision record separating the desktop/server plugin from mobile/native connectors | Append a new ADR instead of rewriting the decision after implementation starts |
+| Document | Purpose and maintenance |
+| --- | --- |
+| [Development plan](SCNET-PLATFORM-DEVELOPMENT-PLAN.md) | Phases A–G, dependencies, milestones and exit gates; update when scope or release requirements change |
+| [Development handoff](SCNET-DEVELOPMENT-HANDOFF.md) | Current implementation, release evidence, limits and prioritized TODOs; update at milestone or repository handoff |
+| [Handoff prompt](SCNET-HANDOFF-PROMPT.md) | Copy-ready starting instructions; refresh when base, workflow or release gate changes |
+| [ADR-0001](ADR-0001-plugin-and-connector-architecture.md) | Desktop/server plugin versus mobile/native connectors; later decisions need a new ADR |
 
 ## Status vocabulary
 
-- `proposed`: planned but not approved for implementation.
-- `ready`: dependencies and owners are known; implementation may start.
-- `in progress`: implementation or verification is active.
-- `blocked`: a named external dependency prevents progress.
-- `done`: acceptance criteria and release evidence are complete.
+- `proposed`: not approved for implementation.
+- `ready`: dependencies and owners known.
+- `in progress`: implementation or verification active.
+- `blocked`: named external dependency prevents progress.
+- `done`: exit criteria and release evidence complete.
 
-## Maintenance rules
+Every phase needs entry criteria, deliverables and an exit gate. Record protocol assumptions as dependencies. Credentials, account identifiers and private endpoints must not enter the repository. OAuth2 scope, callback, storage or capability-policy changes require an ADR update. Plans describe intent; behavior belongs to source and release pipelines. Update both languages together.
 
-1. Every phase has one entry criterion, one deliverable set, and one exit gate.
-2. External protocol assumptions must be recorded as dependencies, never implied by examples.
-3. Credentials, tokens, account identifiers, and private endpoints must not enter this repository.
-4. Changes to OAuth2 scopes, redirect URIs, token storage, or cross-platform capability policy require an ADR update.
-5. The roadmap describes implementation intent; executable behavior remains owned by the respective source repository and release pipeline.
-
-## Repository ownership
-
-| Area | Current source of truth |
-|---|---|
-| Linux Desktop packaging and runtime patches | `deepseek-harness-linux-desktop` |
-| SCNet DSH bundle and Skill packaging | sibling `dsh-scnet` repository |
-| Upstream Harness runtime and client APIs | `deepseek-harness` checkout used by `apply.sh` |
-| OAuth2 authorization and account linking | SCNet authorization service; endpoint contract must be versioned externally |
+| Area | Source of truth |
+| --- | --- |
+| Linux Desktop patches, packaging and release | This repository |
+| Bundle/Skill distribution | `dsh-scnet`, synchronized from canonical `scnet-hpc` |
+| Shared Harness runtime and client APIs | Upstream checkout selected by `apply.sh` |
+| OAuth2 and account linking | SCNet authorization service and externally versioned formal contract |

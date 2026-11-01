@@ -1,268 +1,100 @@
-# DeepSeek Harness Desktop — Linux（mac-like）移植补丁集
+English | [中文](LINUX-DESKTOP.zh-CN.md)
 
-> 本文档对应的 Linux x64 路径已在本机实际编译、打包并启动验证，发布产物为 deb。
-> 另在 **ubuntu-24.04 与 Debian 13（trixie）** 的 GitHub Actions（workflow
-> `Linux desktop verification`）上完整跑通。当前仓库的 `patches/` 包含 **6 个补丁**；
-> 补丁文件名保留原始生成基线，实际构建基线由 `ci/upstream-base-tag` 统一指定；
-> 下述 run 是历史验证记录，完整门禁集
-> （run `37411910000`，2026-10-06，head `d70585e`）：8 个 job 中 7 个绿，涵盖
-> `install + typecheck + package preflight`、打包、Debian 13、deb 升级路径与硬化启动、
-> 已发布产物校验与 Wayland 冒烟；唯一报红的是上游门禁聚合腿，且在同一次运行的
-> **未打补丁基线 tag** 上挂的是同样两个任务、同样四个测试，与本补丁集无关。
-> 更早的一轮（run `36982274054`，当时 9 个补丁）即已跑通 `pnpm install` →
-> `pnpm run typecheck` → 应用构建 → `check:package` → `package:linux:x64:dir` →
-> 产物体检 → 无头 runtime 冒烟 → Xvfb GUI 冒烟 → deb。
+# Linux desktop build and acceptance guide
 
-> 当前基线：上游 `deepseek-ai/deepseek-harness` tag **`dsh-v0.2.1-rc.5`**。
-> 目标：在 Linux x64 上得到与 macOS 版**行为一致**的 Electron 桌面壳，产物为 deb。
-> 性质：非官方补丁集。上游 README 明确写有 “Linux is not a supported Desktop release target”，
-> 且打包脚本的测试断言 `linux-x64` 必须被拒绝 —— 本补丁集就是把这层限制打开并把 Linux 路径补齐。
+## 0. Scope
 
-## 0. 结论速览
+This guide records verification on `dsh-v0.2.1-rc.5`, including fixed `dsh-scnet@0.6.13`. Builds always read the current pinned tag from ci/upstream-base-tag. [README](README.md) distinguishes source capabilities from the published `v0.2.1-rc.5-linux.1` prerelease. Historical 0.2.0 topic patches are archived and must not be mixed into the active series.
 
-- **能做到 mac 一致的**：同一套 UI/后端、原生窗口、关掉最后一个窗口不退出、`dsh` 命令进 PATH、
-  `dsh://` 深链唤回、菜单与快捷键、自建/关闭更新、Office 走内置 WASM 引擎。
-- **物理上做不到 1:1 的**：窗口左上角红绿灯（`hiddenInset` 是 macOS 专属）、侧栏 vibrancy 毛玻璃、
-  Dock 图标跳动提醒。这三项在补丁里用等价物替代（overlay 原生窗口控件 / 纯色侧栏 / 通知）。
+## 1. Build prerequisites
 
-## 1. 构建前置
+Use Linux x86_64, Node `^22.19.0 || >=24.0.0`, pnpm `11.7.0`, Git and at least 15 GB free disk. The upstream workspace has its own package-manager pin. Package commands enforce a Linux x64 host. Dependencies require npm registries, GitHub/Electron, Node and Python distribution downloads. Set an appropriate proxy or approved mirror if those downloads are unavailable.
 
-| 项 | 要求 |
-|---|---|
-| 构建机 | Linux **x64**（本补丁集只加 `linux-x64`；arm64 见 §6 后续项） |
-| Node | `^22.19 \|\| >=24`（上游 CI 用 Node 24） |
-| pnpm | `11.7.0`（`package.json` 的 `packageManager`；`corepack enable` 最省事） |
-| 本地环境文件 | 打包前**必须**存在 `apps/desktop/.env.linux`：读不到会直接抛 `cannot read … copy … .example`。`apply.sh` 会自动从模板生成 |
-| 图形依赖 | 构建不需要 GUI；**验证**需要 X11/Wayland，或 `xvfb-run` |
-| LibreOffice | **不需要安装**：Linux 走随包内置的 WASM 引擎（见 §5） |
-| 字体 | 若在极简容器里跑，WASM 引擎只用导入的字体；无字体时转换会以 `unavailable` 拒绝，需要装字体或配置 `fontDirectories` |
+A real X11/Wayland session is needed for desktop acceptance. Xvfb, Openbox, xdotool and dbus-x11 provide the automated headless session. The app uses bundled WASM LibreOffice; system LibreOffice is not required for that conversion path.
 
-## 2. 应用补丁集
+## 2. Prepare the upstream source
+
+Use the commands in [README](README.md). `apply.sh` reads [ci/upstream-base-tag](ci/upstream-base-tag); `BASE_TAG` overrides it. The script applies `patches/*.patch` with `git apply --3way`, leaving changes in the index, and creates `apps/desktop/.env.linux` from its template. Start from a fresh checkout: rerunning an already applied series is not an update operation.
+
+`git rev-parse HEAD` identifies the unpatched base. Use `git write-tree` for the staged patched tree; unstaged edits are not included. Review `git diff --cached`, rather than expecting a commit per patch or an empty status. Keep `.env.linux` local and use only settings accepted by its current template.
+
+`ci/update-upstream-and-build.sh` handles local migration; the daily sync workflow validates newer descendant tags and opens a PR. Alpha migration requires explicit selection. See [sync operations](ci/UPSTREAM-SYNC.md).
+
+## 3. Build, inspect and install
+
+After install/typecheck and host/desktop builds, run `check:package`, then `package:linux:x64`. An unpacked directory build is available through `package:linux:x64:dir`; it is useful for debugging but does not establish that deb installation works.
 
 ```sh
-git clone https://github.com/deepseek-ai/deepseek-harness.git
-cd deepseek-harness
-git checkout dsh-v0.2.1-rc.5
-git checkout -b linux-desktop
-git apply --3way /path/to/patches/*.patch
-cp apps/desktop/.env.linux.example apps/desktop/.env.linux   # 打包必需，先按默认值即可
-pnpm install --frozen-lockfile
+export TARGET_DIR="$SRC/apps/desktop/.desktop-build/targets/linux-x64"
+export ARTIFACTS="$TARGET_DIR/artifacts"
+git -C "$SRC" diff --cached --stat
+git -C "$SRC" write-tree
+ls -lh "$ARTIFACTS"/*.deb
+node "$PATCH_REPO/ci/scnet-release-audit.mjs" \
+  --deb "$(find "$ARTIFACTS" -maxdepth 1 -name '*.deb' -print -quit)" \
+  --package-set "$TARGET_DIR/package-set" --expected-version 0.6.13 --require-setup true
+sudo apt-get install --reinstall "$ARTIFACTS"/deepseek-harness-*-linux-amd64.deb
+deepseek-harness
 ```
 
-> 随补丁集附带的 `apply.sh` 把上面几步（克隆、切分支、`git apply --3way`、生成 `.env.linux`）一次做完：
-> `./apply.sh [目标目录]`；加 `--install` 会在最后执行 `pnpm install --frozen-lockfile`。
-> 它只准备源码树，**不会**编译或打包。
+The audit reads the exact archive through the packaged Electron runtime. It checks fixed Bundle/Skill versions, package-set integrity and license, runtime descriptor hashes, credentials/private endpoints and generated caches. `--require-setup true` additionally requires physical unpacked SCNet files matching the archive and runs the packaged wizard's help through external Python. Omit that option only when auditing historical packages that predate this repair.
 
-> 若补丁因上游改动冲突，脚本会保留 checkout 并停止；用 `git status` 检查冲突，
-> 手工合入后 `git add <路径>`，再重新运行后续构建步骤。补丁只触及 `apps/desktop/`、
-> 根 `scripts/` 与少数 `packages/` 文件。
+Artifacts are under `$TARGET_DIR`: `artifacts/` contains the deb/unpacked app, `runtime/` the prepared runtime, `dsh/` the bundled production tree, `package-set/` and `downloads/` the intermediate inputs, and `packaging-runs/` the build records. The installed launcher is `/usr/bin/deepseek-harness`, targeting `/opt/DeepSeek Harness/deepseek-harness`. The production CLI payload is inside `resources/app.asar/dsh`; ordinary shell file checks cannot read that virtual archive path. External Python requires `app.asar.unpacked`.
 
-### 自动迁移上游核心并构建
+## 4. Acceptance checklist
 
-要让本机自动跟随上游并构建 Linux 核心，可运行：
+| Capability | Acceptance |
+| --- | --- |
+| Start and windows | Workspace/welcome appears; no unsupported-platform rejection; test drag/resize, light/dark and native frame fallback |
+| Background work | Closing the last window preserves the Host/tasks; tray or Show Window restores the window |
+| Single instance | Both plain second launch and `dsh://open` restore the window without another Host |
+| CLI | Install the `dsh` command on PATH; report/back up a foreign launcher; execute it after installing the deb |
+| Office | Convert representative DOCX/XLSX/PPTX through the bundled WASM engine |
+| Updates | Check in settings; cancel safely; verify download, PolicyKit refusal/failure, running-task confirmation and restart |
+| SCNet | Bundle/Skill available offline; default, disabled and custom profile states preserved; diagnostics expose no credentials |
+| Developer tools | English/Chinese menu and F12/native shortcuts reach the intended product document |
+| Recovery | Saved, delayed and failed crash reports are distinguishable; retrieval does not restart the app |
+| Update views | Correct caption/fullscreen bounds, no background activation, input restored after closing, safe mandatory-view fallback |
+| Configure SCNet | External Python opens the unpacked wizard; failures remain visible; cancel/close does not imply login |
+
+Run focused regressions from the patched upstream root:
 
 ```sh
-./ci/update-upstream-and-build.sh
+pnpm exec vitest run apps/desktop/tests/fatal-recovery.spec.ts \
+  apps/desktop/tests/update-overlay.spec.ts apps/desktop/tests/update-dialog.spec.ts \
+  apps/desktop/tests/mandatory-update-window.spec.ts apps/desktop/tests/main-startup.spec.ts \
+  apps/desktop/tests/keyboard.spec.ts apps/desktop/tests/harness-update.spec.ts \
+  apps/desktop/tests/scnet-diagnostics-window.spec.ts apps/desktop/tests/scnet-setup.spec.ts \
+  apps/desktop/tests/installer-packaging.spec.ts
 ```
 
-脚本会解析最新的非 alpha `dsh-v*` tag（自动排除 `-alpha.N`；手动 `--tag` 可指定任意 tag），获取补丁基线对象后执行 `git apply --3way`，
-再运行依赖安装、typecheck、host library build、Linux package preflight 和 `.deb` 构建。构建通过后，
-加上 `--install` 才会安装到当前机器：
+On Ubuntu, CI installs and starts the built deb under `ci/desktop-session.sh`. That covers mapped windows, close-keeps-running, profile activation and deep-link routing. Ordinary relaunch is deliberately skipped under Xvfb. Real desktop, Wayland, keyring and user interaction acceptance remain separate evidence.
 
-```sh
-./ci/update-upstream-and-build.sh --install
-```
+## 5. Known limits
 
-也可以固定上游版本并指定 Linux 构建版本：
+Only Linux x64 deb delivery is maintained. ARM64, AppImage and RPM need separate packaging/runtime verification. macOS traffic lights, vibrancy and Dock attention are not Linux features. Linux uses an overlay caption or `DSH_DESKTOP_LINUX_NATIVE_FRAME=1` and its desktop's tray/notifications.
 
-```sh
-./ci/update-upstream-and-build.sh \
-  --tag dsh-v0.2.1-rc.2 \
-  --build-version 0.2.1-rc.2-linux.1 \
-  --keep
-```
+There is no official Linux update feed. The port's update path delivers client and Harness together through Linux release packages and the system installer. A successful local SCNet readiness check does not mean OAuth2 login or SSH access; those have different prerequisites. The shared account protocol currently identifies Linux with the upstream desktop fallback because its accepted desktop platform values are macOS/Windows.
 
-如果补丁与上游发生语义冲突，脚本会保留迁移中的 checkout 并停止，不会安装半成品；
-解决冲突后重新运行构建步骤。GitHub Actions 的
-`upstream-sync-check` 会定时执行相同的迁移和构建，并在成功时自动创建基线迁移 PR。
+CUA requires Linux-native permissions/control. New file actions and complete plugin history require newer shared APIs; see [follow-up](docs/DESKTOP-FOLLOWUP.md). Historical CI counts and platform runs do not establish current release correctness.
 
-## 3. 打包
+## 6. Troubleshooting
 
-```sh
-# 先出目录产物（最快，用来确认能不能启动）
-pnpm --dir apps/desktop run package:linux:x64:dir
+| Symptom | Check |
+| --- | --- |
+| Unsupported linux-x64 or patch conflict | Fresh pinned base, active series only, and complete patch logs |
+| Missing .env.linux | Copy the current template; verify accepted settings and app ID |
+| Wrong host/toolchain | Linux x86_64, supported Node and the actual selected pnpm |
+| Dependency/Electron timeout | Proxy, registry and Electron mirror; do not change patch behavior to hide network failure |
+| Missing Office WASM | Production runtime closure and package-set inventory |
+| Dead deep link | `xdg-mime query default x-scheme-handler/dsh` should name `deepseek-harness.desktop` |
+| SCNet setup unavailable | Physical unpacked script, executable configured Python, supported terminal and visible terminal output |
+| Sandbox rejection | Inspect user-namespace/AppArmor/SUID helper configuration; normal desktop operation must retain the sandbox |
 
-# 再出 deb
-pnpm --dir apps/desktop run package:linux:x64
-```
+`verify.sh` records per-step PASS/FAIL and creates a diagnostic tarball. It does not use sudo and does not replace installed-desktop acceptance. Its full-mode SCNet audit uses the current fixed version and physical setup-file acceptance.
 
-（脚本名以补丁实际加入的 `apps/desktop/package.json` 为准；若上游已有 `package` 通用入口，
-也可用 `pnpm --dir apps/desktop run package`。）
+## 7. Verification boundaries
 
-## 4. 验收清单（7 条 mac parity）
+[Linux verification](.github/workflows/linux-desktop-verify.yml) is the authority for exact commits. PR/main checks cover source, regressions, candidate package and Ubuntu headless installation. Manual jobs cover long upstream gates, real-kernel bwrap/Landlock and keyless smoke, published bytes, AppArmor, Wayland, Debian 13 and profile upgrades.
 
-补丁集按这 7 条设计，逐条在 Linux 上验：
-
-1. **启动**：打包版能起来，不抛 `desktop policy: unsupported platform`，能进入工作区。
-2. **窗口观感**：无系统标题栏、原生窗口控件在右上角（`titleBarOverlay`）；出问题用
-   `DSH_DESKTOP_LINUX_NATIVE_FRAME=1` 回退到原生边框。
-3. **生命周期像 mac**：关掉最后一个窗口后应用**不退出**，后台任务继续；菜单里能重新打开窗口；
-   显式 Quit 能真正退出。
-4. **CLI 进 PATH**：安装/卸载 `dsh` 命令后，新开 shell 能直接跑 `dsh --version`；
-   已存在非本应用的同名命令时应报告冲突而不是覆盖。
-5. **深链**：`xdg-open 'dsh://...'` 能唤回并聚焦应用（deb 安装后生效； 需桌面项已注册）。
-6. **内置运行时**：`Resources/runtime/primary-runtime/dependencies/{node,pnpm,python}` 是 Linux 版，
-   agent 能跑 bash 工具、Office 技能能跑 python 脚本。
-7. **更新策略**：当前只发布 deb，不启用应用内自动更新；新版本通过发行版包更新流程安装。
-
-## 5. 已知限制与坑
-
-- **Office 技能不需要系统 LibreOffice**（这一点容易搞反）：npm 上确实**没有**
-  `@deepseek-ai/libreoffice-kit-linux-x64`，但上游为 Linux 准备的是 **WASM 引擎**：
-  - `scripts/libreoffice-engine.spec.ts` 断言 `linux x64/arm64 → 'wasm'`（上游已测试的契约）；
-  - `scripts/libreoffice-packages.mjs` 在原生包未声明时回退 `wasm`；
-  - `@deepseek-ai/libreoffice-kit-wasm`（npm `os: ['linux']`，含 `assets/soffice.wasm|soffice.data`）
-    是 wrapper `@deepseek-ai/libreoffice-kit` 的 `optionalDependencies`，Linux 上 pnpm 会自动装；
-  - 随包分发的 Office 技能文档明确**禁止**调用系统 `soffice`。
-  所以不要在补丁里加"系统 soffice"分支（会是永不触发的死代码，且与技能契约冲突）。
-  唯一要注意的是**字体**：WASM 引擎只用导入的字体，极简容器无字体时转换会拒绝执行。
-- **原生依赖 Linux 可用性（已核实）**：
-  - `node-pty`：npm tarball 内含 `prebuilds/linux-x64/pty.node` 与 `linux-arm64`，不需要编译工具链。
-  - `node-addon-require-builtin`：Linux 版按 libc 分（`-linux-x64-gnu` / `-musl`），包元数据声明 `libc`，
-    由包管理器自动选；**不要**手工按 libc 裁剪。
-  - `@img/sharp-linux-x64`、`@koromix/koffi-linux-x64`、`@vscode/ripgrep-linux-x64`、
-    `@deepseek-ai/node-addon-system-linux-x64`、`sherpa-onnx-linux-x64`：均存在，且都声明了
-    `os`/`cpu`（koffi/ripgrep 另声明 `libc`），`pnpm install --prod` 在 Linux 上只会装对应变体。
-    Linux 包内同时带 glibc 与 musl 两份（koffi 的 `linux_x64/`+`musl_x64/`、node-addon-system 的
-    `bin/glibc|musl/`），**不要**裁剪掉其中一份。
-  - `primary-runtime` 的 Linux 表项上游已有：Node `node-v24.21.0-linux-{x64,arm64}.tar.gz`、
-    Python `cpython-3.12.14+…-linux-gnu-install_only_stripped.tar.gz` 的 sha256 已与
-    nodejs.org / astral 的校验文件核对一致。
-- **Ubuntu 23.10+ 的 AppArmor 限制**：未特权 user namespace 受限时，Electron/ 的沙箱可能
-  起不来（典型报错与 `chrome-sandbox` 相关）。**优先用 deb**（自带 setuid 沙箱助手），
-   走不通时再考虑 AppArmor profile 或 `--no-sandbox`（会降低安全性，仅作兜底）。
-- **bash 沙箱**：Linux 侧走 Landlock（`@deepseek-ai/node-addon-system-linux-*`）。首次运行请确认
-  内核 ≥ 5.13，否则沙箱策略会退化，需要按提示调整策略配置。
-- **托盘**：Linux 和 Windows 都保留系统托盘入口。Linux 使用随 deb 分发的
-  `tray.png`，关闭最后一个窗口后应用和 Host 继续运行，可从托盘重新显示窗口；
-  显式选择退出才会结束进程。若桌面环境不显示 StatusNotifier 图标，仍可通过再次启动
-  或应用菜单恢复窗口。
-- **自动更新**：官方 feed 只有 `mac-arm64` / `mac-x64` / `win-x64`。Linux deb 不使用应用内自动更新，
-  通过发行版包更新流程安装新版本。
-  另外 **Linux 下的"强制更新 policy"是惰性的**：共享身份模型与 `x-client-platform`
-  只有 `web`/`darwin`/`win32`，没有 Linux 取值，因此补丁让 Linux 显式跳过整套 policy
-  （不构造强制更新窗口、不检查）；manifest 里仍带着 `dshMandatoryUpdatePolicy` 也不会拦启动。
-- **CLI 通过 deb 安装**：包安装时把 `dsh` 命令放入用户 PATH。
-- **平台身份上报**：Linux 打包版向 DeepSeek Platform 上报的桌面身份沿用 macOS 分支
-  （`x-client-platform: darwin`）。原因：共享账号包只定义了 `darwin`/`win32`，省略则退化成
-  `web`。这会让服务端把你的客户端当成 macOS 客户端——若在意统计/服务端策略，需要先在上游
-  共享包里定义 Linux 身份再改这一处。
-- **安装器元数据**：Linux 可执行名使用 Debian 兼容的 `deepseek-harness`，展示名称仍为
-  `DeepSeek Harness`；deb 的 `maintainer` 目前是 `DeepSeek Harness` 占位，建议换成你自己。
-- **两处已知观感差异**：welcome 窗口的标题栏配色只在创建时跟随系统主题（Linux 没有 Windows 的
-  palette 通道）；`<html data-windows-titlebar>` 这个属性名沿用了 Windows 叫法（改名会牵动
-  packages/client 的 CSS 与测试，故保留）。
-- **Linux 打包跳过了一项冒烟**：`smoke-packaged-runtime.ts` 只认 mac/win 的应用布局，
-  补丁对 Linux 显式跳过它（`afterPack` 里的 `verifyDesktopRuntime` 仍会校验打包运行时）。
-
-## 6. 后续（本补丁集未做）
-
-- `linux-arm64` 目标（脚本结构与 Linux x64 相同，主要是原生包与 Node/Python 归档换架构）。
-- 自建更新 feed 的完整流水线（签名不需要，但需要静态托管与 `latest-linux.yml` 生成）。
-- 桌面环境的个性化适配：GNOME/KDE 下的窗口控件位置、Wayland 下的全局快捷键差异。
-- `smoke-packaged-runtime` 的 Linux（deb）布局；`desktop-toolchain-preflight` 目前
-  对 Linux 复用通用探测（tar 等），未加 deb/ 专用工具探测。
-- Linux 侧新增测试：CLI launcher 的 Linux fixture 已补；PATH 提示文案与 `~/.local/bin`
-  不在 PATH 时的警告未做。
-
-## 7. 本补丁集仍未验证什么
-
-本机已经完成 Linux x64 编译、runtime 准备、deb 打包和基础启动验证；ubuntu-24.04 CI
-另外把 **deb 安装/运行/卸载**、** 无 FUSE 启动**和**桌面测试套件基线**也跑完了。
-以下项目仍需要在目标桌面环境上确认：
-
-- 桌面环境相关的窗口控件观感；
-- 托盘/通知等在真实桌面会话里的表现（CI 只覆盖打包后的运行时，不覆盖正在运行的桌面）。
-
-已在 CI 中确认：安装 deb 后 `xdg-mime query default x-scheme-handler/dsh` 返回
-`deepseek-harness.desktop`，`/usr/bin/deepseek-harness` 经 `update-alternatives` 指向
-`/opt/DeepSeek Harness/deepseek-harness`，命令管理器装出的 `~/.local/bin/dsh` 可直接跑
-`dsh --version`（输出 `0.2.0-rc.2`），卸载后无残留。桌面测试套件在 Linux 上
-**128 个文件 123 个通过**（1357 passed / 58 skipped），唯一失败的
-`apps/desktop/tests/macos-notarization-proxy.spec.ts` 守的是 macOS 专属功能
-（`proxy recovery requires macOS`），其 `flock` 插件在 Linux 上不构建 —— 属预期的基线差异。
-
-**上游自己的 Linux 门禁**（`pnpm run check:ci:linux-primary`，run `37042752808`；串行 + 装好
-Playwright 浏览器）：打过补丁 78/80 通过，未打补丁的上游 tag 同样设置下 79/80。剩下两项都不是
-本补丁集引入的：
-
-- `web browser snapshot`：在**未打补丁**的 tag 上同样失败 —— 浏览器装上了，但 runner 缺它们依赖的
-  系统库（`Host system is missing dependencies to run browsers`）。
-- `scripts/persistence-schema.spec.ts` 里 1 个 flaky 用例（该文件本补丁集从未改动）：基线那轮通过，
-  多次运行的失败数在 0/1/8 之间波动。
-
-`patches/0012` 修掉了其中**属于我们**的两处门禁失败：4 个 oxlint 风格错误（单引号、内联类型分号）
-和 `apps/desktop/LINUX.md` 里的 commit-hash 引用（`verify-repository-references` 只接受 tag/长期链接）。
-
-**沙箱与 agent 工具调用**（同样在 CI 里真实执行）：
-
-- 沙箱两条腿分别**真跑**（不是自跳过）：bwrap 腿 2 个文件通过、Landlock 腿 2 个文件通过 —— Landlock
-  用例会强制关掉 bwrap 档位，所以每条腿各自证明一种机制。
-- 无凭据 agent 回合：`apps/cli/tests/profiles/headless/tests/keyless-smoke.e2e.ts` 启动**真 Loader**、
-  跑**生产 bash 工具**，断言 `tool/call → tool/result`（`CLI_TOOL_ROUND_TRIP`）并把回合以 zstd JSONL
-  落盘。
-- 打包链自带的运行时冒烟另外覆盖了：PTY、FFI(koffi)、sharp、ripgrep、glob、随包 pnpm 与 Python，
-  以及把 `PATH` 清空后用随包 Office 引擎做真实的 DOCX/XLSX/PPTX→PDF 转换。
-
-**真桌面会话**（`ci/desktop-session.sh`，run `37089025040`：Xvfb + openbox + dbus session，
-驱动**已安装的 deb**）：
-
-- 窗口**真的被创建并映射**（`DeepSeek Harness`，1288x824；另有 10x10 的托盘辅助窗口被显式排除）；
-- **关掉最后一个窗口不会结束应用**（mac 一致性），进程与 Host 继续存活，Host 端点仍在应答；
-- `xdg-mime query default x-scheme-handler/dsh` → `deepseek-harness.desktop`，
-  用 `gio launch` 以 `dsh://open` 激活该条目时**窗口被唤回**；
-- 之后的普通启动被单实例锁路由到运行实例，不会新起第二个进程。
-
-这个"关窗→唤回"循环**两条路径都已修好**：`dsh://` 激活路径由 `patches/0013` 修复（激活要求窗口时，
-若重建后的窗口仍是隐藏状态就把它显示出来），已于 run `37491323328` 的三处 `ci/desktop-session.sh`
-会话复验成功（均报告 `the dsh:// activation brought the window back`）；**普通第二次启动路径**由
-`patches/0014` 修复——它收窄了 `focusPrimaryWindow` 里的 early-return，让单实例锁路由回来的二次启动
-把窗口重新显示，而不是只剩 10x10 托盘窗口。`ci/desktop-session.sh` 对两条路径都做断言，窗口若找不回
-会让该 run 失败（见下"待CI 复验"）。
-
-**真实桌面已确认**：在 Xfce/X11 桌面会话上针对已安装的 `…linux.3` deb 实测，两条路径都通过，其中
-普通二次启动连跑三轮均成功唤回窗口。CI 的 headless（Xvfb）环境从未把第二条断言报绿——那是headless
-环境的性质，不是补丁的问题。
-
-**Linux 上的托盘此前是缺失的**：上游 `main.ts` 把 `DesktopTray` 整个包在 `process.platform === 'win32'`
-里，Linux 上从不创建托盘。于是"关掉最后一个窗口后应用继续驻留"这条设计在没有托盘的系统上等同于
-"进程活着但无法唤回"。`patches/0016` 在 Linux 上启用托盘，并随包投放 `tray.png`（StatusNotifier 面板
-按主题自选尺寸，不能用 Windows 的多尺寸 ICO）。同一补丁还修了 dock 上的问号图标：
-`StartupWMClass` 原本由 `productName` 推导成 `DeepSeek Harness`，而窗口实际报告的 `WM_CLASS` 是
-`deepseek-ai-dsh-desktop`，面板匹配不上就显示问号。
-
-本次验证覆盖的运行时检查与仍建议确认的项目（标 ✅ 的在上述 ubuntu-24.04 CI 中已确认）：
-
-1. ✅ `@electron/get` 拉到的 `electron-v44-linux-x64.zip` 解包后，根目录二进制是否确实叫 `electron`
-   （`prepare-runtime.ts` 的 Linux 分支按此假设；改名只影响这一处）。
-2. ✅ `pnpm install --prod` 之后，Linux 运行时树里确实有 `@deepseek-ai/libreoffice-kit-wasm`、
-   `node-addon-system-linux-x64`、`koffi-linux-x64`、`sharp-linux-x64`、`ripgrep-linux-x64`、
-   `sherpa-onnx-linux-x64`，且没有 darwin/win32 残留（`resources/runtime/pnpm` 里 pnpm 自带的
-   跨平台 vendored 文件除外 —— 已发布的 macOS 版里同样存在）。
-3. ✅ `prepare:dsh` 的 `runtime:materialize-modules` 之后，WASM 引擎的 `prebuilds.json` 是否在位，
-   以及 `officePackageDirectories` 是否把 `libreoffice-kit-wasm` 目录正确加进 `asarUnpack`。
-4. `~/.local/bin` 是否在你的 PATH 里（不在的话装上也不会生效，本期不额外提示）。
-5. 桌面测试套件：`cli-launcher.spec.ts` 等文件原本按"非 win32 即 darwin"搭 fixture，仓库也从未把
-   Linux 当发布目标，所以在 Linux 主机上跑测试**可能存在基线失败**。建议先在未打补丁的 tag 上跑一遍
-   留基线，再对比补丁后的失败集合。
-
-两条与冒烟直接相关的结论（都是首轮 CI 暴露、已修）：
-
-- 仓库级 `pnpm run typecheck` 在 Linux 上首次真跑就失败：`apps/desktop/tests/installer-packaging.spec.ts`
-  第 88–90 行三处 `TS2339`（`DesktopElectronBuilderConfig` 上没有 `linux` / `deb`）。
-  手写声明 `apps/desktop/electron-builder.config.d.mts` 没跟着 Linux 目标扩展，`patches/0009` 补上后通过。
-- dsh payload **在 `app.asar` 内部**（`asarUnpack` 只放 `.node`/`.so`、ripgrep、libreoffice-kit、
-  landlock-run）。因此**不能用 shell 的 `test -f` 去戳 `app.asar/dsh/...`**，那必然报缺失；
-  正确做法是把 asar 路径交给随包的 Electron（它给 `fs` 打了 asar 补丁），
-  `ELECTRON_RUN_AS_NODE=1 <launcher> --expose-internals <app.asar>/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js --version`
-  在 ubuntu-24.04 上输出 `0.2.0-rc.2`、退出码 0。
+The upstream gate tolerates only three explicitly enumerated coverage races; other failures remain failures. This is not a general coverage exemption. Screenshots or a headless startup do not establish real desktop focus, file dragging, keyring lifecycle or all compositor combinations. Record the package checksum, source commit, run, desktop/compositor and exact exercised behavior for each manual result.

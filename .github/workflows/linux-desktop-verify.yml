@@ -74,7 +74,9 @@ on:
       - 'apply.sh'
       - 'verify.sh'
       - 'ci/**'
-      - '.github/workflows/**'
+      - '.github/workflows/linux-desktop-verify.yml'
+      - '.github/workflows/publish-linux-desktop.yml'
+      - '.github/workflows/upstream-sync-check.yml'
   push:
     branches: [main]
     paths:
@@ -141,14 +143,17 @@ jobs:
           pnpm -v
           git --version
 
+      - name: Check SCNet setup audit acceptance and rejection
+        run: node --test ci/scnet-setup-audit.test.mjs
+
       - name: Clone upstream and apply the patch series
         run: |
           ./apply.sh "$UPSTREAM_DIR"
           cd "$UPSTREAM_DIR"
-          echo "== applied commits =="
-          git log --oneline "$BASE_TAG..HEAD"
+          echo "== staged patch summary =="
+          git diff --cached --stat
           echo "== patched tree hash (informational) =="
-          git rev-parse "HEAD^{tree}"
+          git write-tree
           echo "== required local env file =="
           test -f apps/desktop/.env.linux && echo "apps/desktop/.env.linux present"
 
@@ -177,6 +182,8 @@ jobs:
             apps/desktop/tests/mandatory-update-window.spec.ts \
             apps/desktop/tests/main-startup.spec.ts \
             apps/desktop/tests/keyboard.spec.ts \
+            apps/desktop/tests/scnet-setup.spec.ts \
+            apps/desktop/tests/installer-packaging.spec.ts \
             apps/desktop/tests/harness-update.spec.ts \
             apps/desktop/tests/scnet-diagnostics-window.spec.ts
 
@@ -216,6 +223,7 @@ jobs:
             --deb "${debs[0]}" \
             --package-set "apps/desktop/.desktop-build/targets/linux-x64/package-set" \
             --expected-version 0.6.13 \
+            --require-setup true \
             --output "$GITHUB_WORKSPACE/scnet-release-audit.json"
           sudo apt-get update -q
           sudo apt-get install -yq xvfb openbox xdotool dbus-x11 imagemagick libglib2.0-bin
@@ -763,4 +771,3 @@ jobs:
             weston.log
             wayland-app.log
           if-no-files-found: warn
-
