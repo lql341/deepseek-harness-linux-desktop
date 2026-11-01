@@ -25,7 +25,7 @@ Without `--tag`, the script uses GitHub's latest non-prerelease endpoint; it may
 | Window and background work | Custom caption, optional native frame, tray/Show Window, and tasks kept running after the last window closes |
 | System integration | `dsh` launcher, single-instance routing and registered `dsh://` links |
 | Runtime | Linux target payload and bundled WASM Office conversion |
-| Updates | Settings-owned check/update actions, verified Linux package download and PolicyKit installation; client and Harness are delivered together |
+| Updates | Settings- and menu-owned check/update actions, verified Linux package download and PolicyKit installation; client and Harness are delivered together |
 | SCNet | Fixed offline Bundle/Skill, default Desktop profile activation, preserved explicit disable/custom profile state, and local diagnostics |
 | Developer tools | Visible English/Chinese menu and native shortcuts including F12 |
 | Recovery | Retrieve a saved crash report, including delayed writes and visible reveal failures |

@@ -50,7 +50,7 @@ Artifacts are under `$TARGET_DIR`: `artifacts/` contains the deb/unpacked app, `
 | Single instance | Both plain second launch and `dsh://open` restore the window without another Host |
 | CLI | Install the `dsh` command on PATH; report/back up a foreign launcher; execute it after installing the deb |
 | Office | Convert representative DOCX/XLSX/PPTX through the bundled WASM engine |
-| Updates | Check in settings; cancel safely; verify download, PolicyKit refusal/failure, running-task confirmation and restart |
+| Updates | Check in settings and from the application menu; cancel safely; verify download, PolicyKit refusal/failure, running-task confirmation and restart |
 | SCNet | Bundle/Skill available offline; default, disabled and custom profile states preserved; diagnostics expose no credentials |
 | Developer tools | English/Chinese menu and F12/native shortcuts reach the intended product document |
 | Recovery | Saved, delayed and failed crash reports are distinguishable; retrieval does not restart the app |
