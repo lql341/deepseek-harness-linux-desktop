@@ -2,8 +2,8 @@
 
 > 本文档对应的 Linux x64 路径已在本机实际编译、打包并启动验证，发布产物为 deb。
 > 另在 **ubuntu-24.04 与 Debian 13（trixie）** 的 GitHub Actions（workflow
-> `Linux desktop verification`）上完整跑通。当前仓库已固化为 **1 个最终迁移 diff**；
-> 旧的 30 个主题补丁保存在 `patches-legacy-dsh-v0.2.0-rc.2/` 供追溯；
+> `Linux desktop verification`）上完整跑通。当前仓库的 `patches/` 包含 **6 个补丁**；
+> 补丁文件名保留原始生成基线，实际构建基线由 `ci/upstream-base-tag` 统一指定；
 > 下述 run 是历史验证记录，完整门禁集
 > （run `37411910000`，2026-10-06，head `d70585e`）：8 个 job 中 7 个绿，涵盖
 > `install + typecheck + package preflight`、打包、Debian 13、deb 升级路径与硬化启动、
@@ -13,7 +13,7 @@
 > `pnpm run typecheck` → 应用构建 → `check:package` → `package:linux:x64:dir` →
 > 产物体检 → 无头 runtime 冒烟 → Xvfb GUI 冒烟 → deb。
 
-> 当前基线：上游 `deepseek-ai/deepseek-harness` tag **`dsh-v0.2.1-rc.2`**。
+> 当前基线：上游 `deepseek-ai/deepseek-harness` tag **`dsh-v0.2.1-rc.5`**。
 > 目标：在 Linux x64 上得到与 macOS 版**行为一致**的 Electron 桌面壳，产物为 deb。
 > 性质：非官方补丁集。上游 README 明确写有 “Linux is not a supported Desktop release target”，
 > 且打包脚本的测试断言 `linux-x64` 必须被拒绝 —— 本补丁集就是把这层限制打开并把 Linux 路径补齐。
@@ -42,7 +42,7 @@
 ```sh
 git clone https://github.com/deepseek-ai/deepseek-harness.git
 cd deepseek-harness
-git checkout dsh-v0.2.1-rc.2
+git checkout dsh-v0.2.1-rc.5
 git checkout -b linux-desktop
 git apply --3way /path/to/patches/*.patch
 cp apps/desktop/.env.linux.example apps/desktop/.env.linux   # 打包必需，先按默认值即可

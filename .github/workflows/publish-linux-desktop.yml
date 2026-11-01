@@ -75,7 +75,7 @@ jobs:
         # Published in the release notes so a reader can confirm which tree produced the bytes.
         run: |
           set -euo pipefail
-          HASH=$(git -C "$UPSTREAM_DIR" rev-parse 'HEAD^{tree}')
+          HASH=$(git -C "$UPSTREAM_DIR" write-tree)
           echo "PATCHED_TREE=$HASH" >> "$GITHUB_ENV"
           echo "patched tree: $HASH"
 
@@ -175,7 +175,9 @@ jobs:
             echo
             echo '```sh'
             echo "git clone https://github.com/$GITHUB_REPOSITORY.git"
-            echo "sh apply.sh && git -C deepseek-harness rev-parse 'HEAD^{tree}'"
+            echo "cd ${GITHUB_REPOSITORY#*/}"
+            echo "git checkout $GITHUB_SHA"
+            echo "sh apply.sh && git -C deepseek-harness write-tree"
             echo "#   expect: $PATCHED_TREE"
             echo '```'
             echo
@@ -209,8 +211,9 @@ jobs:
           ARGS=(--title "DeepSeek Harness Linux Desktop $RELEASE_TAG"
                 --notes-file "$GITHUB_WORKSPACE/RELEASE_NOTES.md")
           [ "${{ inputs.draft }}" = "true" ] && ARGS+=(--draft)
+          case "$RELEASE_TAG" in *-rc.*|*-alpha.*|*-beta.*) ARGS+=(--prerelease);; esac
           gh release create "$RELEASE_TAG" "$UPSTREAM_DIR"/publish/* \
-            -R "$GITHUB_REPOSITORY" "${ARGS[@]}"
+            -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" "${ARGS[@]}"
 
       - name: Summary
         if: always()
