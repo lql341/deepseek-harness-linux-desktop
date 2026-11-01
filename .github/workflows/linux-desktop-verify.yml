@@ -176,6 +176,7 @@ jobs:
             apps/desktop/tests/update-dialog.spec.ts \
             apps/desktop/tests/mandatory-update-window.spec.ts \
             apps/desktop/tests/main-startup.spec.ts \
+            apps/desktop/tests/keyboard.spec.ts \
             apps/desktop/tests/harness-update.spec.ts \
             apps/desktop/tests/scnet-diagnostics-window.spec.ts
 

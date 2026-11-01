@@ -976,6 +976,51 @@ index 7ab4efd..80f75c2 100644
 +  expect(operations.writeReport).toHaveBeenCalledExactlyOnceWith(original, 'host')
 +  expect(operations.revealReport).toHaveBeenCalledExactlyOnceWith(REPORT_PATH)
 +})
+diff --git a/apps/desktop/tests/keyboard.spec.ts b/apps/desktop/tests/keyboard.spec.ts
+index 3d435e5..e642640 100644
+--- a/apps/desktop/tests/keyboard.spec.ts
++++ b/apps/desktop/tests/keyboard.spec.ts
+@@ -18,17 +18,21 @@ const overlays = await vi.hoisted(async () => {
+   const { EventEmitter } = await import('node:events')
+   class Window extends EventEmitter {
+     private destroyed = false
+-    readonly webContents = { setWindowOpenHandler: vi.fn() }
++    readonly webContents = Object.assign(new EventEmitter(), { setWindowOpenHandler: vi.fn(),
++      focus: vi.fn(), isDestroyed: () => this.destroyed, loadURL: vi.fn(async () => {}),
++      close: () => { this.destroyed = true; this.webContents.emit('destroyed') },
++    })
+     readonly focus = vi.fn()
+     readonly show = vi.fn()
+     readonly setBounds = vi.fn()
++    readonly setBackgroundColor = vi.fn()
+     setMenu() {}
+     isDestroyed() { return this.destroyed }
+-    destroy() { this.destroyed = true; this.emit('closed') }
++    destroy() { this.destroyed = true; this.webContents.emit('destroyed') }
+   }
+   return { Window }
+ })
+-vi.mock('electron', () => ({ ipcMain: ipc, BrowserWindow: overlays.Window, app: { isPackaged: true }, session: { fromPartition: () => ({
++vi.mock('electron', () => ({ ipcMain: ipc, BrowserWindow: overlays.Window, WebContentsView: overlays.Window, app: { isPackaged: true }, session: { fromPartition: () => ({
+   setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn(), setDevicePermissionHandler: vi.fn(),
+   setDisplayMediaRequestHandler: vi.fn(), on: vi.fn(), webRequest: { onBeforeRequest: vi.fn() },
+ }) } }))
+@@ -108,12 +112,13 @@ function updateOverlayFixture(f: Awaited<ReturnType<typeof fixture>>) {
+   onTestFinished(() => { platform.mockRestore() })
+   const parent: WindowFixture & Pick<BrowserWindow, 'getContentBounds'> = Object.assign(f.window, {
+     getContentBounds: () => ({ x: 0, y: 0, width: 900, height: 650 }),
++    isFullScreen: () => false,
++    contentView: { addChildView: vi.fn(), removeChildView: vi.fn() },
+   })
+   Object.assign(f.contents, { insertCSS: vi.fn(async () => 'blur'), removeInsertedCSS: vi.fn(async () => {}) })
+   return () => {
+-    const overlay = f.updateOverlays.create(parent as BrowserWindow, 'test-overlay-preload', 'Update', false)
++    const overlay = f.updateOverlays.create(parent as BrowserWindow, 'test-overlay-preload')
+     onTestFinished(() => { if (!overlay.isDestroyed()) overlay.destroy() })
+-    expect(vi.spyOn(overlay, 'show')).not.toHaveBeenCalled()
+     return overlay
+   }
+ }
 diff --git a/apps/desktop/tests/main-startup.spec.ts b/apps/desktop/tests/main-startup.spec.ts
 index c7c14f6..829454d 100644
 --- a/apps/desktop/tests/main-startup.spec.ts
@@ -1962,3 +2007,15 @@ index 56e49df..c61c2fa 100644
 +  expect(f.parent.listenerCount('enter-full-screen')).toBe(0)
 +  expect(f.parent.listenerCount('leave-full-screen')).toBe(0)
  })
+diff --git a/tsconfig.client.json b/tsconfig.client.json
+index e8bb0d4..d3cd330 100644
+--- a/tsconfig.client.json
++++ b/tsconfig.client.json
+@@ -21,6 +21,7 @@
+     "apps/desktop/src/browser-guests.ts",
+     "apps/desktop/src/ipc.ts",
+     "apps/desktop/src/update-overlay.ts",
++    "apps/desktop/src/windows-layout.ts",
+     "apps/desktop/tests/**/*.client.spec.tsx",
+     // Source-subpath test imports can arrive through workspace links whose
+     // realpath semantics vary by host. Load package CSS declarations directly.
