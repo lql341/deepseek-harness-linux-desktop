@@ -2668,3 +2668,29 @@ index f083f9b..3365f12 100644
        "@deepseek-ai/dsh-plugin-manager/registry": ["./packages/boot/plugin-manager/src/registry.ts"],
        "@deepseek-ai/dsh-plugin-manager/operations": ["./packages/boot/plugin-manager/src/operations.ts"],
        "@deepseek-ai/dsh-plugin-manager/tools": ["./packages/boot/plugin-manager/src/tools.ts"],
+diff --git a/docs/config-catalog.md b/docs/config-catalog.md
+index 875563ce39..ff4dc619f6 100644
+--- a/docs/config-catalog.md
++++ b/docs/config-catalog.md
+@@ -2413,7 +2413,7 @@ export interface PlanModeConfig {
+ ## `@deepseek-ai/dsh-plugin-manager`
+ 
+ - `inject`: `loader` · `profileContext`
+-- `source`: [`packages/boot/plugin-manager/src/index.ts:42`](../packages/boot/plugin-manager/src/index.ts)
++- `source`: [`packages/boot/plugin-manager/src/index.ts:43`](../packages/boot/plugin-manager/src/index.ts)
+ 
+ ```ts config-catalog
+ /** The pnpm executable, registries, and limits for diagnostics, lookups and connection checks. */
+diff --git a/docs/config-catalog.zh.md b/docs/config-catalog.zh.md
+index 52b98e69d8..8e9af225f1 100644
+--- a/docs/config-catalog.zh.md
++++ b/docs/config-catalog.zh.md
+@@ -2415,7 +2415,7 @@ export interface PlanModeConfig {
+ ## `@deepseek-ai/dsh-plugin-manager`
+ 
+ - `inject`: `loader` · `profileContext`
+-- `source`: [`packages/boot/plugin-manager/src/index.ts:42`](../packages/boot/plugin-manager/src/index.ts)
++- `source`: [`packages/boot/plugin-manager/src/index.ts:43`](../packages/boot/plugin-manager/src/index.ts)
+ 
+ ```ts config-catalog
+ /** The pnpm executable, registries, and limits for diagnostics, lookups and connection checks. */
