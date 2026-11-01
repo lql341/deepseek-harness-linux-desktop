@@ -8,15 +8,15 @@
 
 ## 安装已发布的包
 
-已验证的公开预发布版是 [v0.2.1-rc.5-linux.1](https://github.com/lql341/deepseek-harness-linux-desktop/releases/tag/v0.2.1-rc.5-linux.1)。可下载 deb 和 `SHA256SUMS`，或使用下方安装器。它校验 checksum 和 amd64 架构后，调用 apt 重新安装；安装主机需要 curl、Node、sha256sum、dpkg 和 sudo/apt。
+当前预发布版是 [v0.2.1-rc.5-linux.2](https://github.com/lql341/deepseek-harness-linux-desktop/releases/tag/v0.2.1-rc.5-linux.2)，第一个由完整补丁系列构建、也是第一个带签名清单的版本。可下载 deb、`SHA256SUMS` 和 `SHA256SUMS.sig`，或使用下方安装器。它校验 checksum 和 amd64 架构后，调用 apt 重新安装；安装主机需要 curl、Node、sha256sum、dpkg 和 sudo/apt。可用 `node ci/verify-release-signature.mjs --manifest SHA256SUMS` 校验签名清单。
 
 ```sh
 git clone https://github.com/lql341/deepseek-harness-linux-desktop.git
 cd deepseek-harness-linux-desktop
-bash ci/install-latest-linux.sh --tag v0.2.1-rc.5-linux.1
+bash ci/install-latest-linux.sh --tag v0.2.1-rc.5-linux.2
 ```
 
-不传 `--tag` 时，脚本使用 GitHub 的最新非预发布版本接口，因此可能选到较旧的稳定版。main 源码、CI 产物和公开 release 是不同交付物。上述 release **不包含**后来回移的桌面功能，也不包含下文的 SCNet 配置修复。
+不传 `--tag` 时，脚本使用 GitHub 的最新非预发布版本接口，因此可能选到较旧的稳定版。main 源码、CI 产物和公开 release 是不同交付物。上述 release 包含补丁 0001 到 0011，包括 SCNet 配置修复、插件操作历史和签名更新链。
 
 ## 桌面能力
 
@@ -33,8 +33,9 @@ bash ci/install-latest-linux.sh --tag v0.2.1-rc.5-linux.1
 | SCNet 配置修复 | 外部 Python 使用解包后的文件，终端保留完成/错误信息，启动失败会拒绝该动作 |
 | 插件历史 | 关联管理事件、有界本地记录和隔离报告 Worker，用于崩溃诊断 |
 | Linux 菜单动作 | “检查更新”走发布包 feed 并在安装前确认；“管理 dsh 命令”可用 |
+| 发布信任 | `SHA256SUMS` 带 Ed25519 签名，特权安装前校验；发布的支持下限会报告“必须更新” |
 
-最后六行描述当前源码补丁。证据与剩余差异见[桌面功能跟进](docs/DESKTOP-FOLLOWUP.zh-CN.md)。真实 SCNet OAuth2 登录仍等待正式服务合同和沙盒凭证；本地诊断和 Bundle 已安装不能证明已获得账户授权。
+最后七行描述当前源码补丁。证据与剩余差异见[桌面功能跟进](docs/DESKTOP-FOLLOWUP.zh-CN.md)。真实 SCNet OAuth2 登录仍等待正式服务合同和沙盒凭证；本地诊断和 Bundle 已安装不能证明已获得账户授权。
 
 ## 从源码构建
 

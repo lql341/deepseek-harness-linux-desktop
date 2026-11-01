@@ -8,15 +8,15 @@ The default upstream base is read from [ci/upstream-base-tag](ci/upstream-base-t
 
 ## Install a published package
 
-The verified public prerelease is [v0.2.1-rc.5-linux.1](https://github.com/lql341/deepseek-harness-linux-desktop/releases/tag/v0.2.1-rc.5-linux.1). Download its deb and `SHA256SUMS`, or use the installer below. The installer checks the checksum and amd64 architecture before asking apt to reinstall the package. It needs curl, Node, sha256sum, dpkg and sudo/apt on the installation host.
+The current prerelease is [v0.2.1-rc.5-linux.2](https://github.com/lql341/deepseek-harness-linux-desktop/releases/tag/v0.2.1-rc.5-linux.2), the first release built from the full patch series and the first with a signed manifest. Download its deb, `SHA256SUMS` and `SHA256SUMS.sig`, or use the installer below. The installer checks the checksum and amd64 architecture before asking apt to reinstall the package. It needs curl, Node, sha256sum, dpkg and sudo/apt on the installation host. Verify the signed manifest with `node ci/verify-release-signature.mjs --manifest SHA256SUMS`.
 
 ```sh
 git clone https://github.com/lql341/deepseek-harness-linux-desktop.git
 cd deepseek-harness-linux-desktop
-bash ci/install-latest-linux.sh --tag v0.2.1-rc.5-linux.1
+bash ci/install-latest-linux.sh --tag v0.2.1-rc.5-linux.2
 ```
 
-Without `--tag`, the script uses GitHub's latest non-prerelease endpoint; it may select an older stable release. Source changes on main and CI artifacts are separate from published releases. The release above does **not** contain the later desktop backports or the SCNet setup repair described below.
+Without `--tag`, the script uses GitHub's latest non-prerelease endpoint; it may select an older stable release. Source changes on main and CI artifacts are separate from published releases. The release above contains patches 0001 to 0011, including the SCNet setup repair, the plugin operation history and the signed update path.
 
 ## Desktop capabilities
 
@@ -33,8 +33,9 @@ Without `--tag`, the script uses GitHub's latest non-prerelease endpoint; it may
 | SCNet setup repair | External Python uses unpacked files; completion/errors remain visible in the terminal and spawn failures reject the action |
 | Plugin history | Correlated manager events, a bounded local journal and an isolated report Worker for crash diagnostics |
 | Linux menu actions | Check for Updates uses the release package feed and asks before installing; Manage dsh Command is available |
+| Release trust | `SHA256SUMS` carries an Ed25519 signature verified before a privileged install; a published support floor reports required updates |
 
-The final six rows describe the source patch series. See [desktop follow-up](docs/DESKTOP-FOLLOWUP.md) for evidence and remaining differences. Real SCNet OAuth2 login is still blocked on its formal service contract and sandbox credentials. Local diagnostics and an installed Bundle do not establish authorization.
+The final seven rows describe the source patch series. See [desktop follow-up](docs/DESKTOP-FOLLOWUP.md) for evidence and remaining differences. Real SCNet OAuth2 login is still blocked on its formal service contract and sandbox credentials. Local diagnostics and an installed Bundle do not establish authorization.
 
 ## Build from source
 
