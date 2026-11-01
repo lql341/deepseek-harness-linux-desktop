@@ -203,6 +203,15 @@ jobs:
             apps/desktop/tests/harness-update.spec.ts \
             apps/desktop/tests/scnet-diagnostics-window.spec.ts
 
+      - name: Validate upstream documentation and lint
+        working-directory: ${{ env.UPSTREAM_DIR }}
+        run: |
+          status=0
+          pnpm run test:docs || status=1
+          pnpm run doc-sync || status=1
+          pnpm run lint || status=1
+          exit "$status"
+
       - name: Build the desktop application
         working-directory: ${{ env.UPSTREAM_DIR }}
         run: |
