@@ -128,6 +128,7 @@ jobs:
             --deb "${debs[0]}" \
             --package-set "apps/desktop/.desktop-build/targets/linux-x64/package-set" \
             --expected-version 0.6.13 \
+            --require-setup true \
             --output "$GITHUB_WORKSPACE/scnet-release-audit.json"
           sudo apt-get update -q
           sudo apt-get install -yq xvfb openbox xdotool dbus-x11 imagemagick libglib2.0-bin
@@ -273,4 +274,3 @@ jobs:
             draft-release/SHA256SUMS
           if-no-files-found: error
           compression-level: 0
-

@@ -32,8 +32,8 @@ const PACKAGE_DIR = 'desktop-packages'
 function usage(message) {
   if (message) console.error(`error: ${message}`)
   console.error(`usage:
-  node ci/scnet-release-audit.mjs --deb <file.deb> [--package-set <dir>] [--expected-version <version>] [--output <evidence.json>]
-  node ci/scnet-release-audit.mjs --app <linux-unpacked> [--package-set <dir>] [--expected-version <version>] [--output <evidence.json>]`)
+  node ci/scnet-release-audit.mjs --deb <file.deb> [--package-set <dir>] [--expected-version <version>] [--output <evidence.json>] [--require-setup true]
+  node ci/scnet-release-audit.mjs --app <linux-unpacked> [--package-set <dir>] [--expected-version <version>] [--output <evidence.json>] [--require-setup true]`)
   process.exit(message ? 2 : 0)
 }
 
@@ -166,7 +166,7 @@ function sensitiveContentFindings(path, text) {
   return findings
 }
 
-function runtimeEvidence(appRoot, expectedVersion) {
+function runtimeEvidence(appRoot, expectedVersion, requireSetup) {
   const resources = join(appRoot, 'resources')
   const archive = join(resources, 'app.asar')
   assert(existsSync(archive), `artifact: missing ${archive}`)
@@ -236,12 +236,31 @@ function runtimeEvidence(appRoot, expectedVersion) {
   assert(forbiddenPaths.length === 0, `SCNet bundle: forbidden cache/generated paths: ${forbiddenPaths.join(', ')}`)
   assert(sensitive.length === 0, `SCNet bundle: sensitive content found:\n${sensitive.join('\n')}`)
 
+  let setup = { checked: false }
+  if (requireSetup) {
+    const physicalBundle = join(resources, 'app.asar.unpacked', 'dsh', 'node_modules', PACKAGE_NAME)
+    for (const archivedFile of files) {
+      const physicalFile = join(physicalBundle, relative(bundleRoot, archivedFile))
+      assert(existsSync(physicalFile) && sha256(physicalFile) === sha256(archivedFile),
+        `SCNet setup: external file missing or changed: ${relative(bundleRoot, archivedFile)}`)
+    }
+    const script = join(physicalBundle, 'skills', SKILL_NAME, 'scripts', 'scnet.py')
+    const help = spawnSync('python3', [script, '--help'], {
+      env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' }, encoding: 'utf8', timeout: 15_000,
+    })
+    if (help.error) throw help.error
+    assert(help.status === 0 && /usage:/iu.test(help.stdout),
+      `SCNet setup: external Python could not load the packaged wizard: ${help.stderr}`)
+    setup = { checked: true, physicalFiles: files.length, pythonHelp: true }
+  }
+
   return {
     archive: 'resources/app.asar',
     runtimeRelease: descriptor.release?.version,
     package: { name: bundleManifest.name, version: bundleManifest.version, license: bundleManifest.license },
     skill: { name: SKILL_NAME, version: expectedVersion },
     loopbackCallback: { present: true, exported: true },
+    setup,
     files: files.length,
     scannedTextFiles,
     forbiddenPaths: 0,
@@ -287,6 +306,7 @@ function runChild(options, appRoot, target) {
   ]
   if (options['package-set']) args.push('--package-set', resolve(options['package-set']))
   if (options.output) args.push('--output', resolve(options.output))
+  if (options['require-setup'] !== undefined) args.push('--require-setup', options['require-setup'])
   const result = spawnSync(runtime, args, {
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
     stdio: 'inherit',
@@ -299,7 +319,7 @@ function child(options) {
   const expectedVersion = options['expected-version'] ?? DEFAULT_VERSION
   const appRoot = resolve(options['child-app'])
   const packageSet = packageSetEvidence(options['package-set'], expectedVersion)
-  const runtime = runtimeEvidence(appRoot, expectedVersion)
+  const runtime = runtimeEvidence(appRoot, expectedVersion, options['require-setup'] === 'true')
   const evidence = {
     schemaVersion: 1,
     result: 'PASS',
@@ -319,9 +339,11 @@ function child(options) {
   console.log(`PASS: ${runtime.files} bundle files match the signed runtime descriptor`)
   console.log(`PASS: ${runtime.scannedTextFiles} text files contain no populated credentials or private endpoints`)
   console.log('PASS: no SCNet cache, __pycache__, or .pyc paths are present')
+  if (runtime.setup.checked) console.log('PASS: unpacked SCNet files match the archive and external Python loads the wizard')
 }
 
 const options = parseArgs(process.argv.slice(2))
+if (options['require-setup'] !== undefined && options['require-setup'] !== 'true') usage('--require-setup accepts only true')
 try {
   if (options['child-app']) {
     child(options)
