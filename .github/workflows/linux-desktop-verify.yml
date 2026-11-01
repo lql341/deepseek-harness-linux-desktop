@@ -170,6 +170,7 @@ jobs:
 
       - name: Validate generated diagnostic contracts and bilingual source documentation
         id: diagnostic-contracts
+        # Collect independent checks; the final step requires this original outcome to be success.
         continue-on-error: true
         working-directory: ${{ env.UPSTREAM_DIR }}
         run: bash "$GITHUB_WORKSPACE/ci/history-generated-check.sh"
@@ -202,6 +203,7 @@ jobs:
             apps/desktop-host/tests/operation-diagnostics.spec.ts \
             packages/boot/plugin-manager/tests/diagnostic.spec.ts \
             packages/boot/plugin-manager/tests/manager.spec.ts \
+            scripts/verify-repository-references.spec.ts \
             apps/desktop/tests/harness-update.spec.ts \
             apps/desktop/tests/scnet-diagnostics-window.spec.ts
 
