@@ -1,0 +1,1964 @@
+diff --git a/apps/desktop/src/fatal-recovery.ts b/apps/desktop/src/fatal-recovery.ts
+index 5a739b1..8bfe76a 100644
+--- a/apps/desktop/src/fatal-recovery.ts
++++ b/apps/desktop/src/fatal-recovery.ts
+@@ -12,10 +12,14 @@ interface RecoveryOperations {
+   disablePlugins(): Promise<void>
+   exit(): void
+   restart(): void
++  /** Reveal an existing report in the system file manager; reject if it is no longer available. */
++  revealReport(path: string): Promise<void>
+   /** Persist the complete diagnostic; resolves with the file path, or `undefined` when nothing was written. */
+   writeReport(error: unknown, source: CrashReportSource): Promise<string | undefined>
+ }
+ 
++type ReportState = { kind: 'pending' } | { kind: 'failed' } | { kind: 'ready'; path: string }
++
+ /** Upper bound on waiting for the crash report before the dialog opens. */
+ export const CRASH_REPORT_WAIT_MS = 1_000
+ 
+@@ -25,28 +29,28 @@ const DETAIL_BUDGET = 1200
+ /** Tail lines of the error kept in the dialog; the report file holds the rest. */
+ const DETAIL_TAIL_LINES = 8
+ 
+-/**
+- * Compose the dialog detail: the error's last lines (prefixed by the
+- * shortening notice when they are not the whole error), then the report path
+- * when one was written, then the reinstall advice. The report line does not
+- * depend on shortening: a short error that was persisted names its file too.
++/** At most eight error-tail lines; status, advice and truncation notice share the detail character budget.
++ * The message heading has its own field.
+  */
+-function dialogDetail(error: string, messages: DesktopMessages, reportPath: string | undefined): string {
++function dialogDetail(error: string, messages: DesktopMessages, reportState: ReportState): string {
+   const advice = `\n\n${messages.startupReinstallAdvice}`
+-  const report = reportLine(messages, reportPath)
++  const report = reportLine(messages, reportState)
+   const tail = error.split(/\r\n|[\n\r\u2028\u2029]/u).slice(-DETAIL_TAIL_LINES).join('\n')
+   const budget = DETAIL_BUDGET - advice.length - report.length - messages.diagnosticTruncated.length - 1
+   const shortened = tail.slice(-budget).replace(/^[\uDC00-\uDFFF]/u, '')
+   return `${shortened === error ? error : `${messages.diagnosticTruncated}\n${shortened}`}${report}${advice}`
+ }
+ 
+-function reportLine(messages: DesktopMessages, reportPath: string | undefined): string {
+-  return reportPath === undefined ? '' : `\n${formatDesktopMessage(messages.reportWrittenTo, { path: reportPath })}`
++function reportLine(messages: DesktopMessages, state: ReportState): string {
++  if (state.kind === 'pending') return `\n${messages.reportPending}`
++  if (state.kind === 'failed') return `\n${messages.reportUnavailable}`
++  return `\n${formatDesktopMessage(messages.reportWrittenTo, { path: state.path })}`
+ }
+ 
+ /** Deduplicates fatal reports while keeping explicit recovery-operation failures actionable. */
+ export class DesktopFatalRecovery {
+   private reported = false
++  private reportState: ReportState = { kind: 'pending' }
+ 
+   /** @param operations - Native presentation, report persistence, and application-owned shutdown operations. */
+   constructor(private readonly operations: RecoveryOperations) {}
+@@ -57,7 +61,7 @@ export class DesktopFatalRecovery {
+   /**
+    * Show the first fatal error; later reports cannot replace it or open another dialog.
+    * The crash report is written first, bounded by {@link CRASH_REPORT_WAIT_MS}, so the dialog can name it;
+-   * a slow or failed write shows the dialog without a path.
++   * a slow or failed write shows its status. Retrieving a report rechecks the same write.
+    * @param error - Fatal failure, including nested diagnostic causes.
+    * @param source - Where the failure surfaced, recorded in the report.
+    * @returns Completion of the user's recovery action; duplicate reports resolve immediately.
+@@ -66,25 +70,42 @@ export class DesktopFatalRecovery {
+     if (this.reported) return
+     this.reported = true
+     const messages = this.operations.messages()
+-    const reportPath = await this.persist(error, source)
++    const report = this.persist(error, source)
++    await this.waitForReport(report)
+     let detail = desktopErrorState(error).message
+     let message = messages.fatalSummary
+     for (;;) {
+       const addressInUse = /\blisten EADDRINUSE\b/u.test(detail)
++      const buttons = addressInUse
++        ? [messages.exitApplication, messages.restartApplication]
++        : [messages.exitApplication, messages.restartApplication, messages.disableThirdPartyPlugins]
++      const reportButton = this.reportState.kind === 'failed' ? undefined : buttons.length
++      if (reportButton !== undefined) buttons.push(messages.getDiagnosticReport)
+       const { response } = await this.operations.show({
+         type: 'error',
+         title: messages.startupFailed,
+         message,
+         detail: addressInUse
+-          ? `${messages.startupAddressInUse}${reportLine(messages, reportPath)}`
+-          : dialogDetail(detail, messages, reportPath),
+-        buttons: addressInUse
+-          ? [messages.exitApplication, messages.restartApplication]
+-          : [messages.exitApplication, messages.restartApplication, messages.disableThirdPartyPlugins],
++          ? `${messages.startupAddressInUse}${reportLine(messages, this.reportState)}`
++          : dialogDetail(detail, messages, this.reportState),
++        buttons,
+         defaultId: 1,
+         cancelId: 0,
+         noLink: true,
+       })
++      if (response === reportButton) {
++        await this.waitForReport(report)
++        if (this.reportState.kind === 'ready') {
++          try {
++            await this.operations.revealReport(this.reportState.path)
++            message = messages.reportShareHint
++          } catch (failure) {
++            console.error('dsh desktop: could not reveal crash report', failure)
++            message = messages.reportRevealFailed
++          }
++        }
++        continue
++      }
+       if (response === 0) {
+         try { await this.operations.stop() } catch (failure) { console.error(failure) }
+         this.operations.exit()
+@@ -103,16 +124,23 @@ export class DesktopFatalRecovery {
+     }
+   }
+ 
+-  private async persist(error: unknown, source: CrashReportSource): Promise<string | undefined> {
+-    let timer: ReturnType<typeof setTimeout> | undefined
++  private async persist(error: unknown, source: CrashReportSource): Promise<void> {
+     try {
+-      return await Promise.race([
+-        this.operations.writeReport(error, source),
+-        new Promise<undefined>((resolve) => { timer = setTimeout(() => { resolve(undefined) }, CRASH_REPORT_WAIT_MS) }),
+-      ])
++      const path = await this.operations.writeReport(error, source)
++      this.reportState = path === undefined ? { kind: 'failed' } : { kind: 'ready', path }
+     } catch (failure) {
+       console.error('dsh desktop: crash report failed', failure)
+-      return undefined
++      this.reportState = { kind: 'failed' }
++    }
++  }
++
++  private async waitForReport(report: Promise<void>): Promise<void> {
++    let timer: ReturnType<typeof setTimeout> | undefined
++    try {
++      await Promise.race([
++        report,
++        new Promise<void>((resolve) => { timer = setTimeout(resolve, CRASH_REPORT_WAIT_MS) }),
++      ])
+     } finally {
+       clearTimeout(timer)
+     }
+diff --git a/apps/desktop/src/locale.ts b/apps/desktop/src/locale.ts
+index 9f12746..9c673d9 100644
+--- a/apps/desktop/src/locale.ts
++++ b/apps/desktop/src/locale.ts
+@@ -62,6 +62,12 @@ export const en = {
+   startupAddressInUse: 'Another DSH instance (such as dsh web or the desktop app) is running. They cannot start at the same time. Quit the other running DSH instance, then restart.',
+   diagnosticTruncated: '… Error details shortened.',
+   reportWrittenTo: 'Diagnostic report: {path}',
++  getDiagnosticReport: 'Get diagnostic report',
++  reportPending: 'The diagnostic report is still being saved. Choose Get diagnostic report to check again.',
++  reportUnavailable: 'The diagnostic report could not be saved. You can provide a screenshot of this dialog when requesting support.',
++  reportShareHint: 'The report location has been opened. Attach the selected file to your support ticket.',
++  reportRevealFailed: 'The report location could not be opened. Use the path below to find the file.',
++  toggleDevToolsMenu: 'Developer tools',
+   startupReinstallAdvice: 'If application files are missing or damaged, close the application and reinstall it. Your tasks are stored separately.',
+   exitApplication: 'Exit',
+   restartApplication: 'Restart',
+@@ -177,6 +183,8 @@ export const en = {
+   mandatoryPage: 'Download from the official website',
+   mandatoryCopy: 'Copy download link',
+   mandatoryPageFailed: 'Could not open the official download page. Copy the link and open it in your browser.',
++  mandatoryViewDownload: 'Open download page',
++  mandatoryViewPageFailed: 'Could not open the download page. Please try again.',
+   mandatoryActionFailed: 'The action failed. Please try again. You can use the app again after the update is complete.',
+   mandatoryReady: 'Update ready',
+   mandatoryVersion: 'New version: {version}',
+@@ -261,6 +269,12 @@ export const zh = {
+   startupAddressInUse: '有其他正在运行的 DSH（如其他 dsh web、桌面端），无法同时启动，请退出其他正在运行的 DSH 后重启。',
+   diagnosticTruncated: '… 错误详情已截短。',
+   reportWrittenTo: '诊断报告：{path}',
++  getDiagnosticReport: '获取诊断报告',
++  reportPending: '诊断报告仍在保存，可点击“获取诊断报告”再次检查。',
++  reportUnavailable: '诊断报告未能保存，反馈问题时可提供此窗口的截图。',
++  reportShareHint: '已打开报告位置，请将选中的文件附在支持工单中。',
++  reportRevealFailed: '无法打开报告位置，请通过下方路径查找文件。',
++  toggleDevToolsMenu: '开发者工具',
+   startupReinstallAdvice: '如果应用文件缺失或损坏，请关闭应用并重新安装。任务数据存储在独立位置。',
+   exitApplication: '退出',
+   restartApplication: '重启',
+@@ -376,6 +390,8 @@ export const zh = {
+   mandatoryPage: '前往官网下载',
+   mandatoryCopy: '复制下载链接',
+   mandatoryPageFailed: '无法打开官网下载页面，请复制链接后在浏览器中打开。',
++  mandatoryViewDownload: '打开下载页面',
++  mandatoryViewPageFailed: '无法打开下载页面，请重试',
+   mandatoryActionFailed: '操作失败，请重试。完成更新后才能继续使用应用。',
+   mandatoryReady: '更新已准备就绪',
+   mandatoryVersion: '新版本：{version}',
+diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
+index 5fbc2ca..8005600 100644
+--- a/apps/desktop/src/main.ts
++++ b/apps/desktop/src/main.ts
+@@ -2,7 +2,7 @@ import type { ProductEventMap, ProductEvent } from '@deepseek-ai/dsh-client-prod
+ import { usesTitleBarOverlay, WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
+ /** Electron shell: desktop project ownership, custom protocol, windows, and lifecycle. */
+ 
+-import { readFile, writeFile } from 'node:fs/promises'
++import { access, readFile, writeFile } from 'node:fs/promises'
+ import { join } from 'node:path'
+ import { fileURLToPath } from 'node:url'
+ import {
+@@ -108,6 +108,7 @@ const recovery = new DesktopFatalRecovery({
+   exit: () => { quitWithoutConfirmation() },
+   restart: () => { app.relaunch(); quitWithoutConfirmation() },
+   writeReport: (error, source) => persistCrashReport(error, source),
++  revealReport: async (path) => { await access(path); shell.showItemInFolder(path) },
+ })
+ 
+ function persistCrashReport(error: unknown, source: CrashReportSource): Promise<string | undefined> {
+@@ -1072,8 +1073,8 @@ async function main(): Promise<void> {
+     } },
+     ...process.platform === 'darwin' || process.platform === 'win32'
+       ? [{ label: currentDesktopLocale().messages.cliCommandMenu, click: () => { void commandManager.show() } }] : [],
++    { type: 'separator' },
+     ...development ? [
+-      { type: 'separator' as const },
+       { label: currentDesktopLocale().messages.reloadPageMenu, role: 'reload' as const },
+       { label: currentDesktopLocale().messages.restartAppHostMenu, click: () => {
+         if (quitting) return
+@@ -1081,6 +1082,7 @@ async function main(): Promise<void> {
+         quitWithoutConfirmation()
+       } },
+     ] : [],
++    { role: 'toggleDevTools', label: currentDesktopLocale().messages.toggleDevToolsMenu },
+     { type: 'separator' },
+     ...(process.platform === 'linux' ? [
+       { label: currentDesktopLocale().messages.showWindowMenu, click: () => { focusPrimaryWindow() } },
+@@ -1091,15 +1093,17 @@ async function main(): Promise<void> {
+       : process.platform === 'win32' ? { label: currentDesktopLocale().messages.exitApplication }
+         : { label: currentDesktopLocale().messages.quit }) },
+   ]
+-  const devToolsItems: MenuItemConstructorOptions[] = [
++  const devToolsF12Shortcut: MenuItemConstructorOptions = { role: 'toggleDevTools', visible: false, accelerator: 'F12' }
++  const windowsDevToolsShortcuts: MenuItemConstructorOptions[] = [
+     { role: 'toggleDevTools', visible: false },
+-    { role: 'toggleDevTools', visible: false, accelerator: 'F12' },
++    devToolsF12Shortcut,
+   ]
+   const refreshApplicationMenu = (): void => {
+-    Menu.setApplicationMenu(Menu.buildFromTemplate(process.platform === 'win32' ? devToolsItems : [{
+-      label: darwin ? app.name : currentDesktopLocale().messages.application,
+-      submenu: [...applicationItems(), ...devToolsItems],
+-    }, ...platformMenus()]))
++    Menu.setApplicationMenu(Menu.buildFromTemplate(process.platform === 'win32'
++      ? windowsDevToolsShortcuts : [{
++        label: darwin ? app.name : currentDesktopLocale().messages.application,
++        submenu: [...applicationItems(), devToolsF12Shortcut],
++      }, ...platformMenus()]))
+     tray?.relabel()
+   }
+   refreshApplicationMenu()
+diff --git a/apps/desktop/src/mandatory-update-window.ts b/apps/desktop/src/mandatory-update-window.ts
+index 3713883..53d96a7 100644
+--- a/apps/desktop/src/mandatory-update-window.ts
++++ b/apps/desktop/src/mandatory-update-window.ts
+@@ -1,11 +1,11 @@
+ /** Shell-owned modal policy UI; only explicit actions authorize downloads or browser navigation. */
+ 
+-import { app, BrowserWindow, clipboard, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
++import { app, type BrowserWindow, clipboard, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
+ import type { DesktopLocale } from './locale.ts'
+ import { assertDesktopSender, type DesktopUpdateState } from './ipc.ts'
+ import { desktopPolicyPage, type DesktopPolicyState } from './mandatory-update-policy.ts'
+ import { MANDATORY_IPC } from './mandatory-update-ipc.ts'
+-import type { DesktopUpdateOverlays } from './update-overlay.ts'
++import type { DesktopUpdateOverlay, DesktopUpdateOverlays } from './update-overlay.ts'
+ import { DesktopUpdateAttention } from './update-attention.ts'
+ 
+ /** A renderer action never carries a URL or authorizes a different version. */
+@@ -47,13 +47,15 @@ export interface MandatoryUpdateWindowOptions {
+ // main.ts's protocol.handle shell route serves this document and its renderer assets; the modal requires that route.
+ const page = 'dsh-app://shell/mandatory-update.html'
+ 
+-/** Shell-owned update presentation; Windows embeds it in the main document without a child window. */
++/** Shell-owned update presentation inside the native owner; policy and installation approval remain main-owned. */
+ export class DesktopMandatoryUpdateWindow {
+   private readonly embedded = process.platform === 'win32'
+   private embeddedParent: BrowserWindow | undefined
+   private embeddedBlocking = false
+   private readonly publishEmbedded = (): void => { this.embeddedBlocking = false; this.sync() }
+-  private window: BrowserWindow | undefined
++  private window: DesktopUpdateOverlay | undefined
++  private surfaceParent: BrowserWindow | undefined
++  private recovery: { load: () => Promise<void>; dismiss: () => void; dispose: () => void } | undefined
+   private closing: ReturnType<typeof setTimeout> | undefined
+   private disposed = false
+   private error: string | undefined
+@@ -110,7 +112,7 @@ export class DesktopMandatoryUpdateWindow {
+   }
+ 
+   /** Active modal used as the owner of shell installation-confirmation dialogs. */
+-  get confirmationWindow(): BrowserWindow | undefined { return this.embedded ? this.options.parent() : this.window }
++  get confirmationWindow(): BrowserWindow | undefined { return this.embedded ? this.options.parent() : this.surfaceParent }
+ 
+   /**
+    * @param version - Updater-owned target, already downloaded and verified.
+@@ -145,6 +147,15 @@ export class DesktopMandatoryUpdateWindow {
+   /** Publish current status, create the block immediately, or close it only after policy clearance. */
+   sync(): void {
+     if (this.disposed) return
++    if (!this.embedded && this.window !== undefined && this.surfaceParent !== this.options.parent()) {
++      this.recovery?.dispose()
++      this.recovery = undefined
++      this.finishConfirmation(false)
++      const previous = this.window
++      this.window = undefined
++      this.surfaceParent = undefined
++      previous.destroy()
++    }
+     if (this.embedded) {
+       const parent = this.options.parent()
+       if (parent !== this.embeddedParent) {
+@@ -158,6 +169,7 @@ export class DesktopMandatoryUpdateWindow {
+       if (parent === undefined || parent.isDestroyed()) return
+     }
+     if (!this.options.policy().blocking) {
++      this.recovery?.dismiss()
+       this.finishConfirmation(false)
+       this.attention.reset()
+       this.clearNavigation()
+@@ -168,7 +180,7 @@ export class DesktopMandatoryUpdateWindow {
+         window.webContents.send(MANDATORY_IPC.state, this.view())
+         this.closing = setTimeout(() => {
+           this.closing = undefined
+-          if (this.window === window) this.window = undefined
++          if (this.window === window) { this.window = undefined; this.surfaceParent = undefined }
+           window.destroy()
+         }, 150)
+       }
+@@ -190,24 +202,23 @@ export class DesktopMandatoryUpdateWindow {
+     }
+     if (this.window === undefined) {
+       const parent = this.options.parent()
+-      if (parent === undefined) return
+-      const window = this.options.overlays.create(parent, this.options.preload, this.options.locale.messages.mandatoryTitle, false)
++      if (parent === undefined || parent.isDestroyed()) return
++      const window = this.options.overlays.create(parent, this.options.preload)
+       this.window = window
+-      window.setMenu(null)
+-      window.on('close', (event) => { if (!this.disposed && this.options.policy().blocking) { event.preventDefault(); app.quit() } })
+-      window.on('closed', () => { if (this.window === window) this.window = undefined })
++      this.surfaceParent = parent
++      window.webContents.once('destroyed', () => {
++        if (this.window === window) {
++          this.window = undefined; this.surfaceParent = undefined
++          this.finishConfirmation(false)
++          if (!this.disposed) queueMicrotask(() => { this.sync() })
++        }
++      })
+       window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+       window.webContents.on('will-navigate', (event, url) => { if (url !== page) event.preventDefault() })
+-      window.webContents.on('render-process-gone', () => {
+-        if (!this.disposed) void window.loadURL(page).catch(() => {
+-          // A failed recovery keeps the parent blocked and leaves application exit available.
+-          if (!window.isDestroyed()) window.setTitle(this.options.locale.messages.mandatoryActionFailed)
+-        })
+-      })
+-      void window.loadURL(page).catch(() => {
+-        // The parent stays modal-blocked if its dedicated recovery document cannot load.
+-        if (!window.isDestroyed()) window.setTitle(this.options.locale.messages.mandatoryActionFailed)
+-      })
++      window.webContents.on('will-redirect', (event) => { event.preventDefault() })
++      const recovery = this.attachRecovery(window, parent)
++      this.recovery = recovery
++      void recovery.load()
+     }
+     this.window.webContents.send(MANDATORY_IPC.state, this.view())
+   }
+@@ -219,14 +230,15 @@ export class DesktopMandatoryUpdateWindow {
+     if (parent?.isDestroyed()) return
+     if (parent?.isMinimized()) parent.restore()
+     parent?.show()
+-    if (this.embedded) parent?.focus()
+-    this.window?.show()
++    parent?.focus()
+     this.window?.focus()
+   }
+ 
+   /** Detach IPC and release the modal during shutdown, including after the main window closes. */
+   dispose(): void {
+     this.disposed = true
++    this.recovery?.dispose()
++    this.recovery = undefined
+     clearTimeout(this.closing)
+     this.closing = undefined
+     this.finishConfirmation(false)
+@@ -240,6 +252,93 @@ export class DesktopMandatoryUpdateWindow {
+     }
+     this.window?.destroy()
+     this.window = undefined
++    this.surfaceParent = undefined
++  }
++
++  private attachRecovery(surface: DesktopUpdateOverlay, parent: BrowserWindow): {
++    load: () => Promise<void>
++    dismiss: () => void
++    dispose: () => void
++  } {
++    let released = false
++    let failed = false
++    let attempt = 0
++    let prompt: AbortController | undefined
++    const valid = (): boolean => !released && !this.disposed && this.options.policy().blocking
++      && this.options.parent() === parent && this.window === surface && !surface.isDestroyed() && !parent.isDestroyed()
++    const dismiss = (): void => { prompt?.abort() }
++    const show = (): void => {
++      if (!valid() || !failed || prompt !== undefined || !parent.isVisible() || !parent.isFocused()) return
++      const controller = new AbortController()
++      prompt = controller
++      const messages = this.options.locale.messages
++      const policy = this.options.policy()
++      const update = this.options.update()
++      const destination = desktopPolicyPage(policy.page, this.options.allowedPageOrigins)
++      const actions: readonly ('page' | 'quit')[] = destination === undefined ? ['quit'] : ['page', 'quit']
++      const labels = { page: messages.mandatoryViewDownload, quit: messages.quit }
++      const detail = [policy.detail ?? messages.mandatoryDetail,
++        ...('version' in update ? [messages.mandatoryVersion.replace('{version}', update.version)] : []),
++        ...(this.navigation?.page === 'failed' ? [messages.mandatoryViewPageFailed] : [])].join('\n\n')
++      void dialog.showMessageBox(parent, { type: 'error', title: messages.mandatoryTitle,
++        message: policy.title ?? messages.mandatoryTitle, detail,
++        buttons: actions.map(action => labels[action]), defaultId: 0, cancelId: -1,
++        noLink: true, signal: controller.signal }).then(({ response }) => {
++        if (prompt === controller) prompt = undefined
++        if (controller.signal.aborted) { show(); return }
++        if (!valid() || !failed) return
++        if (actions[response] === 'quit') app.quit()
++        else if (actions[response] === 'page') {
++          if (destination !== desktopPolicyPage(this.options.policy().page, this.options.allowedPageOrigins)) { show(); return }
++          void this.navigate('page').then(() => { if (this.navigation?.page === 'failed') show() })
++            .catch((error: unknown) => { console.error('desktop policy: recovery download page failed', error) })
++        } else show()
++      }).catch((error: unknown) => {
++        if (prompt === controller) prompt = undefined
++        console.error('desktop policy: native update recovery failed', error)
++      })
++    }
++    const load = async (): Promise<void> => {
++      if (!valid()) return
++      const revision = ++attempt
++      failed = false
++      dismiss()
++      try {
++        await surface.loadURL(page)
++      } catch (error) {
++        if (!valid() || revision !== attempt) return
++        console.error('desktop policy: mandatory update view failed to load', error)
++        failed = true
++        show()
++        return
++      }
++      if (!valid() || revision !== attempt) return
++      failed = false
++      dismiss()
++      this.sync()
++    }
++    const loaded = (): void => {
++      if (!valid()) return
++      failed = false
++      dismiss()
++    }
++    const crashed = (): void => { void load() }
++    const dispose = (): void => {
++      if (released) return
++      released = true
++      dismiss()
++      parent.off('focus', show)
++      parent.off('hide', dismiss)
++      surface.webContents.off('did-finish-load', loaded)
++      surface.webContents.off('render-process-gone', crashed)
++      surface.webContents.off('destroyed', dispose)
++    }
++    parent.on('focus', show)
++    parent.on('hide', dismiss)
++    surface.webContents.on('did-finish-load', loaded)
++    surface.webContents.on('render-process-gone', crashed)
++    surface.webContents.once('destroyed', dispose)
++    return { load, dismiss, dispose }
+   }
+ 
+   private view(): MandatoryUpdateView {
+diff --git a/apps/desktop/src/update-dialog.ts b/apps/desktop/src/update-dialog.ts
+index 8f263ca..e7a7916 100644
+--- a/apps/desktop/src/update-dialog.ts
++++ b/apps/desktop/src/update-dialog.ts
+@@ -1,7 +1,7 @@
+ /** Main-owned update confirmations; closing or replacing a dialog never grants installation permission. */
+ import { ipcMain, type BrowserWindow, type IpcMainInvokeEvent, type MessageBoxOptions, type MessageBoxReturnValue } from 'electron'
+ import type { DesktopLocale } from './locale.ts'
+-import type { DesktopUpdateOverlays } from './update-overlay.ts'
++import type { DesktopUpdateOverlays, DesktopUpdateOverlay } from './update-overlay.ts'
+ 
+ /** Channels available only to the isolated update-dialog document. */
+ export const UPDATE_DIALOG_IPC = { status: 'dsh-update-dialog:status', changed: 'dsh-update-dialog:changed', respond: 'dsh-update-dialog:respond' } as const
+@@ -40,13 +40,17 @@ const page = 'dsh-app://shell/update-dialog.html'
+ export class DesktopUpdateDialog {
+   private disposed = false
+   private revision = 0
+-  private window: BrowserWindow | undefined
++  private view: DesktopUpdateOverlay | undefined
+   private parent: BrowserWindow | undefined
+   private closing: ReturnType<typeof setTimeout> | undefined
+-  private active: { window: BrowserWindow; view: UpdateDialogView; finish: (index: number, retain?: boolean) => void } | undefined
++  private active: { view: UpdateDialogView; finish: (index: number, retain?: boolean) => void } | undefined
+ 
+   /** Focus the current explanation or confirmation without replacing it or granting permission. */
+-  focus(): void { this.active?.window.focus() }
++  focus(): void {
++    if (this.active === undefined || this.parent?.isDestroyed() !== false) return
++    this.parent.focus()
++    this.view?.webContents.focus()
++  }
+ 
+   /** Whether a shell prompt is awaiting a response. */
+   get isOpen(): boolean { return this.active !== undefined }
+@@ -54,7 +58,7 @@ export class DesktopUpdateDialog {
+   /**
+    * @param preload - Bundled isolated preload.
+    * @param locale - Shell-owned copy or a reader of the current UI language.
+-   * @param overlays - Application-owned overlay creation and input tracking.
++   * @param overlays - Application-owned view creation and input tracking.
+    */
+   constructor(private readonly preload: string, private readonly locale: DesktopLocale | (() => DesktopLocale),
+     private readonly overlays: Pick<DesktopUpdateOverlays, 'create'>) {
+@@ -87,9 +91,9 @@ export class DesktopUpdateDialog {
+     this.active?.finish(this.active.view.cancelId, true)
+     clearTimeout(this.closing)
+     this.closing = undefined
+-    const existing = this.window
+-    const window = existing ?? this.overlays.create(parent, this.preload, options.title ?? locale.messages.updateTitle, false)
+-    this.window = window
++    const existing = this.view
++    const surface = existing ?? this.overlays.create(parent, this.preload)
++    this.view = surface
+     this.parent = parent
+     const view: UpdateDialogView = { revision: ++this.revision, locale: locale.id, title: options.title ?? '', message: options.message,
+       detail: options.detail ?? '', buttons, cancelId, closeLabel: locale.messages.updateClose,
+@@ -100,20 +104,23 @@ export class DesktopUpdateDialog {
+         if (this.active?.view !== view) return
+         this.active = undefined
+         options.signal?.removeEventListener('abort', abort)
+-        if (!retain && !window.isDestroyed()) {
+-          window.webContents.send(UPDATE_DIALOG_IPC.changed, null)
++        if (!retain && !surface.webContents.isDestroyed()) {
++          surface.webContents.send(UPDATE_DIALOG_IPC.changed, null)
+           this.closing = setTimeout(() => { this.close() }, 150)
+         }
+         resolve({ response, checkboxChecked: false })
+       }
+-      this.active = { window, view, finish }
++      this.active = { view, finish }
+       options.signal?.addEventListener('abort', abort, { once: true })
+-      if (existing !== undefined) { window.webContents.send(UPDATE_DIALOG_IPC.changed, view); return }
+-      const failed = (): void => { if (this.window === window) { this.cancel(); this.close() } }
+-      window.once('closed', failed)
+-      window.webContents.on('will-navigate', (event, url) => { if (url !== page) event.preventDefault() })
+-      window.webContents.once('render-process-gone', failed)
+-      void window.loadURL(page).catch(failed)
++      if (existing !== undefined) { surface.webContents.send(UPDATE_DIALOG_IPC.changed, view); return }
++      const failed = (): void => { if (this.view === surface) { this.cancel(); this.close() } }
++      surface.webContents.once('destroyed', failed)
++      surface.webContents.once('render-process-gone', failed)
++      surface.webContents.once('preload-error', failed)
++      surface.webContents.on('will-navigate', (event, url) => { if (url !== page) event.preventDefault() })
++      surface.webContents.on('will-redirect', (event) => { event.preventDefault() })
++      surface.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
++      void surface.loadURL(page).catch(failed)
+     })
+   }
+ 
+@@ -133,20 +140,16 @@ export class DesktopUpdateDialog {
+   private close(): void {
+     clearTimeout(this.closing)
+     this.closing = undefined
+-    const window = this.window
+-    this.window = undefined
++    const surface = this.view
++    this.view = undefined
+     this.parent = undefined
+-    if (window !== undefined && !window.isDestroyed()) {
+-      // Release Windows modality before destruction so another application cannot become active.
+-      if (process.platform === 'win32' && window.isVisible()) window.hide()
+-      window.destroy()
+-    }
++    surface?.destroy()
+   }
+ 
+   private owned(event: IpcMainInvokeEvent): void {
+-    const window = this.window
+-    if (window === undefined || event.sender !== window.webContents
+-      || event.senderFrame !== window.webContents.mainFrame || event.senderFrame.url !== page) {
++    const surface = this.view
++    if (surface === undefined || event.sender !== surface.webContents
++      || event.senderFrame !== surface.webContents.mainFrame || event.senderFrame.url !== page) {
+       throw new Error('desktop update: rejected unowned dialog renderer')
+     }
+   }
+diff --git a/apps/desktop/src/update-overlay.ts b/apps/desktop/src/update-overlay.ts
+index 7706982..ec07446 100644
+--- a/apps/desktop/src/update-overlay.ts
++++ b/apps/desktop/src/update-overlay.ts
+@@ -1,63 +1,87 @@
+-/** Shell-owned modal windows cover the parent's content without replacing its native window controls. */
+-import { BrowserWindow } from 'electron'
++/** Isolated update documents share their owner's native window and input lifetime. */
++import { WebContentsView, type BrowserWindow, type WebContents, type View } from 'electron'
++import type { EventEmitter } from 'node:events'
++import { usesTitleBarOverlay, WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
+ 
+-const unblockedInput = { revision: 0, blocked: false } as const
++/** Main-owned document with no independent native window or activation state. */
++export interface DesktopUpdateOverlay {
++  readonly webContents: WebContents
++  /** Focus the document only while its owner already has focus. */
++  focus(): void
++  /** Release the view, input interception, and owner listeners. */
++  destroy(): void
++  /** @returns Whether the document has been destroyed. */
++  isDestroyed(): boolean
++  /** @param url - Shell-owned document URL. @returns Completion of document loading. */
++  loadURL(url: string): Promise<void>
++}
++
++type UpdateOwner = Pick<BrowserWindow, 'getContentBounds' | 'isDestroyed' | 'isFocused' | 'isFullScreen'>
++  & Pick<EventEmitter, 'on' | 'once' | 'off'> & {
++    readonly webContents: Pick<EventEmitter, 'prependListener' | 'off'> & Pick<WebContents, 'focus'>
++    readonly contentView: Pick<View, 'addChildView' | 'removeChildView'>
++  }
+ 
+-/** Tracks application-owned update overlays and their parent input state. */
++/** Tracks isolated update views and each owner's keyboard-blocking revision. */
+ export class DesktopUpdateOverlays {
+-  private readonly inputStates = new WeakMap<BrowserWindow, { revision: number; active: number; readonly blocked: boolean }>()
++  private readonly inputs = new WeakMap<object, { revision: number; active: number; readonly blocked: boolean }>()
+ 
+-  /**
+-   * @param parent - Product window whose input may belong to an update dialog.
+-   * @returns Current blocking state; its revision changes whenever an overlay opens or closes.
+-   */
+-  input(parent: BrowserWindow): { readonly revision: number; readonly blocked: boolean } {
+-    return this.inputStates.get(parent) ?? unblockedInput
++  /** @param parent - Product window. @returns Blocking state and attachment/release revision. */
++  input(parent: Pick<BrowserWindow, 'isDestroyed'>): { readonly revision: number; readonly blocked: boolean } {
++    const state = this.inputs.get(parent)
++    return { revision: state?.revision ?? 0, blocked: state?.blocked ?? false }
+   }
+ 
+   /**
+-   * @param parent - Product window whose content is blocked while the overlay is open.
+-   * @param preload - Isolated shell-only preload.
+-   * @param title - Localized window title.
+-   * @param nativeModal - Use a native modal; false keeps overlays out of macOS sheets.
+-   * @returns A transparent child that follows its parent's bounds and visibility after loading and releases its listeners on close.
++   * @param parent - Native owner; its caption remains operable.
++   * @param preload - Isolated shell preload.
++   * @returns Document attached inside the owner, without showing or activating a native window.
+    */
+-  create(parent: BrowserWindow, preload: string, title: string, nativeModal = true): BrowserWindow {
+-    const window = new BrowserWindow({
+-      parent, modal: nativeModal || process.platform !== 'darwin', show: false, frame: false, transparent: true,
+-      ...parent.getContentBounds(), resizable: false, minimizable: false, maximizable: false,
+-      skipTaskbar: true, hasShadow: false, title,
+-      webPreferences: { preload, contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true },
+-    })
+-    const inputState = this.inputStates.get(parent) ?? { revision: 0, active: 0, get blocked() { return this.active > 0 } }
+-    this.inputStates.set(parent, inputState)
+-    inputState.active++; inputState.revision++
+-    window.once('closed', () => { inputState.active--; inputState.revision++ })
+-    // macOS native modals animate the entire viewport as a sheet.
+-    const focus = (): void => { if (!window.isDestroyed()) window.focus() }
+-    const blockInput = (event: Electron.Event): void => { event.preventDefault(); focus() }
+-    if (!nativeModal && process.platform === 'darwin') {
+-      parent.on('focus', focus)
+-      // Shell dialogs block input before product shortcut listeners can dispatch it.
+-      parent.webContents.prependListener('before-input-event', blockInput)
+-      window.once('closed', () => {
+-        parent.off('focus', focus)
+-        if (!parent.isDestroyed()) parent.webContents.off('before-input-event', blockInput)
+-      })
++  create(parent: UpdateOwner, preload: string): DesktopUpdateOverlay {
++    const view = new WebContentsView({ webPreferences: {
++      preload, contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true,
++    } })
++    const ownerContents = parent.webContents
++    const contents = view.webContents
++    const input = this.inputs.get(parent) ?? { revision: 0, active: 0, get blocked() { return this.active > 0 } }
++    this.inputs.set(parent, input)
++    input.active++; input.revision++
++    const resize = (): void => {
++      const { width, height } = parent.getContentBounds()
++      const top = !parent.isFullScreen() && usesTitleBarOverlay(process.platform, process.env) ? WINDOWS_TITLEBAR_HEIGHT : 0
++      view.setBounds({ x: 0, y: top, width, height: Math.max(0, height - top) })
++    }
++    const focus = (): void => {
++      if (!parent.isDestroyed() && parent.isFocused() && !contents.isDestroyed()) contents.focus()
+     }
+-    const follow = (): void => { if (!window.isDestroyed()) window.setBounds(parent.getContentBounds()) }
+-    parent.on('move', follow)
+-    parent.on('resize', follow)
+-    window.once('closed', () => { parent.off('move', follow); parent.off('resize', follow) })
+-    let ready = false
+-    const show = (): void => {
+-      if (ready && !window.isDestroyed() && !parent.isDestroyed() && parent.isVisible()) window.show()
++    const block = (event: Electron.Event): void => { event.preventDefault(); focus() }
++    const destroy = (): void => { if (!contents.isDestroyed()) contents.close({ waitForBeforeUnload: false }) }
++    const release = (): void => {
++      parent.off('resize', resize)
++      parent.off('focus', focus)
++      parent.off('enter-full-screen', resize)
++      parent.off('leave-full-screen', resize)
++      parent.off('closed', destroy)
++      ownerContents.off('before-input-event', block)
++      input.active--; input.revision++
++      if (!parent.isDestroyed()) {
++        parent.contentView.removeChildView(view)
++        if (parent.isFocused()) ownerContents.focus()
++      }
+     }
+-    parent.on('show', show)
+-    window.once('closed', () => { parent.off('show', show) })
+-    window.once('ready-to-show', () => { ready = true; show() })
+-    window.setMenu(null)
+-    window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+-    return window
++    view.setBackgroundColor('#00000000')
++    parent.contentView.addChildView(view)
++    resize()
++    parent.on('resize', resize)
++    parent.on('focus', focus)
++    parent.on('enter-full-screen', resize)
++    parent.on('leave-full-screen', resize)
++    parent.once('closed', destroy)
++    ownerContents.prependListener('before-input-event', block)
++    contents.once('destroyed', release)
++    contents.on('did-finish-load', focus)
++    contents.setWindowOpenHandler(() => ({ action: 'deny' }))
++    return { webContents: contents, focus, destroy, isDestroyed: () => contents.isDestroyed(),
++      loadURL: url => contents.loadURL(url) }
+   }
+ }
+diff --git a/apps/desktop/tests/expected/fatal-address-in-use-en.txt b/apps/desktop/tests/expected/fatal-address-in-use-en.txt
+index 1e9a9b6..fff3b98 100644
+--- a/apps/desktop/tests/expected/fatal-address-in-use-en.txt
++++ b/apps/desktop/tests/expected/fatal-address-in-use-en.txt
+@@ -1,5 +1,6 @@
+ DeepSeek Harness is unavailable
+ The application could not start or stopped unexpectedly.
+ Another DSH instance (such as dsh web or the desktop app) is running. They cannot start at the same time. Quit the other running DSH instance, then restart.
++The diagnostic report could not be saved. You can provide a screenshot of this dialog when requesting support.
+ Exit
+ Restart
+diff --git a/apps/desktop/tests/expected/fatal-address-in-use-zh-CN.txt b/apps/desktop/tests/expected/fatal-address-in-use-zh-CN.txt
+index 30cad3d..7c6e3db 100644
+--- a/apps/desktop/tests/expected/fatal-address-in-use-zh-CN.txt
++++ b/apps/desktop/tests/expected/fatal-address-in-use-zh-CN.txt
+@@ -1,5 +1,6 @@
+ DeepSeek Harness 无法使用
+ 应用无法启动或已意外停止。
+ 有其他正在运行的 DSH（如其他 dsh web、桌面端），无法同时启动，请退出其他正在运行的 DSH 后重启。
++诊断报告未能保存，反馈问题时可提供此窗口的截图。
+ 退出
+ 重启
+diff --git a/apps/desktop/tests/expected/fatal-dialog-en.txt b/apps/desktop/tests/expected/fatal-dialog-en.txt
+index 0dd0a62..72cc858 100644
+--- a/apps/desktop/tests/expected/fatal-dialog-en.txt
++++ b/apps/desktop/tests/expected/fatal-dialog-en.txt
+@@ -2,6 +2,7 @@ DeepSeek Harness is unavailable
+ The application could not start or stopped unexpectedly.
+ Desktop Host failed
+ Plugin initialization failed
++The diagnostic report could not be saved. You can provide a screenshot of this dialog when requesting support.
+ 
+ If application files are missing or damaged, close the application and reinstall it. Your tasks are stored separately.
+ Exit
+diff --git a/apps/desktop/tests/expected/fatal-dialog-with-report-en.txt b/apps/desktop/tests/expected/fatal-dialog-with-report-en.txt
+index aaa637c..89745ea 100644
+--- a/apps/desktop/tests/expected/fatal-dialog-with-report-en.txt
++++ b/apps/desktop/tests/expected/fatal-dialog-with-report-en.txt
+@@ -8,3 +8,4 @@ If application files are missing or damaged, close the application and reinstall
+ Exit
+ Restart
+ Disable third-party plugins, back up profile patch, and restart
++Get diagnostic report
+diff --git a/apps/desktop/tests/expected/fatal-dialog-with-report-zh-CN.txt b/apps/desktop/tests/expected/fatal-dialog-with-report-zh-CN.txt
+index 353b59f..610b96c 100644
+--- a/apps/desktop/tests/expected/fatal-dialog-with-report-zh-CN.txt
++++ b/apps/desktop/tests/expected/fatal-dialog-with-report-zh-CN.txt
+@@ -8,3 +8,4 @@ Plugin initialization failed
+ 退出
+ 重启
+ 禁用第三方插件、备份 profile patch 并重启
++获取诊断报告
+diff --git a/apps/desktop/tests/expected/fatal-dialog-zh-CN.txt b/apps/desktop/tests/expected/fatal-dialog-zh-CN.txt
+index 6c40644..c8db153 100644
+--- a/apps/desktop/tests/expected/fatal-dialog-zh-CN.txt
++++ b/apps/desktop/tests/expected/fatal-dialog-zh-CN.txt
+@@ -2,6 +2,7 @@ DeepSeek Harness 无法使用
+ 应用无法启动或已意外停止。
+ Desktop Host failed
+ Plugin initialization failed
++诊断报告未能保存，反馈问题时可提供此窗口的截图。
+ 
+ 如果应用文件缺失或损坏，请关闭应用并重新安装。任务数据存储在独立位置。
+ 退出
+diff --git a/apps/desktop/tests/fatal-recovery.spec.ts b/apps/desktop/tests/fatal-recovery.spec.ts
+index 7ab4efd..80f75c2 100644
+--- a/apps/desktop/tests/fatal-recovery.spec.ts
++++ b/apps/desktop/tests/fatal-recovery.spec.ts
+@@ -17,6 +17,7 @@ function fixture(
+     disablePlugins: vi.fn(async () => {}),
+     exit: vi.fn(),
+     restart: vi.fn(),
++    revealReport: vi.fn(async (_path: string) => {}),
+     writeReport: vi.fn(writeReport),
+   }
+   return { operations, choice, stopped, recovery: new DesktopFatalRecovery(operations) }
+@@ -31,14 +32,16 @@ const REPORT_PATH = 'C:\\Users\\someone\\AppData\\Roaming\\DeepSeek Harness\\log
+ 
+ afterEach(() => { vi.restoreAllMocks() })
+ 
+-it.each(['en', 'zh-CN'])('offers only exit and restart for a listener conflict in %s', async (locale) => {
++it.each(['en', 'zh-CN'])('offers exit and restart for a listener conflict without a saved report in %s', async (locale) => {
+   const { operations, choice, stopped, recovery } = fixture(locale)
+   const pending = recovery.report(new AggregateError([
+     new Error('webserver (@deepseek-ai/dsh-host-webserver): Error: listen EADDRINUSE: address already in use 127.0.0.1:19387'),
+   ], 'required startup failure'), 'host')
+   await shown(operations)
+   const options = operations.show.mock.calls[0]![0]
+-  expect(options.buttons).toEqual([operations.messages().exitApplication, operations.messages().restartApplication])
++  expect(options.buttons).toEqual([
++    operations.messages().exitApplication, operations.messages().restartApplication,
++  ])
+   await expect([options.title, options.message, options.detail, ...options.buttons!].join('\n') + '\n')
+     .toMatchFileSnapshot(`expected/fatal-address-in-use-${locale}.txt`)
+   choice.resolve({ response: 1, checkboxChecked: false })
+@@ -56,7 +59,7 @@ it.each(['win32', 'darwin', 'linux'] as const)('offers the same listener conflic
+   expect(operations.show.mock.calls[0]![0].buttons).toEqual([
+     operations.messages().exitApplication, operations.messages().restartApplication,
+   ])
+-  expect(operations.show.mock.calls[0]![0].detail).toBe(operations.messages().startupAddressInUse)
++  expect(operations.show.mock.calls[0]![0].detail).toBe(`${operations.messages().startupAddressInUse}\n${operations.messages().reportUnavailable}`)
+   choice.resolve({ response: 0, checkboxChecked: false })
+   stopped.resolve(undefined)
+   await pending
+@@ -188,7 +191,7 @@ it('names the report file in the listener-conflict dialog too', async () => {
+   await shown(operations)
+   await vi.waitFor(() => { expect(operations.show).toHaveBeenCalledOnce() })
+   const options = operations.show.mock.calls[0]![0]
+-  expect(options.buttons).toHaveLength(2)
++  expect(options.buttons).toHaveLength(3)
+   expect(options.detail).toBe(`${operations.messages().startupAddressInUse}\n${operations.messages().reportWrittenTo.replace('{path}', REPORT_PATH)}`)
+   choice.resolve({ response: 0, checkboxChecked: false })
+   stopped.resolve(undefined)
+@@ -202,7 +205,7 @@ it('shows the dialog without a path when the report write fails or returns nothi
+     const pending = recovery.report(new Error('fatal'), 'main')
+     await shown(operations)
+     await vi.waitFor(() => { expect(operations.show).toHaveBeenCalledOnce() })
+-    expect(operations.show.mock.calls[0]![0].detail).toBe(`fatal\n\n${operations.messages().startupReinstallAdvice}`)
++    expect(operations.show.mock.calls[0]![0].detail).toBe(`fatal\n${operations.messages().reportUnavailable}\n\n${operations.messages().startupReinstallAdvice}`)
+     choice.resolve({ response: 0, checkboxChecked: false })
+     stopped.resolve(undefined)
+     await pending
+@@ -239,3 +242,110 @@ it('writes the report once for the first fatal failure and not for the recovery-
+   expect(operations.writeReport).toHaveBeenCalledOnce()
+   expect(operations.show.mock.calls[1]![0].detail).toContain(REPORT_PATH)
+ })
++
++it('reveals the saved report without stopping the Host or restarting', async () => {
++  const { operations, stopped, recovery } = fixture('en', async () => REPORT_PATH)
++  operations.show.mockResolvedValueOnce({ response: 3, checkboxChecked: false })
++    .mockImplementationOnce(async () => {
++      expect(operations.revealReport).toHaveBeenCalledWith(REPORT_PATH)
++      expect(operations.stop).not.toHaveBeenCalled()
++      expect(operations.restart).not.toHaveBeenCalled()
++      return { response: 0, checkboxChecked: false }
++    })
++  stopped.resolve(undefined)
++  await recovery.report(new Error('fatal'), 'host')
++  expect(operations.writeReport).toHaveBeenCalledOnce()
++  expect(operations.show.mock.calls[1]![0].message).toBe(operations.messages().reportShareHint)
++})
++
++it('keeps the original failure and report path when revealing the file fails', async () => {
++  vi.spyOn(console, 'error').mockImplementation(() => {})
++  const { operations, stopped, recovery } = fixture('en', async () => REPORT_PATH)
++  operations.revealReport.mockRejectedValueOnce(new Error('file removed'))
++  operations.show.mockResolvedValueOnce({ response: 3, checkboxChecked: false })
++    .mockResolvedValueOnce({ response: 0, checkboxChecked: false })
++  stopped.resolve(undefined)
++  await recovery.report(new Error('original startup failure'), 'host')
++  expect(operations.show.mock.calls[1]![0]).toMatchObject({ message: operations.messages().reportRevealFailed })
++  expect(operations.show.mock.calls[1]![0].detail).toContain('original startup failure')
++  expect(operations.show.mock.calls[1]![0].detail).toContain(REPORT_PATH)
++})
++
++it('makes a report that finishes after the initial deadline available without rewriting it', async () => {
++  vi.useFakeTimers()
++  try {
++    const write = Promise.withResolvers<string>()
++    const { operations, choice, stopped, recovery } = fixture('en', () => write.promise)
++    const pending = recovery.report(new Error('fatal'), 'host')
++    await vi.advanceTimersByTimeAsync(CRASH_REPORT_WAIT_MS)
++    expect(operations.show.mock.calls[0]![0].detail).toContain(operations.messages().reportPending)
++    operations.show.mockResolvedValueOnce({ response: 0, checkboxChecked: false })
++    write.resolve(REPORT_PATH)
++    choice.resolve({ response: 3, checkboxChecked: false })
++    stopped.resolve(undefined)
++    await pending
++    expect(operations.revealReport).toHaveBeenCalledWith(REPORT_PATH)
++    expect(operations.writeReport).toHaveBeenCalledOnce()
++  } finally {
++    vi.useRealTimers()
++  }
++})
++
++it('does not attempt to reveal an unavailable report', async () => {
++  const { operations, stopped, recovery } = fixture()
++  operations.show.mockResolvedValueOnce({ response: 0, checkboxChecked: false })
++  stopped.resolve(undefined)
++  await recovery.report(new Error('fatal'), 'host')
++  expect(operations.revealReport).not.toHaveBeenCalled()
++  expect(operations.show.mock.calls[0]![0].buttons).not.toContain(operations.messages().getDiagnosticReport)
++  expect(operations.show.mock.calls[0]![0].detail).toContain(operations.messages().reportUnavailable)
++})
++
++it.each(['pending', 'failed'] as const)('keeps the recovery failure visible when fetching a %s report', async (state) => {
++  vi.useFakeTimers()
++  vi.spyOn(console, 'error').mockImplementation(() => {})
++  const write = Promise.withResolvers<string | undefined>()
++  try {
++    const { operations, stopped, recovery } = fixture('en', () => write.promise)
++    stopped.resolve(undefined)
++    operations.disablePlugins.mockRejectedValueOnce(new Error('profile is read-only'))
++    operations.show.mockResolvedValueOnce({ response: 2, checkboxChecked: false })
++      .mockImplementationOnce(async () => {
++        if (state === 'failed') write.resolve(undefined)
++        return { response: 3, checkboxChecked: false }
++      })
++      .mockResolvedValueOnce({ response: 0, checkboxChecked: false })
++    const pending = recovery.report(new Error('original startup failure'), 'host')
++    await vi.runAllTimersAsync()
++    await pending
++    expect(operations.show).toHaveBeenCalledTimes(3)
++    const last = operations.show.mock.calls[2]![0]
++    expect(last.message).toBe(operations.messages().recoveryOperationFailed)
++    expect(last.detail).toContain('profile is read-only')
++    if (state === 'failed') expect(last.buttons).not.toContain(operations.messages().getDiagnosticReport)
++    expect(last.detail).toContain(state === 'pending' ? operations.messages().reportPending : operations.messages().reportUnavailable)
++    expect(operations.revealReport).not.toHaveBeenCalled()
++    expect(operations.writeReport).toHaveBeenCalledOnce()
++  } finally {
++    write.resolve(undefined)
++    vi.useRealTimers()
++  }
++})
++
++it.each([false, true])('keeps the original attachment when revealing after a recovery failure (reveal fails=%s)', async (revealFails) => {
++  vi.spyOn(console, 'error').mockImplementation(() => {})
++  const { operations, stopped, recovery } = fixture('en', async () => REPORT_PATH)
++  const original = new Error('original startup failure')
++  stopped.resolve(undefined)
++  operations.disablePlugins.mockRejectedValueOnce(new Error('profile is read-only'))
++  if (revealFails) operations.revealReport.mockRejectedValueOnce(new Error('file manager unavailable'))
++  operations.show.mockResolvedValueOnce({ response: 2, checkboxChecked: false })
++    .mockResolvedValueOnce({ response: 3, checkboxChecked: false })
++    .mockResolvedValueOnce({ response: 0, checkboxChecked: false })
++  await recovery.report(original, 'host')
++  const last = operations.show.mock.calls[2]![0]
++  expect(last.message).toBe(revealFails ? operations.messages().reportRevealFailed : operations.messages().reportShareHint)
++  expect(last.detail).toContain('profile is read-only')
++  expect(operations.writeReport).toHaveBeenCalledExactlyOnceWith(original, 'host')
++  expect(operations.revealReport).toHaveBeenCalledExactlyOnceWith(REPORT_PATH)
++})
+diff --git a/apps/desktop/tests/main-startup.spec.ts b/apps/desktop/tests/main-startup.spec.ts
+index c7c14f6..829454d 100644
+--- a/apps/desktop/tests/main-startup.spec.ts
++++ b/apps/desktop/tests/main-startup.spec.ts
+@@ -518,13 +518,22 @@ describe('desktop main startup', () => {
+     expect((await handler(new Request('dsh-app://unknown/update-dialog.html'))).status).toBe(404)
+   })
+ 
+-  it('installs hidden native DevTools shortcuts in the macOS application menu', async () => {
+-    vi.stubGlobal('process', { ...process, platform: 'darwin' })
++  it.each((['darwin', 'win32', 'linux'] as const).flatMap(platform =>
++    ['en-US', 'zh-CN'].map(locale => [platform, locale] as const)))('offers localized DevTools without losing native shortcuts on %s (%s)', async (platform, locale) => {
++    vi.stubGlobal('process', { ...process, platform })
++    harness.app.isPackaged = true
++    vi.spyOn(harness.app, 'getLocale').mockReturnValue(locale)
++    vi.spyOn(harness.app, 'getPreferredSystemLanguages').mockReturnValue([locale])
+     await readyForUpdate()
+-    expect(applicationMenuItems().slice(-2)).toEqual([
+-      { role: 'toggleDevTools', visible: false },
+-      { role: 'toggleDevTools', visible: false, accelerator: 'F12' },
++    const items = applicationMenuItems()
++    const messages = locale === 'zh-CN' ? zh : en
++    const visible = items.filter(item => item.visible !== false)
++    expect(visible.filter(item => item.role === 'toggleDevTools')).toEqual([
++      { role: 'toggleDevTools', label: messages.toggleDevToolsMenu },
+     ])
++    expect(visible.findIndex(item => item.role === 'toggleDevTools')).toBeLessThan(visible.findIndex(item => item.role === 'quit'))
++    const native = platform === 'win32' ? harness.menu.mock.calls[0]![0] : items
++    expect(native).toContainEqual({ role: 'toggleDevTools', visible: false, accelerator: 'F12' })
+     expect(harness.windows[0]!.options).toMatchObject({ webPreferences: { devTools: true } })
+   })
+ 
+@@ -993,7 +1002,7 @@ describe('desktop main startup', () => {
+     expect(() => handler(event, 'application', NaN, 34)).toThrow('invalid popup request')
+     const application = handler(event, 'application', 48, 34)
+     expect(harness.menu.buildFromTemplate.mock.lastCall![0].map(item => item.label ?? item.type)).toEqual([
+-      '关于 DeepSeek Harness', 'separator', '检查更新…', 'SCNet 连接诊断…', '管理 dsh 命令…', 'separator', '退出',
++      '关于 DeepSeek Harness', 'separator', '检查更新…', 'SCNet 连接诊断…', '管理 dsh 命令…', 'separator', zh.toggleDevToolsMenu, 'separator', '退出',
+     ])
+     expect(harness.popup.mock.lastCall![0]).toMatchObject({ window, x: 48, y: 34 })
+     expect(harness.popup.mock.lastCall![0].callback).toBeTypeOf('function')
+@@ -1030,8 +1039,8 @@ describe('desktop main startup', () => {
+       : ['Application', 'editMenu'])
+     const application = template[0]!.submenu as MenuItemConstructorOptions[]
+     expect(application.filter(item => item.visible !== false).map(describeItem)).toEqual(platform === 'darwin'
+-      ? ['about', 'separator', en.checkUpdatesMenu, en.scnetDiagnosticsMenu, en.cliCommandMenu, 'separator', 'hide', 'hideOthers', 'unhide', 'separator', 'quit']
+-      : ['about', 'separator', en.checkUpdatesMenu, en.scnetDiagnosticsMenu, 'separator', en.showWindowMenu, 'separator', 'quit'])
++      ? ['about', 'separator', en.checkUpdatesMenu, en.scnetDiagnosticsMenu, en.cliCommandMenu, 'separator', 'toggleDevTools', 'separator', 'hide', 'hideOthers', 'unhide', 'separator', 'quit']
++      : ['about', 'separator', en.checkUpdatesMenu, en.scnetDiagnosticsMenu, 'separator', 'toggleDevTools', 'separator', en.showWindowMenu, 'separator', 'quit'])
+     // Linux has no tray or Dock, so its quit entry carries the localized short label.
+     expect(application.find(item => item.role === 'quit')!.label)
+       .toBe(platform === 'darwin' ? en.quitApplication : en.quit)
+@@ -2128,7 +2137,7 @@ describe('desktop main startup', () => {
+     harness.prepared.reject(new Error('runtime resources missing'))
+     await harness.dialogShown.promise
+     expect((harness.dialog.showMessageBox.mock.calls[0]![0] as MessageBoxOptions).detail).toContain('runtime resources missing')
+-    expect((harness.dialog.showMessageBox.mock.calls[0]![0] as MessageBoxOptions).buttons).toEqual(['Exit', 'Restart', 'Disable third-party plugins, back up profile patch, and restart'])
++    expect((harness.dialog.showMessageBox.mock.calls[0]![0] as MessageBoxOptions).buttons).toEqual(['Exit', 'Restart', 'Disable third-party plugins, back up profile patch, and restart', 'Get diagnostic report'])
+     expect(harness.windows[0]!.urls).toEqual(['dsh-app://app/'])
+   })
+ 
+diff --git a/apps/desktop/tests/mandatory-update-window.spec.ts b/apps/desktop/tests/mandatory-update-window.spec.ts
+index 901205b..32e9a6b 100644
+--- a/apps/desktop/tests/mandatory-update-window.spec.ts
++++ b/apps/desktop/tests/mandatory-update-window.spec.ts
+@@ -1,6 +1,6 @@
+ import { EventEmitter } from 'node:events'
+ import { afterEach, expect, it, vi } from 'vitest'
+-import type { BrowserWindow, WebContents, WebFrameMain } from 'electron'
++import type { BrowserWindow, MessageBoxOptions, WebContents, WebFrameMain } from 'electron'
+ import { DesktopMandatoryUpdateWindow, type MandatoryUpdateView } from '../src/mandatory-update-window.ts'
+ import { MANDATORY_IPC } from '../src/mandatory-update-ipc.ts'
+ import { resolveDesktopLocale } from '../src/locale.ts'
+@@ -8,14 +8,16 @@ import type { DesktopPolicyState } from '../src/mandatory-update-policy.ts'
+ import type { DesktopUpdateState } from '../src/ipc.ts'
+ 
+ const native = vi.hoisted(() => ({ handlers: new Map<string, (...args: unknown[]) => unknown>(),
+-  open: vi.fn<(...args: unknown[]) => Promise<void>>(), write: vi.fn(), read: vi.fn(), quit: vi.fn() }))
++  open: vi.fn<(...args: unknown[]) => Promise<void>>(), write: vi.fn(), read: vi.fn(), quit: vi.fn(),
++  messageBox: vi.fn<(parent: BrowserWindow, options: MessageBoxOptions) => Promise<{ response: number }>>() }))
+ vi.mock('electron', () => ({ ipcMain: {
+   handle: (channel: string, handler: (...args: unknown[]) => unknown) => native.handlers.set(channel, handler),
+   removeHandler: (channel: string) => native.handlers.delete(channel),
+-}, app: { quit: native.quit }, shell: { openExternal: native.open }, clipboard: { writeText: native.write, readText: native.read } }))
++}, dialog: { showMessageBox: native.messageBox }, app: { quit: native.quit }, shell: { openExternal: native.open },
++clipboard: { writeText: native.write, readText: native.read } }))
+ 
+ type WindowFixture = EventEmitter & Pick<BrowserWindow, 'setMenu' | 'setTitle' | 'loadURL' | 'destroy' | 'isDestroyed'
+-  | 'isFocused' | 'isMinimized' | 'focus' | 'show' | 'restore'> & {
++  | 'isVisible' | 'isFocused' | 'isMinimized' | 'focus' | 'show' | 'restore'> & {
+     webContents: EventEmitter & Pick<WebContents, 'send' | 'setWindowOpenHandler'> & { mainFrame: Pick<WebFrameMain, 'url'> }
+   }
+ 
+@@ -26,27 +28,33 @@ function fakeWindow() {
+     send: vi.fn(), setWindowOpenHandler: vi.fn() })
+   return Object.assign(new EventEmitter(), { webContents: contents, setMenu: vi.fn(), setTitle: vi.fn(),
+     loadURL: vi.fn(async () => {}), destroy: vi.fn(), isDestroyed: (): boolean => false,
+-    isFocused: () => true, isMinimized: () => false, focus: vi.fn(), show: vi.fn(), restore: vi.fn() })
++    isVisible: (): boolean => true, isFocused: (): boolean => true,
++    isMinimized: () => false, focus: vi.fn(), show: vi.fn(), restore: vi.fn() })
+ }
+ afterEach(() => { ui?.dispose(); vi.restoreAllMocks(); vi.clearAllMocks(); native.handlers.clear(); vi.useRealTimers() })
+-function setup(platform: NodeJS.Platform = 'darwin') {
++function setup(platform: NodeJS.Platform = 'darwin', beforeSync?: (surface: ReturnType<typeof fakeWindow>) => void) {
+   vi.spyOn(process, 'platform', 'get').mockReturnValue(platform)
++  native.messageBox.mockImplementation(() => new Promise(() => {}))
+   window = fakeWindow()
+-  if (platform === 'win32') window.webContents.mainFrame.url = 'dsh-app://app/'
++  const owner = platform === 'win32' ? window : fakeWindow()
++  owner.webContents.mainFrame.url = 'dsh-app://app/'
+   let policy: DesktopPolicyState = { blocking: true, checking: false, page: 'https://downloads.example.com/desktop' }
+   let update: DesktopUpdateState = { phase: 'ready', version: '1.0.1-nightly.1' }
+   const install = vi.fn(async () => update)
+   const createOverlay = (): WindowFixture => window
+-  const parent = createOverlay as () => BrowserWindow
+-  ui = new DesktopMandatoryUpdateWindow({ overlays: { create: parent }, preload: 'owned', locale: resolveDesktopLocale('zh'),
++  const create = createOverlay as () => BrowserWindow
++  const currentParent = (): WindowFixture => platform === 'win32' ? window : owner
++  const parent = currentParent as () => BrowserWindow
++  ui = new DesktopMandatoryUpdateWindow({ overlays: { create }, preload: 'owned', locale: resolveDesktopLocale('zh'),
+     allowedPageOrigins: ['https://downloads.example.com'], parent,
+     policy: () => policy, update: () => update, refresh: async () => {}, download: async () => update, install })
++  beforeSync?.(window)
+   ui.sync()
+   const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame }
+   const view = () => native.handlers.get(MANDATORY_IPC.status)!(event) as MandatoryUpdateView
+   const action = (name: string, version: string = '1.0.1-nightly.1', revision = view().confirmation?.revision) =>
+     native.handlers.get(MANDATORY_IPC.action)!(event, name, version, revision)
+-  return { view, action, install, policy(next: DesktopPolicyState) { policy = next; ui!.sync() },
++  return { view, action, install, owner, policy(next: DesktopPolicyState) { policy = next; ui!.sync() },
+     update(next: DesktopUpdateState) { update = next; ui!.sync() } }
+ }
+ 
+@@ -140,15 +148,6 @@ it('rejects same-URL child frames and removes quit from renderer privileges', ()
+   expect(() => f.action('quit')).toThrow(/invalid action/)
+ })
+ 
+-it('exits the application when the mandatory window is closed without clearing the policy', () => {
+-  const f = setup()
+-  const event = { preventDefault: vi.fn() }
+-  window.emit('close', event)
+-  expect(event.preventDefault).toHaveBeenCalledOnce()
+-  expect(native.quit).toHaveBeenCalledOnce()
+-  expect(f.view().policy.blocking).toBe(true)
+-})
+-
+ it('fades on clearance, reuses a reblocked window, and cancels teardown on disposal', () => {
+   vi.useFakeTimers()
+   const f = setup()
+@@ -212,3 +211,219 @@ it.each(['darwin', 'win32'] as const)('includes the installation wait notice onl
+     ? '更新期间应用将暂时关闭，完成后会自动打开。\n\n更新可能需要一些时间，请耐心等待，期间请勿重复启动应用。'
+     : '更新期间应用将暂时关闭，完成后会自动打开。')
+ })
++
++it('updates the same macOS view in the background without showing or focusing the owner', () => {
++  const f = setup()
++  f.update({ phase: 'downloading', version: '1.0.1-nightly.1', percent: 35 })
++  f.update({ phase: 'error', version: '1.0.1-nightly.1', failedOperation: 'download' })
++  expect(f.owner).not.toBe(window)
++  expect(f.owner.show).not.toHaveBeenCalled()
++  expect(f.owner.focus).not.toHaveBeenCalled()
++  expect(window.loadURL).toHaveBeenCalledOnce()
++  expect(ui!.confirmationWindow).toBe(f.owner)
++  expect(f.view().policy.blocking).toBe(true)
++})
++
++it('cancels outstanding approval when the mandatory view is destroyed without clearing policy', async () => {
++  const f = setup()
++  const approval = ui!.confirm('1.0.1-nightly.1', true)
++  window.webContents.emit('destroyed')
++  expect(await approval).toBe(false)
++  expect(f.view().policy.blocking).toBe(true)
++})
++
++it.each(['initial', 'recovery'] as const)('keeps the native owner title unchanged after %s view loading fails', async (stage) => {
++  const failure = new Error('view load failed')
++  const report = vi.spyOn(console, 'error').mockImplementation(() => {})
++  const f = setup('darwin', (surface) => {
++    if (stage === 'initial') surface.loadURL.mockRejectedValueOnce(failure)
++  })
++  expect(f.owner).not.toBe(window)
++  if (stage === 'recovery') {
++    window.loadURL.mockRejectedValueOnce(failure)
++    window.webContents.emit('render-process-gone')
++  }
++  await expect(window.loadURL.mock.results.at(-1)!.value).rejects.toBe(failure)
++  expect(f.owner.setTitle).not.toHaveBeenCalled()
++  expect(f.owner.show).not.toHaveBeenCalled()
++  expect(f.owner.focus).not.toHaveBeenCalled()
++  expect(native.quit).not.toHaveBeenCalled()
++  expect(f.view().policy.blocking).toBe(true)
++  expect(report).toHaveBeenCalledWith(expect.stringContaining('mandatory update view'), failure)
++  f.policy({ blocking: false, checking: false })
++  ui!.dispose()
++  expect(f.owner.setTitle).not.toHaveBeenCalled()
++})
++
++it('defers native recovery until foreground and opens the policy download page without installing', async () => {
++  vi.spyOn(console, 'error').mockImplementation(() => {})
++  const f = setup('darwin')
++  await Promise.resolve()
++  vi.spyOn(f.owner, 'isFocused').mockReturnValue(false)
++  window.loadURL.mockRejectedValueOnce(new Error('local load failed'))
++  window.webContents.emit('render-process-gone')
++  await Promise.resolve()
++  expect(native.messageBox).not.toHaveBeenCalled()
++  const answer = Promise.withResolvers<{ response: number }>()
++  native.messageBox.mockReturnValueOnce(answer.promise)
++  vi.spyOn(f.owner, 'isFocused').mockReturnValue(true)
++  f.owner.emit('focus')
++  f.owner.emit('focus')
++  expect(native.messageBox).toHaveBeenCalledOnce()
++  expect(native.messageBox).toHaveBeenCalledWith(f.owner, expect.objectContaining({
++    message: '请更新后继续使用', cancelId: -1,
++    buttons: ['打开下载页面', '退出'],
++  }))
++  expect(native.messageBox.mock.calls[0]![1].detail).toContain('1.0.1-nightly.1')
++  answer.resolve({ response: 0 })
++  await Promise.resolve()
++  await Promise.resolve()
++  expect(window.loadURL).toHaveBeenCalledTimes(2)
++  expect(native.open).toHaveBeenCalledWith('https://downloads.example.com/desktop')
++  expect(f.install).not.toHaveBeenCalled()
++  expect(f.view().policy.blocking).toBe(true)
++  expect(native.quit).not.toHaveBeenCalled()
++})
++
++it.each(['clearance', 'dispose', 'hide'] as const)('ignores native recovery responses after %s', async (reason) => {
++  vi.spyOn(console, 'error').mockImplementation(() => {})
++  const f = setup('darwin', (surface) => { surface.loadURL.mockRejectedValueOnce(new Error('local load failed')) })
++  await Promise.resolve()
++  const options = native.messageBox.mock.calls[0]![1]
++  expect(options.signal!.aborted).toBe(false)
++  if (reason === 'clearance') f.policy({ blocking: false, checking: false })
++  else if (reason === 'dispose') ui!.dispose()
++  else f.owner.emit('hide')
++  expect(options.signal!.aborted).toBe(true)
++  expect(f.owner.setTitle).not.toHaveBeenCalled()
++})
++
++it('uses the normal quit entry only for an explicit native recovery exit', async () => {
++  vi.spyOn(console, 'error').mockImplementation(() => {})
++  const answer = Promise.withResolvers<{ response: number }>()
++  const f = setup('darwin')
++  await Promise.resolve()
++  native.messageBox.mockReturnValueOnce(answer.promise)
++  window.loadURL.mockRejectedValueOnce(new Error('local recovery failed'))
++  window.webContents.emit('render-process-gone')
++  await Promise.resolve()
++  answer.resolve({ response: 1 })
++  await Promise.resolve()
++  expect(native.quit).toHaveBeenCalledOnce()
++  expect(f.view().policy.blocking).toBe(true)
++  expect(f.install).not.toHaveBeenCalled()
++})
++
++it('retains blocking and reopens native recovery after a non-action dismissal', async () => {
++  vi.spyOn(console, 'error').mockImplementation(() => {})
++  const answer = Promise.withResolvers<{ response: number }>()
++  const f = setup()
++  await Promise.resolve()
++  native.messageBox.mockReturnValueOnce(answer.promise)
++  window.loadURL.mockRejectedValueOnce(new Error('local recovery failed'))
++  window.webContents.emit('render-process-gone')
++  await Promise.resolve()
++  answer.resolve({ response: -1 })
++  await Promise.resolve()
++  expect(native.quit).not.toHaveBeenCalled()
++  expect(f.view().policy.blocking).toBe(true)
++  expect(window.loadURL).toHaveBeenCalledTimes(2)
++  expect(native.messageBox).toHaveBeenCalledTimes(2)
++})
++
++it('ignores a late quit response after policy clearance', async () => {
++  vi.spyOn(console, 'error').mockImplementation(() => {})
++  const f = setup()
++  await Promise.resolve()
++  const answer = Promise.withResolvers<{ response: number }>()
++  native.messageBox.mockReturnValueOnce(answer.promise)
++  window.loadURL.mockRejectedValueOnce(new Error('local recovery failed'))
++  window.webContents.emit('render-process-gone')
++  await Promise.resolve()
++  f.policy({ blocking: false, checking: false })
++  answer.resolve({ response: 1 })
++  await Promise.resolve()
++  expect(native.quit).not.toHaveBeenCalled()
++})
++
++
++it.each([undefined, 'https://unapproved.example.com/download'])('omits native download action for unavailable destination %s', async (page) => {
++  vi.spyOn(console, 'error').mockImplementation(() => {})
++  const f = setup()
++  await Promise.resolve()
++  f.policy({ blocking: true, checking: false, ...(page === undefined ? {} : { page }) })
++  window.loadURL.mockRejectedValueOnce(new Error('local recovery failed'))
++  window.webContents.emit('render-process-gone')
++  await Promise.resolve()
++  expect(native.messageBox.mock.calls[0]![1].buttons).toEqual(['退出'])
++  expect(native.messageBox.mock.calls[0]![1].cancelId).toBe(-1)
++  expect(native.open).not.toHaveBeenCalled()
++})
++
++it('does not open a changed policy URL using approval for the previous destination', async () => {
++  vi.spyOn(console, 'error').mockImplementation(() => {})
++  const f = setup()
++  await Promise.resolve()
++  const answer = Promise.withResolvers<{ response: number }>()
++  native.messageBox.mockReturnValueOnce(answer.promise)
++  window.loadURL.mockRejectedValueOnce(new Error('local recovery failed'))
++  window.webContents.emit('render-process-gone')
++  await Promise.resolve()
++  f.policy({ blocking: true, checking: false, page: 'https://downloads.example.com/new' })
++  answer.resolve({ response: 0 })
++  await Promise.resolve()
++  expect(native.open).not.toHaveBeenCalled()
++  expect(native.messageBox).toHaveBeenCalledTimes(2)
++})
++
++
++it('reports a browser-opening failure in the native fallback without claiming download success', async () => {
++  vi.spyOn(console, 'error').mockImplementation(() => {})
++  const f = setup()
++  await Promise.resolve()
++  const answer = Promise.withResolvers<{ response: number }>()
++  native.messageBox.mockReturnValueOnce(answer.promise)
++  native.open.mockRejectedValueOnce(new Error('browser unavailable'))
++  window.loadURL.mockRejectedValueOnce(new Error('local recovery failed'))
++  window.webContents.emit('render-process-gone')
++  await Promise.resolve()
++  answer.resolve({ response: 0 })
++  await vi.waitFor(() => { expect(native.messageBox).toHaveBeenCalledTimes(2) })
++  expect(native.messageBox.mock.calls[1]![1].detail).toContain('无法打开下载页面，请重试')
++  expect(f.view().policy.blocking).toBe(true)
++  expect(f.install).not.toHaveBeenCalled()
++})
++
++
++it('uses the configured policy title as the native headline without repeating it in detail', async () => {
++  vi.spyOn(console, 'error').mockImplementation(() => {})
++  const f = setup()
++  await Promise.resolve()
++  f.policy({ blocking: true, checking: false, title: 'Configured title', detail: 'Configured detail' })
++  window.loadURL.mockRejectedValueOnce(new Error('local recovery failed'))
++  window.webContents.emit('render-process-gone')
++  await Promise.resolve()
++  const options = native.messageBox.mock.calls[0]![1]
++  expect(options.message).toBe('Configured title')
++  expect(options.detail).toBe('Configured detail\n\n新版本：1.0.1-nightly.1')
++})
++
++
++it('rechecks recovery after an aborted native prompt finishes following a foreground return', async () => {
++  vi.spyOn(console, 'error').mockImplementation(() => {})
++  const f = setup()
++  await Promise.resolve()
++  const answer = Promise.withResolvers<{ response: number }>()
++  native.messageBox.mockReturnValueOnce(answer.promise)
++  window.loadURL.mockRejectedValueOnce(new Error('local recovery failed'))
++  window.webContents.emit('render-process-gone')
++  await Promise.resolve()
++  f.owner.emit('hide')
++  f.owner.emit('focus')
++  expect(native.messageBox).toHaveBeenCalledOnce()
++  answer.resolve({ response: 1 })
++  await Promise.resolve()
++  expect(native.messageBox).toHaveBeenCalledTimes(2)
++  expect(native.quit).not.toHaveBeenCalled()
++  expect(f.view().policy.blocking).toBe(true)
++})
+diff --git a/apps/desktop/tests/update-dialog.spec.ts b/apps/desktop/tests/update-dialog.spec.ts
+index 16b5888..8f949ad 100644
+--- a/apps/desktop/tests/update-dialog.spec.ts
++++ b/apps/desktop/tests/update-dialog.spec.ts
+@@ -1,233 +1,216 @@
+ import { afterEach, expect, it, vi } from 'vitest'
+ import type { BrowserWindow } from 'electron'
+-import { DesktopUpdateDialog, UPDATE_DIALOG_IPC } from '../src/update-dialog.ts'
++import { DesktopUpdateDialog, UPDATE_DIALOG_IPC, type UpdateDialogOptions } from '../src/update-dialog.ts'
+ import { DesktopUpdateOverlays } from '../src/update-overlay.ts'
+ import { resolveDesktopLocale, type DesktopLocale } from '../src/locale.ts'
+ 
+ const fixture = await vi.hoisted(async () => {
+   const { EventEmitter } = await import('node:events')
+   const handlers = new Map<string, (...args: unknown[]) => unknown>()
+-  const windows: FakeWindow[] = []
+-  class FakeWindow extends EventEmitter {
++  const views: FakeView[] = []
++  const load = { failure: false }
++  class FakeParent extends EventEmitter {
+     destroyed = false
+-    readonly webContents = Object.assign(new EventEmitter(), {
+-      send: vi.fn(),
+-      mainFrame: { url: 'dsh-app://shell/update-dialog.html' },
+-      setWindowOpenHandler: vi.fn(),
+-      insertCSS: vi.fn(async () => 'blur'),
+-      removeInsertedCSS: vi.fn(async () => {}),
+-    })
+     readonly focus = vi.fn()
+-    readonly show = vi.fn()
+-    readonly hide = vi.fn()
+-    readonly setBounds = vi.fn()
+-    readonly loadURL = vi.fn(async () => {})
+-    constructor(readonly options: unknown) { super(); windows.push(this) }
++    readonly isFocused = vi.fn(() => true)
++    readonly contentView = { addChildView: vi.fn(), removeChildView: vi.fn() }
++    readonly webContents = Object.assign(new EventEmitter(), { focus: vi.fn() })
+     getContentBounds() { return { x: 10, y: 20, width: 900, height: 650 } }
++    isFullScreen() { return false }
+     isDestroyed() { return this.destroyed }
+-    isVisible() { return true }
+     destroy() { this.destroyed = true; this.emit('closed') }
+-    setMenu() {}
+   }
+-  return { handlers, windows, FakeWindow }
++  class FakeView {
++    destroyed = false
++    readonly webContents = Object.assign(new EventEmitter(), {
++      send: vi.fn(), focus: vi.fn(),
++      mainFrame: { url: 'dsh-app://shell/update-dialog.html' },
++      setWindowOpenHandler: vi.fn<(handler: () => { action: 'deny' }) => void>(),
++      isDestroyed: () => this.destroyed,
++      loadURL: vi.fn(async () => { if (load.failure) throw new Error('load failed'); this.webContents.emit('did-finish-load') }),
++      close: vi.fn(() => { this.destroyed = true; this.webContents.emit('destroyed') }),
++    })
++    readonly setBackgroundColor = vi.fn()
++    readonly setBounds = vi.fn()
++    constructor(readonly options: unknown) { views.push(this) }
++  }
++  return { handlers, views, FakeParent, FakeView, load }
+ })
+-vi.mock('electron', () => ({ BrowserWindow: fixture.FakeWindow, ipcMain: {
++vi.mock('electron', () => ({ WebContentsView: fixture.FakeView, ipcMain: {
+   handle: (name: string, fn: (...args: unknown[]) => unknown) => fixture.handlers.set(name, fn),
+   removeHandler: (name: string) => fixture.handlers.delete(name),
+ } }))
+ 
+ let dialogs: DesktopUpdateDialog | undefined
+ afterEach(() => {
+-  vi.useRealTimers()
+   dialogs?.dispose()
+   dialogs = undefined
+-  for (const window of fixture.windows) if (!window.isDestroyed()) window.destroy()
+-  fixture.windows.length = 0
++  vi.useRealTimers()
++  fixture.views.length = 0
+   fixture.handlers.clear()
++  fixture.load.failure = false
++  vi.restoreAllMocks()
+ })
+ 
+ function setup(locale: DesktopLocale | (() => DesktopLocale) = resolveDesktopLocale('zh-CN')) {
+-  const parent = new fixture.FakeWindow({})
+-  dialogs = new DesktopUpdateDialog('preload-update-dialog.cjs', locale, new DesktopUpdateOverlays())
+-  const show = (signal?: AbortSignal) => dialogs!.show(parent as unknown as BrowserWindow, {
+-    message: '下载完成', buttons: ['安装并重启'], cancelId: 1, ...(signal === undefined ? {} : { signal }),
++  const parent = new fixture.FakeParent()
++  const owner = parent as unknown as BrowserWindow
++  const overlays = new DesktopUpdateOverlays()
++  dialogs = new DesktopUpdateDialog('preload-update-dialog.cjs', locale, overlays)
++  const show = (signal?: AbortSignal, options: Partial<UpdateDialogOptions> = {}) => dialogs!.show(owner, {
++    message: '下载完成', buttons: ['安装并重启'], cancelId: 1, ...options, ...(signal === undefined ? {} : { signal }),
+   })
+   const invoke = (channel: string, ...args: unknown[]) => {
+-    const window = fixture.windows.at(-1)!
+-    const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame }
+-    const view = fixture.handlers.get(UPDATE_DIALOG_IPC.status)!(event) as { revision: number }
+-    return fixture.handlers.get(channel)!(event, ...(channel === UPDATE_DIALOG_IPC.respond ? [view.revision, ...args] : args))
++    const view = fixture.views.at(-1)!
++    const event = { sender: view.webContents, senderFrame: view.webContents.mainFrame }
++    const state = fixture.handlers.get(UPDATE_DIALOG_IPC.status)!(event) as { revision: number }
++    return fixture.handlers.get(channel)!(event, ...(channel === UPDATE_DIALOG_IPC.respond ? [state.revision, ...args] : args))
+   }
+-  return { parent, show, invoke }
++  return { parent, owner, show, invoke, overlays }
+ }
+ 
+-it('accepts only a displayed choice from its own main frame and retains cancellation outside the button list', async () => {
++it('accepts only a displayed choice from its isolated shell frame', async () => {
+   const f = setup()
+-  expect(dialogs!.isOpen).toBe(false)
+   const pending = f.show()
++  const view = fixture.views[0]!
+   expect(dialogs!.isOpen).toBe(true)
+-  const window = fixture.windows.at(-1)!
+   expect(f.invoke(UPDATE_DIALOG_IPC.status)).toMatchObject({ closeLabel: '关闭', buttons: ['安装并重启'], cancelId: 1 })
+   const respond = fixture.handlers.get(UPDATE_DIALOG_IPC.respond)!
+-  expect(() => respond({ sender: {}, senderFrame: window.webContents.mainFrame }, 0)).toThrow(/unowned/)
+-  expect(() => respond({ sender: window.webContents, senderFrame: { ...window.webContents.mainFrame } }, 0)).toThrow(/unowned/)
++  expect(() => respond({ sender: f.parent.webContents, senderFrame: view.webContents.mainFrame }, 0)).toThrow(/unowned/)
++  expect(() => respond({ sender: view.webContents, senderFrame: { ...view.webContents.mainFrame } }, 0)).toThrow(/unowned/)
+   for (const index of [-1, 2, '0', 0.5, NaN]) expect(() => f.invoke(UPDATE_DIALOG_IPC.respond, index)).toThrow(/invalid/)
+   f.invoke(UPDATE_DIALOG_IPC.respond, 1)
+   expect(await pending).toEqual({ response: 1, checkboxChecked: false })
+   expect(dialogs!.isOpen).toBe(false)
+-  const next = f.show()
+-  f.invoke(UPDATE_DIALOG_IPC.respond, 0)
+-  expect((await next).response).toBe(0)
+ })
+ 
+-it('releases visible Windows modality before destroying a dismissed dialog', async () => {
+-  vi.useFakeTimers()
++it('attaches within its owner and resizes below the Windows caption without a native child window', async () => {
+   const f = setup()
+   const pending = f.show()
+-  const window = fixture.windows.at(-1)!
+-  const destroy = vi.spyOn(window, 'destroy').mockImplementation(() => {
+-    expect(window.hide).toHaveBeenCalledTimes(process.platform === 'win32' ? 1 : 0)
+-    window.destroyed = true
+-    window.emit('closed')
+-  })
+-  f.invoke(UPDATE_DIALOG_IPC.respond, 0)
+-  await pending
+-  expect(destroy).not.toHaveBeenCalled()
+-  await vi.advanceTimersByTimeAsync(150)
+-  expect(destroy).toHaveBeenCalledOnce()
+-})
+-
+-it('follows the parent geometry and removes listeners when closed or replaced', async () => {
+-  const f = setup()
+-  const first = f.show()
+-  const window = fixture.windows.at(-1)!
+-  expect(window.options).toMatchObject({ frame: false, transparent: true, modal: process.platform !== 'darwin', width: 900, height: 650 })
+-  window.emit('ready-to-show')
+-  expect(window.show).toHaveBeenCalledOnce()
++  const view = fixture.views[0]!
++  expect(f.parent.contentView.addChildView).toHaveBeenCalledWith(view)
++  expect(view.options).toMatchObject({ webPreferences: { preload: 'preload-update-dialog.cjs', sandbox: true, contextIsolation: true } })
++  expect(view.setBackgroundColor).toHaveBeenCalledWith('#00000000')
++  const top = process.platform === 'win32' ? 40 : 0
++  expect(view.setBounds).toHaveBeenCalledWith({ x: 0, y: top, width: 900, height: 650 - top })
+   f.parent.emit('resize')
+-  expect(window.setBounds).toHaveBeenCalledWith(f.parent.getContentBounds())
+-  const next = f.show()
+-  expect((await first).response).toBe(1)
+-  expect(f.parent.listenerCount('resize')).toBe(1)
+-  fixture.windows.at(-1)!.destroy()
+-  expect((await next).response).toBe(1)
+-  expect(f.parent.listenerCount('resize')).toBe(0)
+-  expect(f.parent.listenerCount('move')).toBe(0)
+-  expect(f.parent.webContents.insertCSS).not.toHaveBeenCalled()
+-  expect(f.parent.webContents.removeInsertedCSS).not.toHaveBeenCalled()
+-})
+-
+-it('cancels on abort, renderer failure, disposal, or an already-closed parent', async () => {
+-  const f = setup()
+-  const controller = new AbortController()
+-  const pending = f.show(controller.signal)
+-  controller.abort()
+-  expect((await pending).response).toBe(1)
+-  expect((await f.show(controller.signal)).response).toBe(1)
+-  const crashing = f.show()
+-  fixture.windows.at(-1)!.webContents.emit('render-process-gone')
+-  expect((await crashing).response).toBe(1)
+-  const stopping = f.show()
+-  dialogs!.dispose()
+-  expect((await stopping).response).toBe(1)
+-  expect(fixture.handlers.size).toBe(0)
+-  const count = fixture.windows.length
+-  expect((await f.show()).response).toBe(1)
+-  expect(fixture.windows).toHaveLength(count)
++  expect(view.setBounds).toHaveBeenCalledTimes(2)
+   f.parent.destroy()
+-  expect((await f.show()).response).toBe(1)
+-})
+-
+-it('denies navigation away from the owned document', async () => {
+-  const f = setup()
+-  const pending = f.show()
+-  const window = fixture.windows.at(-1)!
+-  const event = { preventDefault: vi.fn() }
+-  window.webContents.emit('will-navigate', event, 'https://example.com')
+-  expect(event.preventDefault).toHaveBeenCalledOnce()
+-  window.webContents.emit('will-navigate', event, 'dsh-app://shell/update-dialog.html')
+-  expect(event.preventDefault).toHaveBeenCalledOnce()
+-  dialogs!.cancel()
+-  await pending
+-})
+-
+-it('supplies localized disclosure copy without putting diagnostics in the ordinary detail', async () => {
+-  const f = setup()
+-  const pending = dialogs!.show(f.parent as unknown as BrowserWindow, {
+-    message: '未能安全停止任务', technicalDetails: 'exit 0; shutdown acknowledged false',
+-  })
+-  expect(f.invoke(UPDATE_DIALOG_IPC.status)).toMatchObject({ detail: '',
+-    technicalDetails: 'exit 0; shutdown acknowledged false', technicalDetailsLabel: '查看技术详情' })
+-  dialogs!.cancel()
+-  await pending
++  expect((await pending).response).toBe(1)
++  expect(view.webContents.close).toHaveBeenCalledOnce()
++  expect(f.parent.listenerCount('resize')).toBe(0)
++  expect(f.parent.webContents.listenerCount('before-input-event')).toBe(0)
+ })
+ 
+-it('replaces content without releasing the backdrop and rejects a response from the previous prompt', async () => {
++it('updates a background result in the same view without activating its owner', async () => {
+   const f = setup()
+-  const abort = new AbortController()
+-  const first = f.show(abort.signal)
+-  const window = fixture.windows.at(-1)!
++  f.parent.isFocused.mockReturnValue(false)
++  const first = f.show()
++  await Promise.resolve()
++  const view = fixture.views[0]!
+   const old = f.invoke(UPDATE_DIALOG_IPC.status) as { revision: number }
+-  const next = f.show()
++  const next = f.show(undefined, { message: '已是最新版本' })
+   expect((await first).response).toBe(1)
+-  expect(fixture.windows).toHaveLength(2)
+-  expect(window.loadURL).toHaveBeenCalledOnce()
+-  expect(window.webContents.send.mock.calls).toEqual([[UPDATE_DIALOG_IPC.changed, f.invoke(UPDATE_DIALOG_IPC.status)]])
+-  expect(f.parent.webContents.removeInsertedCSS).not.toHaveBeenCalled()
+-  abort.abort()
++  expect(fixture.views).toHaveLength(1)
++  expect(f.parent.contentView.addChildView).toHaveBeenCalledOnce()
++  expect(view.webContents.loadURL).toHaveBeenCalledOnce()
++  expect(f.parent.focus).not.toHaveBeenCalled()
++  expect(view.webContents.focus).not.toHaveBeenCalled()
++  expect(view.webContents.send).toHaveBeenLastCalledWith(UPDATE_DIALOG_IPC.changed, expect.objectContaining({ message: '已是最新版本' }))
+   expect(() => fixture.handlers.get(UPDATE_DIALOG_IPC.respond)!({
+-    sender: window.webContents, senderFrame: window.webContents.mainFrame,
++    sender: view.webContents, senderFrame: view.webContents.mainFrame,
+   }, old.revision, 0)).toThrow(/stale/)
+   f.invoke(UPDATE_DIALOG_IPC.respond, 0)
+   expect((await next).response).toBe(0)
+ })
+ 
+-it('fades out before releasing the backdrop and cancels pending removal when another prompt opens', async () => {
++it('releases keyboard blocking only after fade-out and retains it across replacement', async () => {
+   vi.useFakeTimers()
+   const f = setup()
++  expect(f.overlays.input(f.owner)).toEqual({ revision: 0, blocked: false })
+   const first = f.show()
+-  const window = fixture.windows.at(-1)!
++  const view = fixture.views[0]!
++  expect(f.overlays.input(f.owner)).toEqual({ revision: 1, blocked: true })
+   dialogs!.cancel()
+   await first
+-  expect(window.isDestroyed()).toBe(false)
+-  expect(window.webContents.send).toHaveBeenLastCalledWith(UPDATE_DIALOG_IPC.changed, null)
++  expect(view.webContents.send).toHaveBeenLastCalledWith(UPDATE_DIALOG_IPC.changed, null)
+   const next = f.show()
+   await vi.advanceTimersByTimeAsync(150)
+-  expect(window.isDestroyed()).toBe(false)
++  expect(view.destroyed).toBe(false)
++  expect(f.overlays.input(f.owner)).toEqual({ revision: 1, blocked: true })
+   dialogs!.cancel()
+   await next
+   await vi.advanceTimersByTimeAsync(150)
+-  expect(window.isDestroyed()).toBe(true)
+-  expect(f.parent.listenerCount('focus')).toBe(0)
+-  expect(f.parent.webContents.listenerCount('before-input-event')).toBe(0)
++  expect(view.destroyed).toBe(true)
++  expect(f.parent.contentView.removeChildView).toHaveBeenCalledWith(view)
++  expect(f.overlays.input(f.owner)).toEqual({ revision: 2, blocked: false })
+ })
+ 
+-it.runIf(process.platform === 'darwin')('blocks parent keyboard input and redirects focus without a native sheet', async () => {
++it('blocks owner input and restores dialog focus only when that owner is focused', async () => {
+   const f = setup()
++  f.parent.isFocused.mockReturnValue(false)
+   const pending = f.show()
+-  const window = fixture.windows.at(-1)!
++  await Promise.resolve()
++  const view = fixture.views[0]!
+   const event = { preventDefault: vi.fn() }
+   f.parent.webContents.emit('before-input-event', event)
+   expect(event.preventDefault).toHaveBeenCalledOnce()
++  expect(view.webContents.focus).not.toHaveBeenCalled()
++  f.parent.isFocused.mockReturnValue(true)
+   f.parent.emit('focus')
+-  expect(window.focus).toHaveBeenCalledTimes(2)
++  expect(view.webContents.focus).toHaveBeenCalledOnce()
++  dialogs!.focus()
++  expect(f.parent.focus).toHaveBeenCalledOnce()
+   dialogs!.dispose()
+   await pending
+-  expect(f.parent.webContents.listenerCount('before-input-event')).toBe(0)
++  expect(f.parent.listenerCount('focus')).toBe(0)
+ })
+ 
+-it('reads the current locale for each presentation', async () => {
++it('cancels on abort, renderer failure, failed load, disposal, or a destroyed owner', async () => {
++  const f = setup()
++  const abort = new AbortController()
++  const pending = f.show(abort.signal)
++  abort.abort()
++  expect((await pending).response).toBe(1)
++  expect((await f.show(abort.signal)).response).toBe(1)
++  const crashing = f.show()
++  fixture.views.at(-1)!.webContents.emit('render-process-gone')
++  expect((await crashing).response).toBe(1)
++  fixture.load.failure = true
++  expect((await f.show()).response).toBe(1)
++  fixture.load.failure = false
++  const stopping = f.show()
++  dialogs!.dispose()
++  expect((await stopping).response).toBe(1)
++  expect(fixture.handlers.size).toBe(0)
++  expect((await f.show()).response).toBe(1)
++  f.parent.destroy()
++  expect((await f.show()).response).toBe(1)
++})
++
++it('denies foreign navigation, redirects, and new windows', async () => {
++  const f = setup()
++  const pending = f.show()
++  const contents = fixture.views[0]!.webContents
++  const event = { preventDefault: vi.fn() }
++  contents.emit('will-navigate', event, 'https://example.com')
++  contents.emit('will-navigate', event, 'dsh-app://shell/update-dialog.html')
++  expect(event.preventDefault).toHaveBeenCalledOnce()
++  contents.emit('will-redirect', event)
++  expect(event.preventDefault).toHaveBeenCalledTimes(2)
++  expect(contents.setWindowOpenHandler.mock.calls[0]![0]()).toEqual({ action: 'deny' })
++  dialogs!.cancel()
++  await pending
++})
++
++it('reads the current locale and keeps technical diagnostics separate from ordinary detail', async () => {
+   let locale = resolveDesktopLocale('en')
+   const f = setup(() => locale)
+   for (const language of ['zh-CN', 'en']) {
+     locale = resolveDesktopLocale(language)
+-    const pending = f.show()
+-    const window = fixture.windows.at(-1)!
+-    const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame }
+-    expect(fixture.handlers.get(UPDATE_DIALOG_IPC.status)!(event)).toMatchObject({
+-      locale: locale.id, closeLabel: locale.messages.updateClose,
+-      technicalDetailsLabel: locale.messages.updateTechnicalDetails,
+-    })
++    const pending = f.show(undefined, { technicalDetails: 'exit 0; shutdown acknowledged false' })
++    expect(f.invoke(UPDATE_DIALOG_IPC.status)).toMatchObject({ locale: locale.id, closeLabel: locale.messages.updateClose,
++      detail: '', technicalDetails: 'exit 0; shutdown acknowledged false', technicalDetailsLabel: locale.messages.updateTechnicalDetails })
+     dialogs!.cancel()
+     await pending
+   }
+diff --git a/apps/desktop/tests/update-overlay.spec.ts b/apps/desktop/tests/update-overlay.spec.ts
+index 56e49df..c61c2fa 100644
+--- a/apps/desktop/tests/update-overlay.spec.ts
++++ b/apps/desktop/tests/update-overlay.spec.ts
+@@ -1,160 +1,102 @@
+ import { EventEmitter } from 'node:events'
+-import { afterEach, expect, it, onTestFinished, vi } from 'vitest'
+-import type { BrowserWindow, BrowserWindowConstructorOptions, WebContents } from 'electron'
++import { afterEach, expect, it, vi } from 'vitest'
+ import { DesktopUpdateOverlays } from '../src/update-overlay.ts'
+ 
+-const native = vi.hoisted(() => ({ create: vi.fn<(options: BrowserWindowConstructorOptions) => object>() }))
+-vi.mock('electron', () => ({ BrowserWindow: function (options: object) { return native.create(options) } }))
+-
+-afterEach(() => { vi.restoreAllMocks() })
+-
+-function visibilityFixture(visible = true) {
+-  const visibility = { visible }
+-  const parent: ParentFixture & Pick<BrowserWindow, 'isVisible'> = Object.assign(new EventEmitter(), {
+-    getContentBounds: () => ({ x: 0, y: 0, width: 1000, height: 700 }),
+-    webContents: Object.assign(new EventEmitter(), { insertCSS: vi.fn(async () => 'blur'), removeInsertedCSS: vi.fn(async () => {}) }),
+-    isDestroyed: (): boolean => false,
+-    isVisible: () => visibility.visible,
++const native = vi.hoisted(() => ({ create: vi.fn<(options: object) => object>() }))
++vi.mock('electron', () => ({ WebContentsView: function (options: object) { return native.create(options) } }))
++afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs() })
++function fixture() {
++  let destroyed = false
++  const parent = Object.assign(new EventEmitter(), {
++    getContentBounds: () => ({ x: 50, y: 40, width: 900, height: 650 }), isDestroyed: () => destroyed,
++    isFullScreen: vi.fn(() => false), isFocused: vi.fn(() => false), focus: vi.fn(), show: vi.fn(),
++    contentView: { addChildView: vi.fn(), removeChildView: vi.fn() },
++    webContents: Object.assign(new EventEmitter(), { focus: vi.fn() }),
++    destroy() { destroyed = true; parent.emit('closed') },
+   })
+-  const window = Object.assign(new EventEmitter(), {
+-    destroyed: false,
+-    webContents: { setWindowOpenHandler: vi.fn() }, show: vi.fn(), focus: vi.fn(),
+-    setMenu: vi.fn(), setBounds: vi.fn(), isDestroyed: () => window.destroyed,
+-  })
+-  native.create.mockReturnValue(window)
+-  new DesktopUpdateOverlays().create(parent as BrowserWindow, 'owned', 'Update required', false)
+-  return { parent, window, visibility }
++  const views: ReturnType<typeof view>[] = []
++  function view() {
++    let closed = false
++    const webContents = Object.assign(new EventEmitter(), { focus: vi.fn(), isDestroyed: () => closed,
++      loadURL: vi.fn(async () => {}), setWindowOpenHandler: vi.fn(),
++      close: vi.fn(() => { if (!closed) { closed = true; webContents.emit('destroyed') } }),
++    })
++    return { get webContents() { if (closed) throw new Error('Destroyed native view'); return webContents },
++      setBounds: vi.fn(), setBackgroundColor: vi.fn() }
++  }
++  native.create.mockImplementation(() => { const next = view(); views.push(next); return next })
++  const overlays = new DesktopUpdateOverlays()
++  const owner = parent
++  return { parent, owner, views, overlays, create: () => overlays.create(owner, 'isolated-preload') }
+ }
+ 
+-it('restores a ready overlay each time its parent is shown and releases visibility ownership on close', async () => {
+-  const { parent, window, visibility } = visibilityFixture()
+-  window.emit('ready-to-show')
+-  expect(window.show).toHaveBeenCalledOnce()
+-  for (let index = 0; index < 2; index++) {
+-    visibility.visible = false
+-    parent.emit('hide')
+-    visibility.visible = true
+-    parent.emit('show')
+-    await Promise.resolve()
+-  }
+-  expect(window.show).toHaveBeenCalledTimes(3)
+-  await Promise.resolve()
+-  expect(parent.webContents.removeInsertedCSS).not.toHaveBeenCalled()
+-  window.destroyed = true
+-  window.emit('closed')
+-  expect(parent.listenerCount('show')).toBe(0)
+-  expect(parent.webContents.insertCSS).not.toHaveBeenCalled()
+-  expect(parent.webContents.removeInsertedCSS).not.toHaveBeenCalled()
+-  parent.emit('show')
+-  expect(window.show).toHaveBeenCalledTimes(3)
++it('never shows or activates its native owner on visibility or background loading', () => {
++  const f = fixture(); const overlay = f.create()
++  expect(f.parent.contentView.addChildView).toHaveBeenCalledWith(f.views[0])
++  f.parent.emit('show'); f.parent.emit('hide'); f.parent.emit('show')
++  overlay.webContents.emit('did-finish-load')
++  expect(f.parent.show).not.toHaveBeenCalled()
++  expect(f.parent.focus).not.toHaveBeenCalled()
++  expect(f.views[0]!.webContents.focus).not.toHaveBeenCalled()
++  expect(f.parent.listenerCount('show')).toBe(0)
++  overlay.destroy()
+ })
+ 
+-it('waits for both a visible parent and a ready document, in either order', async () => {
+-  for (const readyFirst of [true, false]) {
+-    const { parent, window, visibility } = visibilityFixture(false)
+-    if (readyFirst) window.emit('ready-to-show')
+-    else { visibility.visible = true; parent.emit('show') }
+-    expect(window.show).not.toHaveBeenCalled()
+-    if (readyFirst) { visibility.visible = true; parent.emit('show') }
+-    else window.emit('ready-to-show')
+-    await Promise.resolve()
+-    expect(window.show).toHaveBeenCalledOnce()
+-    window.destroyed = true
+-    window.emit('closed')
+-  }
++it.each(['darwin', 'win32', 'linux'] as const)('fits inside the owner with native caption clearance on %s', (platform) => {
++  vi.spyOn(process, 'platform', 'get').mockReturnValue(platform)
++  const f = fixture(); const overlay = f.create(); const top = platform !== 'darwin' ? 40 : 0
++  expect(f.views[0]!.setBounds).toHaveBeenCalledWith({ x: 0, y: top, width: 900, height: 650 - top })
++  f.parent.emit('resize'); expect(f.views[0]!.setBounds).toHaveBeenCalledTimes(2)
++  overlay.destroy()
++  expect(f.parent.listenerCount('resize')).toBe(0)
+ })
+ 
+-it('does not show or change parent styles when closed before its document is ready', async () => {
+-  const { parent, window, visibility } = visibilityFixture(false)
+-  window.destroyed = true
+-  window.emit('closed')
+-  window.emit('ready-to-show')
+-  visibility.visible = true
+-  parent.emit('show')
+-  await Promise.resolve()
+-  expect(window.show).not.toHaveBeenCalled()
+-  expect(parent.listenerCount('show')).toBe(0)
+-  expect(parent.webContents.insertCSS).not.toHaveBeenCalled()
+-  expect(parent.webContents.removeInsertedCSS).not.toHaveBeenCalled()
++it('blocks keyboard input and redirects focus only while the owner is focused', () => {
++  const f = fixture(); const overlay = f.create(); const event = { preventDefault: vi.fn() }
++  f.parent.webContents.emit('before-input-event', event)
++  expect(event.preventDefault).toHaveBeenCalledOnce()
++  expect(f.views[0]!.webContents.focus).not.toHaveBeenCalled()
++  f.parent.isFocused.mockReturnValue(true); f.parent.emit('focus')
++  expect(f.views[0]!.webContents.focus).toHaveBeenCalledOnce()
++  overlay.destroy()
++  expect(f.parent.webContents.focus).toHaveBeenCalledOnce()
++  expect(f.parent.webContents.listenerCount('before-input-event')).toBe(0)
+ })
+ 
+-it('releases a macOS overlay after its parent has already been destroyed', async () => {
+-  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
+-  const { parent, window } = visibilityFixture()
+-  await Promise.resolve()
+-  vi.spyOn(parent, 'isDestroyed').mockReturnValue(true)
+-  Object.defineProperty(parent, 'webContents', { get() { throw new Error('Object has been destroyed') } })
+-  window.destroyed = true
+-  expect(() => window.emit('closed')).not.toThrow()
+-  for (const event of ['focus', 'move', 'resize', 'show']) expect(parent.listenerCount(event)).toBe(0)
++it('keeps input blocked until every view is released and changes the shortcut revision', () => {
++  const f = fixture(); const first = f.create(); const second = f.create()
++  expect(f.overlays.input(f.owner)).toEqual({ blocked: true, revision: 2 })
++  first.destroy(); expect(f.overlays.input(f.owner)).toEqual({ blocked: true, revision: 3 })
++  first.destroy(); second.destroy()
++  expect(f.overlays.input(f.owner)).toEqual({ blocked: false, revision: 4 })
++  expect(new DesktopUpdateOverlays().input(f.owner)).toEqual({ blocked: false, revision: 0 })
+ })
+ 
+-type ParentFixture = EventEmitter & Pick<BrowserWindow, 'getContentBounds' | 'isDestroyed'> & {
+-  webContents: EventEmitter & Pick<WebContents, 'insertCSS' | 'removeInsertedCSS'>
+-}
+-
+-it('keeps the macOS mandatory overlay stationary and blocks parent keyboard input until close', () => {
+-  const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
+-  const parent: ParentFixture = Object.assign(new EventEmitter(), {
+-    getContentBounds: () => ({ x: 0, y: 0, width: 1000, height: 700 }),
+-    webContents: Object.assign(new EventEmitter(), { insertCSS: vi.fn(async () => 'blur'), removeInsertedCSS: vi.fn(async () => {}) }),
+-    isDestroyed: () => false,
+-  })
+-  const window = Object.assign(new EventEmitter(), {
+-    webContents: { setWindowOpenHandler: vi.fn() }, show: vi.fn(), focus: vi.fn(),
+-    setMenu: vi.fn(), setBounds: vi.fn(), isDestroyed: () => false,
+-  })
+-  native.create.mockReturnValue(window)
+-  try {
+-    new DesktopUpdateOverlays().create(parent as BrowserWindow, 'owned', 'Update required', false)
+-    expect(native.create).toHaveBeenLastCalledWith(expect.objectContaining({ modal: false, transparent: true, frame: false }))
+-    const event = { preventDefault: vi.fn() }
+-    parent.webContents.emit('before-input-event', event)
+-    expect(event.preventDefault).toHaveBeenCalledOnce()
+-    expect(window.focus).toHaveBeenCalledOnce()
+-    window.emit('closed')
+-    expect(parent.listenerCount('focus')).toBe(0)
+-    expect(parent.webContents.listenerCount('before-input-event')).toBe(0)
+-  } finally { platform.mockRestore() }
++it('closes the view after owner destruction without accessing destroyed native contents', () => {
++  const f = fixture(); const overlay = f.create()
++  Object.defineProperty(f.parent, 'webContents', { get() { throw new Error('Destroyed owner') } })
++  expect(() => { f.parent.destroy() }).not.toThrow()
++  expect(overlay.isDestroyed()).toBe(true)
++  expect(f.parent.listenerCount('focus')).toBe(0)
++  expect(f.parent.listenerCount('closed')).toBe(0)
++  expect(f.parent.contentView.removeChildView).not.toHaveBeenCalled()
+ })
+ 
+-it('blocks each parent until its last owned overlay closes and invalidates each transition', () => {
+-  const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
+-  onTestFinished(() => { platform.mockRestore() })
+-  const parent = (): ParentFixture => Object.assign(new EventEmitter(), {
+-    getContentBounds: () => ({ x: 0, y: 0, width: 1000, height: 700 }),
+-    webContents: Object.assign(new EventEmitter(), { insertCSS: vi.fn(async () => 'blur'), removeInsertedCSS: vi.fn(async () => {}) }),
+-    isDestroyed: () => false,
+-  })
+-  const firstParent = parent() as BrowserWindow
+-  const secondParent = parent() as BrowserWindow
+-  const overlays = new DesktopUpdateOverlays()
+-  const isolated = new DesktopUpdateOverlays()
+-  native.create.mockImplementation(() => {
+-    const window = Object.assign(new EventEmitter(), {
+-      webContents: { setWindowOpenHandler: vi.fn() }, show: vi.fn(), focus: vi.fn(),
+-      setMenu: vi.fn(), setBounds: vi.fn(), isDestroyed: () => false,
+-    })
+-    onTestFinished(() => { window.emit('closed') })
+-    return window
+-  })
+-  expect(overlays.input(firstParent)).toEqual({ revision: 0, blocked: false })
+-  const first = overlays.create(firstParent, 'owned', 'Update required', false)
+-  const second = overlays.create(firstParent, 'owned', 'Confirm installation', false)
+-  const other = overlays.create(secondParent, 'owned', 'Update required', false)
+-  expect(overlays.input(firstParent)).toMatchObject({ revision: 2, blocked: true })
+-  expect(overlays.input(secondParent)).toMatchObject({ revision: 1, blocked: true })
+-  expect(isolated.input(firstParent)).toEqual({ revision: 0, blocked: false })
+-  first.emit('closed')
+-  expect(overlays.input(firstParent)).toMatchObject({ revision: 3, blocked: true })
+-  expect(firstParent.webContents.listenerCount('before-input-event')).toBe(1)
+-  second.emit('closed')
+-  expect(overlays.input(firstParent)).toMatchObject({ revision: 4, blocked: false })
+-  expect(firstParent.listenerCount('move')).toBe(0)
+-  expect(firstParent.listenerCount('resize')).toBe(0)
+-  expect(firstParent.listenerCount('focus')).toBe(0)
+-  expect(firstParent.webContents.listenerCount('before-input-event')).toBe(0)
+-  expect(overlays.input(secondParent)).toMatchObject({ revision: 1, blocked: true })
+-  other.emit('closed')
+-  expect(overlays.input(secondParent)).toMatchObject({ revision: 2, blocked: false })
++it('keeps Linux native frames and fullscreen owners free of caption gaps', () => {
++  vi.spyOn(process, 'platform', 'get').mockReturnValue('linux')
++  vi.stubEnv('DSH_DESKTOP_LINUX_NATIVE_FRAME', '1')
++  const f = fixture(); const overlay = f.create()
++  expect(f.views[0]!.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 900, height: 650 })
++  vi.stubEnv('DSH_DESKTOP_LINUX_NATIVE_FRAME', '')
++  f.parent.emit('resize')
++  expect(f.views[0]!.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 40, width: 900, height: 610 })
++  f.parent.isFullScreen.mockReturnValue(true)
++  f.parent.emit('enter-full-screen')
++  expect(f.views[0]!.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 900, height: 650 })
++  f.parent.isFullScreen.mockReturnValue(false)
++  f.parent.emit('leave-full-screen')
++  expect(f.views[0]!.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 40, width: 900, height: 610 })
++  overlay.destroy()
++  expect(f.parent.listenerCount('enter-full-screen')).toBe(0)
++  expect(f.parent.listenerCount('leave-full-screen')).toBe(0)
+ })
