@@ -21,7 +21,7 @@ function edit(root, path, before, after) {
 }
 
 test('the complete repository has paired English defaults and Chinese pages', () => {
-  assert.deepEqual(checkDocs(source), { pairs: 16, pages: 32 })
+  assert.deepEqual(checkDocs(source), { pairs: 17, pages: 34 })
 })
 for (const [name, mutate, failure] of [
   ['missing translation', root => unlinkSync(join(root, 'docs/DOCUMENTATION.zh-CN.md')), /missing translation/],
@@ -44,5 +44,5 @@ for (const [name, mutate, failure] of [
 test('valid upstream migrations do not invalidate dated verification snapshots', t => {
   const root = fixture(t)
   writeFileSync(join(root, 'ci/upstream-base-tag'), 'dsh-v9.9.9-rc.1\n')
-  assert.deepEqual(checkDocs(root), { pairs: 16, pages: 32 })
+  assert.deepEqual(checkDocs(root), { pairs: 17, pages: 34 })
 })

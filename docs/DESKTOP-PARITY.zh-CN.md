@@ -80,4 +80,5 @@ Linux 验证 workflow 证明补丁应用、类型检查、定向回归、deb 构
 - [固定的上游基线](../ci/upstream-base-tag)
 - [Linux 验证 workflow](../.github/workflows/linux-desktop-verify.yml)
 - [桌面功能跟进](DESKTOP-FOLLOWUP.zh-CN.md)
+- [当前待办](TODO.zh-CN.md)
 - [Linux 构建与验收指南](../LINUX-DESKTOP.zh-CN.md)
