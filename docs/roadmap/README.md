@@ -10,6 +10,7 @@ Planning and handoff for SCNet authentication, the fixed `dsh-scnet` Bundle and 
 | [Development handoff](SCNET-DEVELOPMENT-HANDOFF.md) | Current implementation, release evidence, limits and prioritized TODOs; update at milestone or repository handoff |
 | [Handoff prompt](SCNET-HANDOFF-PROMPT.md) | Copy-ready starting instructions; refresh when base, workflow or release gate changes |
 | [ADR-0001](ADR-0001-plugin-and-connector-architecture.md) | Desktop/server plugin versus mobile/native connectors; later decisions need a new ADR |
+| [ADR-0002](ADR-0002-dsh-superagent-bundle.md) | Opt-in packaging decision for the dsh-superagent prototype, with compatibility evidence and phases |
 
 ## Status vocabulary
 

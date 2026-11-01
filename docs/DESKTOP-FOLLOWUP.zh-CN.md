@@ -40,3 +40,5 @@
 - [Linux 验证流程](../.github/workflows/linux-desktop-verify.yml)
 - [发布流程](../.github/workflows/publish-linux-desktop.yml)
 - [Linux 指南](../LINUX-DESKTOP.zh-CN.md)
+- [桌面平台能力对齐](DESKTOP-PARITY.zh-CN.md)
+- [dsh-superagent 附加组件决策](roadmap/ADR-0002-dsh-superagent-bundle.zh-CN.md)

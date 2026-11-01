@@ -40,3 +40,5 @@ Linux PolicyKit installation and SCNet integrations must remain covered during f
 - [Linux workflow](../.github/workflows/linux-desktop-verify.yml)
 - [Publish workflow](../.github/workflows/publish-linux-desktop.yml)
 - [Linux guide](../LINUX-DESKTOP.md)
+- [Desktop platform parity](DESKTOP-PARITY.md)
+- [dsh-superagent add-on decision](roadmap/ADR-0002-dsh-superagent-bundle.md)
