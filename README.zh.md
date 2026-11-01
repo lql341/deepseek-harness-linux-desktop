@@ -62,7 +62,7 @@ PR 和相关 main push 会应用补丁、检查全仓类型、运行定向桌面
 
 [PR #5](https://github.com/lql341/deepseek-harness-linux-desktop/pull/5) 在 [Run 41273560891](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41273560891) 通过 254 项桌面回归、全仓类型检查、打包和安装会话检查；合并后的 main 也在 [Run 41274912984](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41274912984) 通过。随后 SCNet 配置修复和双语文档在 [Run 41278271808](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41278271808) 通过 268 项桌面测试，并通过[文档 Run 41278271805](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41278271805)。插件操作历史是新的候选版本，仍需自己的 CI 证据。
 
-发布由 [publish-linux-desktop.yml](.github/workflows/publish-linux-desktop.yml) 手动触发：固定构建提交、记录暂存区补丁树、审计并安装构建字节，然后发布 deb 和 checksum。上游同步只创建可审查 PR，不会合并或发布；新的上游补丁冲突会登记为 issue，不再让定时任务失败。见[同步操作](ci/UPSTREAM-SYNC.zh-CN.md)。
+发布由 [publish-linux-desktop.yml](.github/workflows/publish-linux-desktop.yml) 手动触发：固定构建提交、记录暂存区补丁树、审计并安装构建字节，用发布密钥签名 checksum 清单，然后发布 deb、签名清单、支持策略和 checksum。可用 `node ci/verify-release-signature.mjs --manifest SHA256SUMS` 校验已发布字节。上游同步只创建可审查 PR，不会合并或发布；新的上游补丁冲突会登记为 issue，不再让定时任务失败。见[同步操作](ci/UPSTREAM-SYNC.zh-CN.md)。
 
 ## 文档与目录
 

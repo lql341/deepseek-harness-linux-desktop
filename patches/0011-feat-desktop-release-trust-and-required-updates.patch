@@ -1,0 +1,627 @@
+diff --git a/apps/desktop/src/harness-update.ts b/apps/desktop/src/harness-update.ts
+index 2adbcac791..c5f58b0118 100644
+--- a/apps/desktop/src/harness-update.ts
++++ b/apps/desktop/src/harness-update.ts
+@@ -1,24 +1,35 @@
+-/** Independent Harness-core update discovery for packaged Desktop builds. */
++/** Independent Harness-core update discovery and installation for packaged Desktop builds. */
+ 
+ import { valid, gt } from 'semver'
+ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
++import { createHash } from 'node:crypto'
+ import { tmpdir } from 'node:os'
+ import { join } from 'node:path'
+ import { promisify } from 'node:util'
+ import { execFile } from 'node:child_process'
+ import type { HarnessUpdatePresentation } from './ipc.ts'
++import { verifyReleaseManifest } from './release-trust.ts'
+ 
+ export interface HarnessUpdateDependencies {
+   readonly currentVersion: string
+   readonly currentReleaseTag?: string
+   readonly packaged?: boolean
++  /** Target platform for the package installation; replaceable at the test boundary. */
++  readonly platform?: NodeJS.Platform
+   readonly environment?: NodeJS.ProcessEnv
+   readonly fetch?: typeof globalThis.fetch
+   readonly restart?: () => Promise<void> | void
++  /** Trust check for the downloaded manifest; replaceable at the test boundary. */
++  readonly verifyManifest?: (manifest: Uint8Array, signature: string) => boolean
++  /** Privileged installer for the verified package; replaceable at the test boundary. */
++  readonly installPackage?: (path: string) => Promise<void>
+ }
+ 
+ const DEFAULT_RELEASES_URL = 'https://api.github.com/repos/lql341/deepseek-harness-linux-desktop/releases'
+ const RELEASE_TAG = /^v(.+)-linux\.(\d+)$/u
++const POLICY_ASSET = 'desktop-policy.json'
++const MANIFEST_ASSET = 'SHA256SUMS'
++const SIGNATURE_ASSET = 'SHA256SUMS.sig'
+ 
+ function record(value: unknown): value is Record<string, unknown> {
+   return typeof value === 'object' && value !== null && !Array.isArray(value)
+@@ -37,7 +48,33 @@ function allowAlpha(environment: NodeJS.ProcessEnv): boolean {
+ }
+ 
+ type ReleaseAsset = { name: string; url: string }
+-type HarnessRelease = { version: string; build: number; tag: string; url: string; notes?: string; assets: readonly ReleaseAsset[] }
++
++/** Lowest build a released client may keep running, published beside the package. */
++export interface DesktopReleasePolicy {
++  readonly minimumSupportedVersion: string
++  readonly minimumSupportedBuild?: number
++}
++
++type HarnessRelease = {
++  version: string
++  build: number
++  tag: string
++  url: string
++  notes?: string
++  assets: readonly ReleaseAsset[]
++  policy?: DesktopReleasePolicy
++}
++
++function parsePolicy(value: unknown): DesktopReleasePolicy | undefined {
++  if (!record(value) || typeof value.minimumSupportedVersion !== 'string'
++    || valid(value.minimumSupportedVersion) === null) return undefined
++  const build = value.minimumSupportedBuild
++  if (build !== undefined && (typeof build !== 'number' || !Number.isInteger(build) || build < 0)) return undefined
++  return {
++    minimumSupportedVersion: value.minimumSupportedVersion,
++    ...build === undefined ? {} : { minimumSupportedBuild: build },
++  }
++}
+ 
+ function parseReleases(value: unknown, environment: NodeJS.ProcessEnv): HarnessRelease[] {
+   if (!Array.isArray(value)) throw new Error('harness update: invalid release response')
+@@ -71,9 +108,12 @@ function parseReleases(value: unknown, environment: NodeJS.ProcessEnv): HarnessR
+     })
+   }
+   return releases.sort((a, b) => gt(a.version, b.version) || (a.version === b.version && a.build > b.build) ? -1
+-    : gt(b.version, a.version) || (a.version === b.version && b.build > a.build) ? 1 : 0)
++    : gt(b.version, a.version) || (a.version === b.version && a.build > b.build) ? 1 : 0)
+ }
+ 
++/** A release whose bytes do not authenticate; installation must stop before touching the system. */
++class ReleaseTrustError extends Error {}
++
+ export class HarnessUpdateCoordinator {
+   private current: HarnessUpdatePresentation
+   private pending: Promise<HarnessUpdatePresentation> | undefined
+@@ -107,40 +147,66 @@ export class HarnessUpdateCoordinator {
+     return this.latest?.url ?? this.current.releaseUrl
+   }
+ 
++  /**
++   * Download, authenticate and install the checked release.
++   * @returns the resulting presentation; `error: 'untrusted'` means the bytes were rejected
++   *          before any privileged command ran.
++   */
+   async install(): Promise<HarnessUpdatePresentation> {
+     if (this.disposed) throw new Error('harness update: coordinator is disposed')
+     const state = this.current.phase === 'idle' || this.current.phase === 'error'
+       ? await this.check() : this.current
+-    if (state.phase !== 'available' || this.latest === undefined) return state
++    const installable = state.phase === 'available' || state.phase === 'required'
++    const release = this.latest
++    if (!installable || release === undefined) return state
+     this.current = { ...state, phase: 'installing' }
++    let trustFailure = false
+     try {
+-      if (process.platform !== 'linux') throw new Error('harness update: Linux package installation is required')
+-      const deb = this.latest.assets.find(asset => asset.name.endsWith('.deb'))
+-      const sums = this.latest.assets.find(asset => asset.name === 'SHA256SUMS')
+-      if (deb === undefined || sums === undefined) throw new Error('harness update: release has no verified deb')
++      if ((this.dependencies.platform ?? process.platform) !== 'linux') throw new Error('harness update: Linux package installation is required')
++      const asset = (name: string): ReleaseAsset | undefined => release.assets.find(entry => entry.name === name)
++      const deb = release.assets.find(entry => entry.name.endsWith('.deb'))
++      const manifest = asset(MANIFEST_ASSET)
++      const signature = asset(SIGNATURE_ASSET)
++      // An unsigned release is not installable, even though it has a checksum: the manifest alone
++      // cannot prove who produced it, and this path runs a privileged package installation.
++      if (deb === undefined || manifest === undefined || signature === undefined) {
++        throw new ReleaseTrustError('harness update: release is not signed')
++      }
+       const fetcher = this.dependencies.fetch ?? globalThis.fetch
+       const directory = await mkdtemp(join(tmpdir(), 'deepseek-harness-update-'))
+       const debPath = join(directory, deb.name)
+       try {
+-        const [debResponse, sumsResponse] = await Promise.all([fetcher(deb.url), fetcher(sums.url)])
+-        if (!debResponse.ok || !sumsResponse.ok) throw new Error('harness update: asset download failed')
++        const [debResponse, manifestResponse, signatureResponse] = await Promise.all([
++          fetcher(deb.url), fetcher(manifest.url), fetcher(signature.url),
++        ])
++        if (!debResponse.ok || !manifestResponse.ok || !signatureResponse.ok) {
++          throw new Error('harness update: asset download failed')
++        }
+         const debBytes = Buffer.from(await debResponse.arrayBuffer())
+-        const sumsText = await sumsResponse.text()
+-        const expected = sumsText.split(/\r?\n/u).find(line => line.endsWith(`  ${deb.name}`))?.split(/\s+/u)[0]
+-        if (expected === undefined) throw new Error('harness update: checksum is missing')
+-        const { createHash } = await import('node:crypto')
+-        const actual = createHash('sha256').update(debBytes).digest('hex')
+-        if (actual !== expected) throw new Error('harness update: checksum mismatch')
++        const manifestBytes = Buffer.from(await manifestResponse.arrayBuffer())
++        const trusted = this.dependencies.verifyManifest ?? verifyReleaseManifest
++        if (!trusted(manifestBytes, await signatureResponse.text())) {
++          throw new ReleaseTrustError('harness update: manifest signature is not trusted')
++        }
++        const expected = manifestBytes.toString('utf8').split(/\r?\n/u)
++          .find(line => line.endsWith(`  ${deb.name}`))?.split(/\s+/u)[0]
++        if (expected === undefined) throw new ReleaseTrustError('harness update: checksum is missing')
++        if (createHash('sha256').update(debBytes).digest('hex') !== expected) {
++          throw new ReleaseTrustError('harness update: checksum mismatch')
++        }
+         await writeFile(debPath, debBytes, { mode: 0o600 })
+-        await promisify(execFile)('pkexec', ['apt-get', 'install', '-y', debPath], { timeout: 120_000 })
++        if (this.dependencies.installPackage !== undefined) await this.dependencies.installPackage(debPath)
++        else await promisify(execFile)('pkexec', ['apt-get', 'install', '-y', debPath], { timeout: 120_000 })
+       } finally {
+         await rm(directory, { recursive: true, force: true })
+       }
+-      this.current = { phase: 'installed', currentVersion: this.latest.version, availableVersion: this.latest.version, releaseTag: this.latest.tag, releaseUrl: this.latest.url }
++      this.current = { phase: 'installed', currentVersion: release.version, availableVersion: release.version,
++        releaseTag: release.tag, releaseUrl: release.url }
+       await this.dependencies.restart?.()
+       return this.current
+-    } catch {
+-      this.current = { ...state, phase: 'error', error: 'install' }
++    } catch (error) {
++      trustFailure = error instanceof ReleaseTrustError
++      this.current = { ...state, phase: 'error', error: trustFailure ? 'untrusted' : 'install' }
+       return this.current
+     }
+   }
+@@ -163,22 +229,43 @@ export class HarnessUpdateCoordinator {
+     if (latest === undefined) {
+       return { phase: 'current', currentVersion: this.dependencies.currentVersion }
+     }
++    const policyAsset = latest.assets.find(entry => entry.name === POLICY_ASSET)
++    if (policyAsset !== undefined) {
++      // The policy is part of the release, so read it from the same authenticated origin. A
++      // failure to read it must not hide an available update, but an unparsable policy is
++      // reported so a broken mandatory rule is visible instead of silently ignored.
++      const policyResponse = await fetcher(policyAsset.url, { signal: AbortSignal.timeout(10_000) })
++      if (policyResponse.ok) {
++        const policy = parsePolicy(await policyResponse.json())
++        if (policy === undefined) {
++          return { phase: 'error', currentVersion: this.dependencies.currentVersion, error: 'invalid' }
++        }
++        latest.policy = policy
++      }
++    }
+     this.latest = latest
+     const currentTag = this.dependencies.currentReleaseTag
+     const current = currentTag === undefined ? undefined : releaseVersion(currentTag)
++    const currentBuild = current?.build ?? 0
++    const policy = latest.policy
++    const required = policy !== undefined && (
++      gt(policy.minimumSupportedVersion, this.dependencies.currentVersion)
++      || (policy.minimumSupportedVersion === this.dependencies.currentVersion
++        && (policy.minimumSupportedBuild ?? 0) > currentBuild))
+     const newer = gt(latest.version, this.dependencies.currentVersion)
+       || (latest.version === this.dependencies.currentVersion && (
+         current === undefined
+           ? false
+           : latest.build > current.build
+       ))
+-    if (newer) {
++    if (required || newer) {
+       return {
+-        phase: 'available',
++        phase: required ? 'required' : 'available',
+         currentVersion: this.dependencies.currentVersion,
+         availableVersion: latest.version,
+         releaseTag: latest.tag,
+         releaseUrl: latest.url,
++        ...(required && policy !== undefined ? { requiredVersion: policy.minimumSupportedVersion } : {}),
+         ...(latest.notes === undefined ? {} : { notesUrl: latest.url }),
+       }
+     }
+diff --git a/apps/desktop/src/ipc.ts b/apps/desktop/src/ipc.ts
+index efecf4e13f..5c32489006 100644
+--- a/apps/desktop/src/ipc.ts
++++ b/apps/desktop/src/ipc.ts
+@@ -79,7 +79,7 @@ export interface DesktopUpdatePresentation {
+   readonly failure?: DesktopUpdateFailureKind
+ }
+ 
+-export type HarnessUpdatePhase = 'idle' | 'checking' | 'current' | 'available' | 'installing' | 'installed' | 'error'
++export type HarnessUpdatePhase = 'idle' | 'checking' | 'current' | 'available' | 'required' | 'installing' | 'installed' | 'error'
+ 
+ export interface HarnessUpdatePresentation {
+   readonly phase: HarnessUpdatePhase
+@@ -88,7 +88,9 @@ export interface HarnessUpdatePresentation {
+   readonly releaseTag?: string
+   readonly releaseUrl?: string
+   readonly notesUrl?: string
+-  readonly error?: 'network' | 'invalid' | 'install'
++  /** Lowest supported version announced by the release; present only while the phase is `required`. */
++  readonly requiredVersion?: string
++  readonly error?: 'network' | 'invalid' | 'install' | 'untrusted'
+ }
+ 
+ export interface ScnetStatusSnapshot {
+diff --git a/apps/desktop/src/locale.ts b/apps/desktop/src/locale.ts
+index 194758e700..7e68ae03ba 100644
+--- a/apps/desktop/src/locale.ts
++++ b/apps/desktop/src/locale.ts
+@@ -169,6 +169,8 @@ export const en = {
+   updateTitle: 'DeepSeek Harness Update',
+   updateAvailable: 'New version available: {version}',
+   updateDetail: 'Once the download is complete, you can install the update and restart the app.',
++  updateRequiredDetail: 'This version is no longer supported. Install {version} to keep receiving fixes and security updates. Until then, offline features keep working and this reminder returns at each start and update check.',
++  harnessUntrusted: 'The update was not installed because its signature could not be verified against the built-in release key.',
+   installAndRestart: 'Install and Restart',
+   later: 'Later',
+   updateFailedTitle: 'Update Failed',
+@@ -378,6 +380,8 @@ export const zh = {
+   updateTitle: 'DeepSeek Harness 更新',
+   updateAvailable: '发现新版本 {version}',
+   updateDetail: '下载完成后，可安装并重启应用。',
++  updateRequiredDetail: '当前版本已停止支持。请安装 {version} 以继续获得修复和安全更新。在此之前离线功能仍可使用，但每次启动和检查更新都会再次提示。',
++  harnessUntrusted: '更新未安装：其签名无法通过内置发布密钥校验。',
+   installAndRestart: '安装并重启',
+   later: '稍后',
+   updateFailedTitle: '更新失败',
+diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
+index b1a14bb38f..42e4990163 100644
+--- a/apps/desktop/src/main.ts
++++ b/apps/desktop/src/main.ts
+@@ -15,6 +15,7 @@ import {
+   powerMonitor,
+   nativeImage,
+   nativeTheme,
++  Notification,
+   net,
+   protocol,
+   session,
+@@ -723,12 +724,13 @@ async function main(): Promise<void> {
+     const state = harnessUpdates.state
+     linuxUpdatePresentation = state.phase === 'checking'
+       ? { phase: 'checking', currentVersion: app.getVersion() }
+-      : state.phase === 'available' && state.availableVersion !== undefined
++      : (state.phase === 'available' || state.phase === 'required') && state.availableVersion !== undefined
+         ? { phase: 'available', currentVersion: app.getVersion(), version: state.availableVersion }
+         : state.phase === 'installing' && state.availableVersion !== undefined
+           ? { phase: 'installing', currentVersion: app.getVersion(), version: state.availableVersion }
+           : state.phase === 'error'
+-            ? { phase: 'error', currentVersion: app.getVersion(), failure: state.error === 'install' ? 'install' : 'check' }
++            ? { phase: 'error', currentVersion: app.getVersion(),
++              failure: state.error === 'install' || state.error === 'untrusted' ? 'install' : 'check' }
+             : presentDesktopUpdate({ phase: 'idle' }, app.getVersion())
+     for (const window of BrowserWindow.getAllWindows()) {
+       window.webContents.send(DESKTOP_IPC.updatesPresentation, linuxUpdatePresentation)
+@@ -1025,14 +1027,19 @@ async function main(): Promise<void> {
+           message: state.error === 'install' ? locale.messages.updateInstallFailed : locale.messages.updateCheckNetworkFailed })
+         return
+       }
+-      if (state.phase !== 'available' || state.availableVersion === undefined) return
++      const installable = state.phase === 'available' || state.phase === 'required'
++      if (!installable || state.availableVersion === undefined) return
++      raiseLinuxUpdateAttention(state.availableVersion)
+       const parent = currentDialogWindow()
+       if (parent === undefined || parent.isDestroyed()) return
++      const required = state.phase === 'required'
+       const result = await updateDialog.show(parent, {
+-        type: 'info',
++        type: required ? 'warning' : 'info',
+         title: locale.messages.updateTitle,
+         message: formatDesktopMessage(locale.messages.updateAvailable, { version: state.availableVersion }),
+-        detail: locale.messages.updateDetail,
++        detail: required
++          ? formatDesktopMessage(locale.messages.updateRequiredDetail, { version: state.requiredVersion ?? state.availableVersion })
++          : locale.messages.updateDetail,
+         buttons: [locale.messages.installAndRestart, locale.messages.later],
+         defaultId: 0,
+         cancelId: 1,
+@@ -1103,15 +1110,22 @@ async function main(): Promise<void> {
+     if (app.isPackaged && process.env.NODE_ENV !== 'test' && !quitting) {
+       void harnessUpdates.check().then(async (state) => {
+         publishHarnessUpdate()
+-        if (state.phase !== 'available' || state.availableVersion === undefined || quitting) return
++        const installable = state.phase === 'available' || state.phase === 'required'
++        if (!installable || state.availableVersion === undefined || quitting) return
++        raiseLinuxUpdateAttention(state.availableVersion)
+         if (state.releaseTag !== undefined && harnessPromptedTag === state.releaseTag) return
+         const parent = currentDialogWindow()
+         if (parent === undefined || parent.isDestroyed()) return
++        const required = state.phase === 'required'
+         const result = await updateDialog.show(parent, {
+-          type: 'info',
++          type: required ? 'warning' : 'info',
+           title: locale.messages.updateTitle,
+           message: formatDesktopMessage(locale.messages.updateAvailable, { version: state.availableVersion }),
+-          detail: locale.messages.updateDetail,
++          // A supported-version floor is a product decision, not a task interruption: say what
++          // expires and keep the offline application usable instead of locking the window.
++          detail: required
++            ? formatDesktopMessage(locale.messages.updateRequiredDetail, { version: state.requiredVersion ?? state.availableVersion })
++            : locale.messages.updateDetail,
+           buttons: [locale.messages.installAndRestart, locale.messages.later],
+           defaultId: 0,
+           cancelId: 1,
+@@ -1124,6 +1138,24 @@ async function main(): Promise<void> {
+       }).catch((error: unknown) => { console.error(error) })
+     }
+   }
++  // macOS bounces the Dock icon and Windows flashes the taskbar; a Linux shell exposes neither,
++  // so the launcher badge and an urgent notification stand in for the same signal.
++  const raiseLinuxUpdateAttention = (version: string): void => {
++    if (process.platform !== 'linux') return
++    try { app.setBadgeCount(1) } catch (error) { console.warn('desktop update: badge unavailable', error) }
++    try {
++      if (!Notification.isSupported()) return
++      const notification = new Notification({ title: locale.messages.updateTitle,
++        body: formatDesktopMessage(locale.messages.updateAvailable, { version }), urgency: 'critical', silent: true })
++      notification.once('click', () => { focusPrimaryWindow() })
++      notification.show()
++    } catch (error) { console.warn('desktop update: notification unavailable', error) }
++  }
++  const clearLinuxUpdateAttention = (): void => {
++    if (process.platform !== 'linux') return
++    try { app.setBadgeCount(0) } catch (error) { console.warn('desktop update: badge unavailable', error) }
++  }
++
+   const harnessUpdateTimer = app.isPackaged && process.env.NODE_ENV !== 'test'
+     ? setInterval(automaticCheck, 600_000)
+     : undefined
+@@ -1299,8 +1331,9 @@ async function main(): Promise<void> {
+   }
+ 
+   const hideMainWindow = (window: BrowserWindow): void => {
+-    if (process.platform === 'darwin' && window.isFullScreen()) {
+-      // Hiding a fullscreen window leaves an empty black space; leave fullscreen first.
++    if (process.platform !== 'win32' && window.isFullScreen()) {
++      // Hiding a fullscreen window leaves an empty black space; leave fullscreen first. X11 and
++      // Wayland behave the same way macOS does here, so the port follows the macOS order.
+       window.once('leave-full-screen', () => { if (!window.isDestroyed()) window.hide() })
+       window.setFullScreen(false)
+     } else {
+@@ -1312,7 +1345,7 @@ async function main(): Promise<void> {
+     mainWindow = window
+     browserGuests.bind(window, (guest, name) => shortcuts.attachGuest(window, guest, name))
+     shortcuts.attach(window)
+-    window.on('focus', automaticCheck)
++    window.on('focus', () => { clearLinuxUpdateAttention(); automaticCheck() })
+     // Closing hides: the page and the Host keep running, and the next show resumes the same document.
+     window.on('close', (event) => {
+       if (quitting || shellInstallerOwnsQuit || sessionEnding) return
+diff --git a/apps/desktop/src/release-trust.ts b/apps/desktop/src/release-trust.ts
+new file mode 100644
+index 0000000000..ac32d39a04
+--- /dev/null
++++ b/apps/desktop/src/release-trust.ts
+@@ -0,0 +1,35 @@
++/**
++ * Pinned release-signing key and the detached-signature check used before an update installs.
++ *
++ * The matching private key exists only in the release workflow's secret, so a pull request cannot
++ * produce a package that this application accepts as an update. The public key is duplicated in
++ * `ci/release-signing-key.pub.pem`, where `ci/verify-release-signature.mjs` checks published bytes.
++ */
++import { createPublicKey, verify as verifyDetached } from 'node:crypto'
++
++/** Ed25519 public key (SPKI PEM) that signs every Linux release checksum manifest. */
++export const RELEASE_SIGNING_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
++MCowBQYDK2VwAyEAp3JZM+9reecs1wtptmWJeVRdizY3E88WHuDWH2KWXT0=
++-----END PUBLIC KEY-----`
++
++/**
++ * Verify a detached Ed25519 signature over the exact manifest bytes.
++ * @param manifest - checksum manifest as published, without any normalisation.
++ * @param signature - base64 detached signature file content.
++ * @param publicKey - trusted SPKI PEM, defaulting to the pinned release key.
++ * @returns true only when the signature was produced by the matching private key.
++ */
++export function verifyReleaseManifest(
++  manifest: Uint8Array,
++  signature: string,
++  publicKey: string = RELEASE_SIGNING_PUBLIC_KEY,
++): boolean {
++  const detached = Buffer.from(signature.trim(), 'base64')
++  if (detached.length === 0) return false
++  try {
++    return verifyDetached(null, manifest, createPublicKey(publicKey), detached)
++  } catch {
++    // An unusable key or signature is an untrusted release, not a crash in the update path.
++    return false
++  }
++}
+diff --git a/apps/desktop/tests/harness-update.spec.ts b/apps/desktop/tests/harness-update.spec.ts
+index dfcbab0410..659f9fdb5d 100644
+--- a/apps/desktop/tests/harness-update.spec.ts
++++ b/apps/desktop/tests/harness-update.spec.ts
+@@ -1,5 +1,6 @@
+-import { describe, expect, it } from 'vitest'
+-import { HarnessUpdateCoordinator, parseHarnessReleases } from '../src/harness-update.ts'
++import { createHash } from 'node:crypto'
++import { describe, expect, it, vi } from 'vitest'
++import { HarnessUpdateCoordinator, parseHarnessReleases, type HarnessUpdateDependencies } from '../src/harness-update.ts'
+ 
+ describe('Harness update discovery', () => {
+   const releases = [
+@@ -49,3 +50,90 @@ describe('Harness update discovery', () => {
+     })
+   })
+ })
++
++describe('release trust and support floor', () => {
++  const signed = [
++    { tag_name: 'v0.2.1-rc.5-linux.2', html_url: 'https://github.com/lql341/deepseek-harness-linux-desktop/releases/tag/v0.2.1-rc.5-linux.2', draft: false,
++      assets: [
++        { name: 'deepseek-harness-0.2.1-rc.5-linux-amd64.deb', browser_download_url: 'https://github.com/lql341/deepseek-harness-linux-desktop/releases/download/v0.2.1-rc.5-linux.2/pkg.deb' },
++        { name: 'SHA256SUMS', browser_download_url: 'https://github.com/lql341/deepseek-harness-linux-desktop/releases/download/v0.2.1-rc.5-linux.2/SHA256SUMS' },
++        { name: 'SHA256SUMS.sig', browser_download_url: 'https://github.com/lql341/deepseek-harness-linux-desktop/releases/download/v0.2.1-rc.5-linux.2/SHA256SUMS.sig' },
++        { name: 'desktop-policy.json', browser_download_url: 'https://github.com/lql341/deepseek-harness-linux-desktop/releases/download/v0.2.1-rc.5-linux.2/desktop-policy.json' },
++      ] },
++  ]
++  const debBytes = new TextEncoder().encode('package bytes')
++  const manifest = new TextEncoder().encode(
++    `${createHash('sha256').update(debBytes).digest('hex')}  deepseek-harness-0.2.1-rc.5-linux-amd64.deb\n`)
++
++  function fetcher(policy: unknown): typeof fetch {
++    return (async (input: string | URL) => {
++      const url = String(input)
++      if (url.includes('/releases') && !url.includes('/releases/download')) return Response.json(signed)
++      if (url.endsWith('/SHA256SUMS')) return new Response(manifest)
++      if (url.endsWith('/SHA256SUMS.sig')) return new Response('signature')
++      if (url.endsWith('/desktop-policy.json')) return Response.json(policy)
++      if (url.endsWith('/pkg.deb')) return new Response(debBytes)
++      return new Response('missing', { status: 404 })
++    }) as typeof fetch
++  }
++
++  function coordinator(overrides: Partial<HarnessUpdateDependencies> = {}) {
++    return new HarnessUpdateCoordinator({
++      currentVersion: '0.2.1-rc.4', currentReleaseTag: 'v0.2.1-rc.4-linux.1', packaged: true,
++      environment: {}, platform: 'linux', fetch: fetcher({ minimumSupportedVersion: '0.2.1-rc.5' }), ...overrides,
++    })
++  }
++
++  it('refuses to install a release without a manifest signature', async () => {
++    const installPackage = vi.fn(async () => {})
++    const unsignedRelease = [{ ...signed[0]!, assets: signed[0]!.assets.filter(asset => asset.name !== 'SHA256SUMS.sig') }]
++    const instance = new HarnessUpdateCoordinator({
++      currentVersion: '0.2.1-rc.4', currentReleaseTag: 'v0.2.1-rc.4-linux.1', packaged: true,
++      environment: {}, platform: 'linux', installPackage,
++      fetch: (async (input: string | URL) => {
++        const url = String(input)
++        if (url.includes('/releases') && !url.includes('/releases/download')) return Response.json(unsignedRelease)
++        if (url.endsWith('/desktop-policy.json')) return Response.json({ minimumSupportedVersion: '0.2.1-rc.5' })
++        if (url.endsWith('/SHA256SUMS')) return new Response(manifest)
++        if (url.endsWith('/pkg.deb')) return new Response(debBytes)
++        return new Response('missing', { status: 404 })
++      }) as typeof fetch,
++    })
++    await expect(instance.install()).resolves.toMatchObject({ phase: 'error', error: 'untrusted' })
++    expect(installPackage).not.toHaveBeenCalled()
++  })
++
++  it('stops before the privileged step when the signature does not verify', async () => {
++    const installPackage = vi.fn(async () => {})
++    const instance = coordinator({ verifyManifest: () => false, installPackage })
++    await expect(instance.install()).resolves.toMatchObject({ phase: 'error', error: 'untrusted' })
++    expect(installPackage).not.toHaveBeenCalled()
++  })
++
++  it('installs only after the signature and the checksum both pass', async () => {
++    const installPackage = vi.fn(async () => {})
++    const instance = coordinator({ verifyManifest: () => true, installPackage })
++    await expect(instance.install()).resolves.toMatchObject({ phase: 'installed' })
++    expect(installPackage).toHaveBeenCalledOnce()
++  })
++
++  it('reports a required update when the release raises the support floor', async () => {
++    const instance = coordinator({ fetch: fetcher({ minimumSupportedVersion: '0.2.1-rc.5' }) })
++    await expect(instance.check()).resolves.toMatchObject({
++      phase: 'required', availableVersion: '0.2.1-rc.5', requiredVersion: '0.2.1-rc.5',
++    })
++  })
++
++  it('keeps a newer release optional when the support floor is already met', async () => {
++    const instance = new HarnessUpdateCoordinator({
++      currentVersion: '0.2.1-rc.5', currentReleaseTag: 'v0.2.1-rc.5-linux.1', packaged: true, environment: {}, platform: 'linux',
++      fetch: fetcher({ minimumSupportedVersion: '0.2.1-rc.5', minimumSupportedBuild: 1 }),
++    })
++    await expect(instance.check()).resolves.toMatchObject({ phase: 'available' })
++  })
++
++  it('reports an unparsable policy instead of silently ignoring the floor', async () => {
++    const instance = coordinator({ fetch: fetcher({ minimumSupportedVersion: 'not-a-version' }) })
++    await expect(instance.check()).resolves.toMatchObject({ phase: 'error', error: 'invalid' })
++  })
++})
+diff --git a/apps/desktop/tests/main-startup.spec.ts b/apps/desktop/tests/main-startup.spec.ts
+index e9520145c2..21f5d9da70 100644
+--- a/apps/desktop/tests/main-startup.spec.ts
++++ b/apps/desktop/tests/main-startup.spec.ts
+@@ -165,6 +165,7 @@ const harness = await vi.hoisted(async () => {
+     setAppLogsPath: vi.fn(),
+     getPath: vi.fn<(name: string) => string>(),
+     setAboutPanelOptions: vi.fn<(options: Electron.AboutPanelOptionsOptions) => void>(),
++    setBadgeCount: vi.fn<(count: number) => boolean>(() => true),
+     requestSingleInstanceLock: () => true,
+     setAsDefaultProtocolClient: vi.fn(),
+     exit: vi.fn(),
+@@ -193,10 +194,17 @@ const harness = await vi.hoisted(async () => {
+   }
+   const backgroundNotice = { close: vi.fn((hide: () => void) => { hide() }), dispose: vi.fn(), markerPath: undefined as string | undefined }
+   const shellDialog = { isOpen: false, focus: vi.fn() }
++  const notifications: FakeNotification[] = []
++  class FakeNotification extends EventEmitter {
++    readonly show = vi.fn()
++    readonly close = vi.fn()
++    constructor(readonly options: { title?: string; body?: string; urgency?: string }) { super(); notifications.push(this) }
++    static isSupported(): boolean { return true }
++  }
+   return {
+     failWindow(error: Error) { windowFailure = error },
+     windows, hosts, handlers, app, FakeWindow, FakeHost, powerMonitor, nativeTheme, analytics,
+-    trays, FakeTray, backgroundNotice, shellDialog,
++    trays, FakeTray, backgroundNotice, shellDialog, notifications, FakeNotification,
+     menu, popup, socketHeaders: vi.fn(), loginShell, readLoginShell, updateCheck, updateDownload, updateInstall,
+     platformDispose,
+     platformCloseAndWait,
+@@ -294,6 +302,7 @@ vi.mock('electron', () => ({
+     removeHandler: (channel: string) => { harness.handlers.delete(channel) },
+   },
+   Menu: { setApplicationMenu: harness.menu.setApplicationMenu, buildFromTemplate: harness.menu },
++  Notification: harness.FakeNotification,
+   session: { defaultSession: {
+     setPermissionCheckHandler: vi.fn(), setPermissionRequestHandler: vi.fn(), webRequest: { onBeforeSendHeaders: harness.socketHeaders },
+   } },
+@@ -1443,6 +1452,53 @@ describe('desktop main startup', () => {
+     })
+   })
+ 
++  it('leaves Linux fullscreen before hiding the window, as macOS does', async () => {
++    // Hiding a fullscreen X11 or Wayland window leaves a black region on the old workspace.
++    vi.stubGlobal('process', { ...process, platform: 'linux', arch: 'x64', resourcesPath: 'desktop-test-resources' })
++    await readyWorkspace()
++    const window = harness.windows[0]!
++    window.fullscreen = true
++    window.close()
++    expect(window.setFullScreen).toHaveBeenCalledWith(false)
++    expect(window.hide).toHaveBeenCalledOnce()
++  })
++
++  it('announces a required update with the support floor and raises Linux attention', async () => {
++    vi.stubGlobal('process', { ...process, platform: 'linux', arch: 'x64', resourcesPath: 'desktop-test-resources' })
++    harness.app.isPackaged = true
++    const request = vi.fn(async (input: string | URL) => {
++      const url = String(input)
++      if (url.includes('/releases') && !url.includes('/releases/download')) {
++        return Response.json([{
++          tag_name: 'v1.1.0-linux.1',
++          html_url: 'https://github.com/lql341/deepseek-harness-linux-desktop/releases/tag/v1.1.0-linux.1',
++          draft: false,
++          assets: [{ name: 'desktop-policy.json',
++            browser_download_url: 'https://github.com/lql341/deepseek-harness-linux-desktop/releases/download/v1.1.0-linux.1/desktop-policy.json' }],
++        }])
++      }
++      return Response.json({ minimumSupportedVersion: '1.1.0' })
++    })
++    vi.stubGlobal('fetch', request as unknown as typeof fetch)
++    await readyWorkspace()
++    // Automatic checks stay disabled under NODE_ENV=test; the menu path runs the same coordinator.
++    const checkUpdates = applicationMenuItems().find(item => item.label === en.checkUpdatesMenu)!.click as () => void
++    checkUpdates()
++    await vi.waitFor(() => {
++      expect(harness.dialog.showMessageBox).toHaveBeenCalledWith(expect.objectContaining({
++        type: 'warning', title: en.updateTitle, message: 'New version available: 1.1.0',
++        detail: expect.stringContaining('no longer supported'),
++        buttons: [en.installAndRestart, en.later],
++      }))
++    })
++    // macOS bounces the Dock icon; the Linux port badges the launcher and shows an urgent notification.
++    expect(harness.app.setBadgeCount).toHaveBeenCalledWith(1)
++    expect(harness.notifications.at(-1)?.options).toMatchObject({ urgency: 'critical' })
++    // Focusing the window answers the reminder, so the badge clears.
++    harness.windows[0]!.emit('focus')
++    expect(harness.app.setBadgeCount).toHaveBeenLastCalledWith(0)
++  })
++
+   it('keeps the Host running when the last Linux window closes and reopens it from the application menu', async () => {
+     vi.stubGlobal('process', { ...process, platform: 'linux', arch: 'x64', resourcesPath: 'desktop-test-resources' })
+     await readyWorkspace()

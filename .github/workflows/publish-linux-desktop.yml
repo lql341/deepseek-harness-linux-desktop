@@ -98,21 +98,35 @@ jobs:
           DSH_DESKTOP_TARGET_ARCH: x64
           DSH_DESKTOP_RELEASE_TAG: ${{ inputs.tag }}
 
-      - name: Assemble the assets and their checksums
+      - name: Assemble, sign and verify the release assets
         # release-verify runs `sha256sum -c SHA256SUMS` inside the download directory, so the
-        # manifest must reference the assets by bare filename.
+        # manifest must reference the assets by bare filename. The application refuses to install
+        # a release whose manifest is not signed by the pinned key, so an unsigned publish is a
+        # failure here rather than a package nobody can update to.
+        env:
+          DSH_RELEASE_SIGNING_KEY: ${{ secrets.DSH_RELEASE_SIGNING_KEY }}
         working-directory: ${{ env.UPSTREAM_DIR }}
         run: |
           set -euo pipefail
+          if [ -z "${DSH_RELEASE_SIGNING_KEY:-}" ]; then
+            echo "::error::DSH_RELEASE_SIGNING_KEY is not configured; a release must be signed"
+            exit 1
+          fi
           ART="apps/desktop/.desktop-build/targets/linux-x64/artifacts"
           mkdir -p publish
           cp "$ART"/*.deb publish/
+          cp "$GITHUB_WORKSPACE/ci/desktop-policy.json" publish/desktop-policy.json
           cd publish
           # Bare filenames, matching the manifests already published, so `sha256sum -c` works in
           # any directory the assets are downloaded into.
-          sha256sum *.deb > SHA256SUMS
+          sha256sum *.deb desktop-policy.json > SHA256SUMS
           sha256sum -c SHA256SUMS
+          node "$GITHUB_WORKSPACE/ci/sign-release.mjs" --manifest SHA256SUMS \
+            --public-key-hint "$GITHUB_WORKSPACE/ci/release-signing-key.pub.pem"
+          node "$GITHUB_WORKSPACE/ci/verify-release-signature.mjs" --manifest SHA256SUMS \
+            --public-key "$GITHUB_WORKSPACE/ci/release-signing-key.pub.pem"
           cat SHA256SUMS
+          cat desktop-policy.json
 
       - name: Re-verify the exact bytes before publishing them
         # The published bytes, not a fresh build: install this deb, drive the session harness
@@ -188,9 +202,13 @@ jobs:
             echo
             echo "- \`$DEB\` — Debian, Ubuntu and compatible distributions"
             echo "- \`SHA256SUMS\` — download verification (\`sha256sum -c SHA256SUMS\`)"
+            echo "- \`SHA256SUMS.sig\` — detached Ed25519 signature over \`SHA256SUMS\`; the application only installs an update whose manifest verifies against its built-in key"
+            echo "- \`desktop-policy.json\` — lowest version still supported; an older client reports a required update"
             echo
             echo '```sh'
             echo "sudo apt install ./$DEB"
+            echo "# or verify the signed manifest yourself"
+            echo "node ci/verify-release-signature.mjs --manifest SHA256SUMS"
             echo '```'
             echo
             echo "## What was verified before publishing"
@@ -240,6 +258,8 @@ jobs:
             session-publish/*.log
             session-publish/*.png
             upstream/publish/SHA256SUMS
+            upstream/publish/SHA256SUMS.sig
+            upstream/publish/desktop-policy.json
             scnet-release-audit.json
           if-no-files-found: warn
 
@@ -261,7 +281,7 @@ jobs:
           set -euo pipefail
           bash ci/download-release-assets.sh \
             "$RELEASE_TAG" "${{ inputs.export-draft-id }}" "" draft-release \
-            '*.deb' 'SHA256SUMS'
+            '*.deb' 'SHA256SUMS' 'SHA256SUMS.sig' 'desktop-policy.json'
           (
             cd draft-release
             sha256sum -c SHA256SUMS
@@ -274,5 +294,7 @@ jobs:
           path: |
             draft-release/*.deb
             draft-release/SHA256SUMS
+            draft-release/SHA256SUMS.sig
+            draft-release/desktop-policy.json
           if-no-files-found: error
           compression-level: 0

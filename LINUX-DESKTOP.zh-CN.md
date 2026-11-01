@@ -74,7 +74,7 @@ Ubuntu CI 通过 `ci/desktop-session.sh` 安装并启动构建的 deb，覆盖�
 
 只维护 Linux x64 deb。ARM64、AppImage 和 RPM 需要单独的打包/运行时验证。macOS 红绿灯、vibrancy 和 Dock 提醒不属于 Linux 功能；Linux 使用 overlay 标题栏或 `DSH_DESKTOP_LINUX_NATIVE_FRAME=1`，以及桌面自身的托盘/通知。
 
-没有官方 Linux 更新源。本移植通过 Linux release 包和系统安装器一起交付客户端与 Harness。SCNet 本地就绪不代表 OAuth2 登录或 SSH 访问，两者有不同前置。共享账户协议当前只接受 macOS/Windows 桌面平台值，因此 Linux 使用上游桌面标识兜底。
+没有官方 Linux 更新源。本移植通过 Linux release 包和系统安装器一起交付客户端与 Harness。从 `v0.2.1-rc.5-linux.2` 起，每个 release 都会为 `SHA256SUMS` 发布 Ed25519 分离签名；应用只安装清单能通过内置公钥（同时提交在 `ci/release-signing-key.pub.pem`）校验的更新。同一 release 里的 `desktop-policy.json` 声明最低支持版本和构建号，较旧客户端会看到“必须更新”而不是普通更新。该策略文件不能授权未签名包；它被签名清单覆盖，只在检查时读取。SCNet 本地就绪不代表 OAuth2 登录或 SSH 访问，两者有不同前置。共享账户协议当前只接受 macOS/Windows 桌面平台值，因此 Linux 使用上游桌面标识兜底。
 
 CUA 需要 Linux 原生权限/控制实现，新文件交互和完整插件历史需要新版共享 API，见[功能跟进](docs/DESKTOP-FOLLOWUP.zh-CN.md)。历史测试数量和平台运行不能证明当前 release 正确。
 
