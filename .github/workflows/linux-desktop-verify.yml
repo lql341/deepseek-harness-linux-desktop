@@ -129,7 +129,10 @@ jobs:
   typecheck:
     name: install + typecheck + package preflight + Linux package smoke
     runs-on: ubuntu-24.04
-    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.run-core || inputs.run-multidistro || inputs.run-candidate-upgrade) && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+    # The draft guard compares against true rather than false so it also holds for workflow_dispatch,
+    # where github.event.pull_request is absent: an absent value is not true, instead of relying on
+    # short-circuit evaluation of the other operand.
+    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.run-core || inputs.run-multidistro || inputs.run-candidate-upgrade) && github.event.pull_request.draft != true }}
     timeout-minutes: 60
     steps:
       - name: Environment report
