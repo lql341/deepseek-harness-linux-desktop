@@ -32,7 +32,7 @@
 | --- | --- |
 | CUA 安装与授权 | [macOS provider](https://github.com/deepseek-ai/deepseek-harness/tree/ce7073d51254c26cd63b22a60835b8f948deb447/packages/experimental/cua-macos) 使用 macOS API；Linux 需要原生控制/权限实现，以及 X11/Wayland 的允许、拒绝、重试和撤销测试 |
 | 新文件动作与拖放 | 开发线 file-actions/file-drag 依赖 rc.5 没有的共享文件动作、拖放和 Host 资源 API，需一起回移 provider、consumer 和生命周期，覆盖可信窗口 IPC 和临时文件清理 |
-| 真实桌面验收 | 在实际 X11/Wayland 会话验证焦点、标题栏拖拽/缩放、蒙层、通知、CLI、深链、配置和更新确认 |
+| 真实桌面验收 | 在实际 X11/Wayland 会话运行 `ci/real-desktop-acceptance.sh`，记录焦点、标题栏拖拽/缩放、托盘、通知、CLI、深链、配置和更新确认 |
 
 后续回移必须保留 Linux PolicyKit 安装和 SCNet 集成回归。macOS Dock/红绿灯、Windows 安装器和 Linux 合成器/keyring API 各自有不同实现；不能用类型检查或复制菜单入口替代平台证据。
 

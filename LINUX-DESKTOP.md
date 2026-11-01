@@ -57,6 +57,16 @@ Artifacts are under `$TARGET_DIR`: `artifacts/` contains the deb/unpacked app, `
 | Update views | Correct caption/fullscreen bounds, no background activation, input restored after closing, safe mandatory-view fallback |
 | Configure SCNet | External Python opens the unpacked wizard; failures remain visible; cancel/close does not imply login |
 
+### Real-desktop acceptance kit
+
+The automated session above runs headless. Real focus, dragging, tray menus, notifications, scaling and multi-monitor behaviour need a real desktop, so the repository ships one script that records that evidence:
+
+```sh
+bash ci/real-desktop-acceptance.sh
+```
+
+Run it as the desktop user, with the package installed and the application quit (the automated pass starts its own instance). It records the session type, desktop, compositor, package and desktop-integration facts, tray/Secret Service/portal/audio capability probes, runs the automated window/close/deep-link pass, and then asks ten yes/no questions about the interactive checks. The result is a Markdown report plus a tarball under `real-desktop-acceptance/`; attach the tarball to the issue or pull request. `--non-interactive --skip-session` records the environment and package facts only, which is how CI smoke-tests the script.
+
 Run focused regressions from the patched upstream root:
 
 ```sh
