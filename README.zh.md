@@ -25,7 +25,7 @@ bash ci/install-latest-linux.sh --tag v0.2.1-rc.5-linux.1
 | 窗口与后台任务 | 自绘标题栏、可选原生边框、托盘/显示窗口，关闭最后一个窗口后任务继续运行 |
 | 系统集成 | `dsh` 启动器、单实例路由和已注册的 `dsh://` 深链 |
 | 运行时 | Linux 目标运行时和内置 WASM Office 转换 |
-| 更新 | 设置页检查/更新入口、已校验 Linux 包下载和 PolicyKit 安装；客户端与 Harness 整包交付 |
+| 更新 | 设置页与菜单的检查/更新入口、已校验 Linux 包下载和 PolicyKit 安装；客户端与 Harness 整包交付 |
 | SCNet | 固定离线 Bundle/Skill、Desktop profile 默认激活、保留显式禁用/自定义 profile、本地诊断 |
 | 开发者工具 | 中英文可见菜单，保留包含 F12 的原生快捷键 |
 | 故障恢复 | 获取已保存的崩溃报告，处理慢写入和打开位置失败 |

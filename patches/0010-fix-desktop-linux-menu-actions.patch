@@ -1,0 +1,157 @@
+diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
+index b29b073ab4..b1a14bb38f 100644
+--- a/apps/desktop/src/main.ts
++++ b/apps/desktop/src/main.ts
+@@ -1004,6 +1004,48 @@ async function main(): Promise<void> {
+     return promptOperation
+   }
+ 
++  let harnessMenuOperation: Promise<void> | undefined
++  /**
++   * Manual Linux check from the native menu. It uses the same release feed as the Settings action,
++   * but a menu-triggered install first asks for confirmation, because the entry is labelled as a
++   * check rather than an install.
++   */
++  const runHarnessMenuUpdate = (): Promise<void> => {
++    harnessMenuOperation ??= (async () => {
++      const state = await harnessUpdates.check()
++      publishHarnessUpdate()
++      if (state.phase === 'current') {
++        await ordinaryMessageBox({ type: 'info', title: locale.messages.updateCheckTitle,
++          message: locale.messages.updateCurrent,
++          detail: formatDesktopMessage(locale.messages.updateCurrentDetail, { version: app.getVersion() }) })
++        return
++      }
++      if (state.phase === 'error') {
++        await ordinaryMessageBox({ type: 'error', title: locale.messages.updateCheckFailedTitle,
++          message: state.error === 'install' ? locale.messages.updateInstallFailed : locale.messages.updateCheckNetworkFailed })
++        return
++      }
++      if (state.phase !== 'available' || state.availableVersion === undefined) return
++      const parent = currentDialogWindow()
++      if (parent === undefined || parent.isDestroyed()) return
++      const result = await updateDialog.show(parent, {
++        type: 'info',
++        title: locale.messages.updateTitle,
++        message: formatDesktopMessage(locale.messages.updateAvailable, { version: state.availableVersion }),
++        detail: locale.messages.updateDetail,
++        buttons: [locale.messages.installAndRestart, locale.messages.later],
++        defaultId: 0,
++        cancelId: 1,
++      })
++      if (result.response !== 0 || quitting) return
++      await harnessUpdates.install()
++      publishHarnessUpdate()
++    })().catch((error: unknown) => {
++      console.error(error)
++    }).finally(() => { harnessMenuOperation = undefined })
++    return harnessMenuOperation
++  }
++
+   let authenticationOperation: Promise<DesktopPolicyState | undefined> | undefined
+   const authenticatePolicy = () => {
+     if (authenticationOperation !== undefined) { policyAuth?.focus(); updateDialog.focus() }
+@@ -1124,7 +1166,15 @@ async function main(): Promise<void> {
+         click: () => { void showAbout().catch((error: unknown) => { console.error(error) }) } }
+       : { label: currentDesktopLocale().messages.aboutMenu, role: 'about' },
+     { type: 'separator' },
+-    { label: currentDesktopLocale().messages.checkUpdatesMenu, click: () => { void openUpdatePrompt(true) } },
++    { label: currentDesktopLocale().messages.checkUpdatesMenu, click: () => {
++      if (process.platform === 'linux') {
++        // A deb has no upstream electron-updater source, so the ordinary prompt would always fail.
++        // The Git-release package is the only update path Linux has; ask before installing it.
++        void runHarnessMenuUpdate().catch((error: unknown) => { console.error(error) })
++      } else {
++        void openUpdatePrompt(true)
++      }
++    } },
+     { label: currentDesktopLocale().messages.scnetDiagnosticsMenu, click: () => {
+       void openScnetDiagnosticsWindow(currentDesktopLocale(), {
+         read: () => readScnetDiagnostics({ profilePath: paths.profile, environment: process.env }),
+@@ -1135,8 +1185,9 @@ async function main(): Promise<void> {
+         },
+       }).catch((error: unknown) => { console.error(error) })
+     } },
+-    ...process.platform === 'darwin' || process.platform === 'win32'
+-      ? [{ label: currentDesktopLocale().messages.cliCommandMenu, click: () => { void commandManager.show() } }] : [],
++    // The command worker installs into /usr/local/bin on macOS, the user's PATH on Windows and
++    // ~/.local/bin on Linux; all three have a working target, so all three show the entry.
++    { label: currentDesktopLocale().messages.cliCommandMenu, click: () => { void commandManager.show() } },
+     { type: 'separator' },
+     ...development ? [
+       { label: currentDesktopLocale().messages.reloadPageMenu, role: 'reload' as const },
+diff --git a/apps/desktop/tests/main-startup.spec.ts b/apps/desktop/tests/main-startup.spec.ts
+index 81fa3fe12a..e9520145c2 100644
+--- a/apps/desktop/tests/main-startup.spec.ts
++++ b/apps/desktop/tests/main-startup.spec.ts
+@@ -1056,7 +1056,7 @@ describe('desktop main startup', () => {
+     const application = template[0]!.submenu as MenuItemConstructorOptions[]
+     expect(application.filter(item => item.visible !== false).map(describeItem)).toEqual(platform === 'darwin'
+       ? ['about', 'separator', en.checkUpdatesMenu, en.scnetDiagnosticsMenu, en.cliCommandMenu, 'separator', 'toggleDevTools', 'separator', 'hide', 'hideOthers', 'unhide', 'separator', 'quit']
+-      : ['about', 'separator', en.checkUpdatesMenu, en.scnetDiagnosticsMenu, 'separator', 'toggleDevTools', 'separator', en.showWindowMenu, 'separator', 'quit'])
++      : ['about', 'separator', en.checkUpdatesMenu, en.scnetDiagnosticsMenu, en.cliCommandMenu, 'separator', 'toggleDevTools', 'separator', en.showWindowMenu, 'separator', 'quit'])
+     // Linux has no tray or Dock, so its quit entry carries the localized short label.
+     expect(application.find(item => item.role === 'quit')!.label)
+       .toBe(platform === 'darwin' ? en.quitApplication : en.quit)
+@@ -1388,6 +1388,61 @@ describe('desktop main startup', () => {
+     expect(window.show).toHaveBeenCalledOnce()
+   })
+ 
++  it('checks the Linux release feed from the application menu and asks before installing', async () => {
++    // A deb has no upstream electron-updater source. The menu must use the Git-release path that
++    // Settings already uses, and must not install from an entry labelled as a check.
++    vi.stubGlobal('process', { ...process, platform: 'linux', arch: 'x64', resourcesPath: 'desktop-test-resources' })
++    harness.app.isPackaged = true
++    const request = vi.fn<typeof fetch>(async () => Response.json([{
++      tag_name: 'v1.1.0-linux.1',
++      html_url: 'https://github.com/lql341/deepseek-harness-linux-desktop/releases/tag/v1.1.0-linux.1',
++      draft: false,
++      assets: [],
++    }]))
++    vi.stubGlobal('fetch', request)
++    await readyWorkspace()
++    const checkUpdates = applicationMenuItems().find(item => item.label === en.checkUpdatesMenu)!.click as () => void
++    checkUpdates()
++    await vi.waitFor(() => {
++      expect(harness.dialog.showMessageBox).toHaveBeenCalledWith(expect.objectContaining({
++        type: 'info', title: en.updateTitle, message: 'New version available: 1.1.0',
++        detail: en.updateDetail, buttons: [en.installAndRestart, en.later],
++      }))
++    })
++    // The default test answer is Later: no privileged install and no restart may follow.
++    expect(request).toHaveBeenCalledWith('https://api.github.com/repos/lql341/deepseek-harness-linux-desktop/releases', expect.anything())
++    expect(harness.app.relaunch).not.toHaveBeenCalled()
++  })
++
++  it('reports the current version from the Linux application menu when the feed has no release', async () => {
++    vi.stubGlobal('process', { ...process, platform: 'linux', arch: 'x64', resourcesPath: 'desktop-test-resources' })
++    harness.app.isPackaged = true
++    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => Response.json([])))
++    await readyWorkspace()
++    const checkUpdates = applicationMenuItems().find(item => item.label === en.checkUpdatesMenu)!.click as () => void
++    checkUpdates()
++    await vi.waitFor(() => {
++      expect(harness.dialog.showMessageBox).toHaveBeenCalledWith(expect.objectContaining({
++        type: 'info', title: en.updateCheckTitle, message: en.updateCurrent,
++        detail: 'Current version: 1.0.0',
++      }))
++    })
++  })
++
++  it('surfaces a Linux feed failure from the application menu instead of the upstream updater error', async () => {
++    vi.stubGlobal('process', { ...process, platform: 'linux', arch: 'x64', resourcesPath: 'desktop-test-resources' })
++    harness.app.isPackaged = true
++    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => { throw new Error('offline') }))
++    await readyWorkspace()
++    const checkUpdates = applicationMenuItems().find(item => item.label === en.checkUpdatesMenu)!.click as () => void
++    checkUpdates()
++    await vi.waitFor(() => {
++      expect(harness.dialog.showMessageBox).toHaveBeenCalledWith(expect.objectContaining({
++        type: 'error', title: en.updateCheckFailedTitle, message: en.updateCheckNetworkFailed,
++      }))
++    })
++  })
++
+   it('keeps the Host running when the last Linux window closes and reopens it from the application menu', async () => {
+     vi.stubGlobal('process', { ...process, platform: 'linux', arch: 'x64', resourcesPath: 'desktop-test-resources' })
+     await readyWorkspace()
