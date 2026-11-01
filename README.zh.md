@@ -72,6 +72,7 @@ PR 和相关 main push 会应用补丁、检查全仓类型、运行定向桌面
 - [Linux 构建与验收指南](LINUX-DESKTOP.zh-CN.md)
 - [桌面功能跟进](docs/DESKTOP-FOLLOWUP.zh-CN.md)
 - [桌面平台能力对齐](docs/DESKTOP-PARITY.zh-CN.md)
+- [当前待办](docs/TODO.zh-CN.md)
 - [SCNet 路线图与交接](docs/roadmap/README.zh-CN.md)
 - [Android/HarmonyOS 离线骨架](mobile-skeleton/README.zh-CN.md)
 - `patches/`：当前上游差异；`patches-legacy-dsh-v0.2.0-rc.2/`：历史补丁线

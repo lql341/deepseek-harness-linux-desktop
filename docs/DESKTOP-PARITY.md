@@ -80,4 +80,5 @@ The Linux verification workflow proves source application, typecheck, focused re
 - [Pinned upstream base](../ci/upstream-base-tag)
 - [Linux verification workflow](../.github/workflows/linux-desktop-verify.yml)
 - [Desktop follow-up](DESKTOP-FOLLOWUP.md)
+- [Living TODO](TODO.md)
 - [Linux build and acceptance guide](../LINUX-DESKTOP.md)
