@@ -1,0 +1,54 @@
+[
+  {
+    "en": "README.md",
+    "zh": "README.zh.md"
+  },
+  {
+    "en": "LINUX-DESKTOP.md",
+    "zh": "LINUX-DESKTOP.zh-CN.md"
+  },
+  {
+    "en": "ci/UPSTREAM-SYNC.md",
+    "zh": "ci/UPSTREAM-SYNC.zh-CN.md"
+  },
+  {
+    "en": "docs/DESKTOP-FOLLOWUP.md",
+    "zh": "docs/DESKTOP-FOLLOWUP.zh-CN.md"
+  },
+  {
+    "en": "mobile-skeleton/README.md",
+    "zh": "mobile-skeleton/README.zh-CN.md"
+  },
+  {
+    "en": "mobile-skeleton/android/README.md",
+    "zh": "mobile-skeleton/android/README.zh-CN.md"
+  },
+  {
+    "en": "mobile-skeleton/harmony/README.md",
+    "zh": "mobile-skeleton/harmony/README.zh-CN.md"
+  },
+  {
+    "en": "docs/roadmap/README.md",
+    "zh": "docs/roadmap/README.zh-CN.md"
+  },
+  {
+    "en": "docs/roadmap/SCNET-PLATFORM-DEVELOPMENT-PLAN.md",
+    "zh": "docs/roadmap/SCNET-PLATFORM-DEVELOPMENT-PLAN.zh-CN.md"
+  },
+  {
+    "en": "docs/roadmap/SCNET-DEVELOPMENT-HANDOFF.md",
+    "zh": "docs/roadmap/SCNET-DEVELOPMENT-HANDOFF.zh-CN.md"
+  },
+  {
+    "en": "docs/roadmap/SCNET-HANDOFF-PROMPT.md",
+    "zh": "docs/roadmap/SCNET-HANDOFF-PROMPT.zh-CN.md"
+  },
+  {
+    "en": "docs/roadmap/ADR-0001-plugin-and-connector-architecture.md",
+    "zh": "docs/roadmap/ADR-0001-plugin-and-connector-architecture.zh-CN.md"
+  },
+  {
+    "en": "docs/DOCUMENTATION.md",
+    "zh": "docs/DOCUMENTATION.zh-CN.md"
+  }
+]

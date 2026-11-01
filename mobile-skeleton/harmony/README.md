@@ -1,9 +1,7 @@
+English | [中文](README.zh-CN.md)
+
 # HarmonyOS scaffold
 
-The ArkTS source under `entry/src/main/ets/contract` mirrors the platform
-neutral mobile state machine. It intentionally has no endpoint, browser
-registration, HTTP transport, token value, or DevEco-specific authentication
-implementation.
+ArkTS sources under `entry/src/main/ets/contract` mirror the platform-neutral mobile state machine. They contain no endpoint, browser registration, HTTP transport, token value or DevEco-specific authentication implementation.
 
-The future HarmonyOS app should implement only platform adapters around this
-contract. It must not copy the Desktop Node/Python/Bash/SSH runtime.
+The future HarmonyOS application should implement platform adapters around the [shared connector interface](../README.md), without copying the Desktop Node/Python/Bash/SSH runtime.

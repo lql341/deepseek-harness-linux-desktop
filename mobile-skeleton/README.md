@@ -1,26 +1,12 @@
+English | [中文](README.zh-CN.md)
+
 # Mobile skeleton
 
-This directory is a contract-first Android and HarmonyOS scaffold. It is not
-part of the Linux Desktop package and does not perform network authentication.
+This is an offline, contract-first Android and HarmonyOS scaffold, separate from the Linux Desktop package. It contains a shared connector operation/capability manifest, [Android/Kotlin](android/README.md) and [HarmonyOS/ArkTS](harmony/README.md) state-machine interfaces, and conformance tests rejecting endpoint/credential material.
 
-The scaffold intentionally contains:
+It has no real HTTP authentication, issuer/endpoints/redirect registration, client ID/secret, access/refresh tokens, AK/SK or private hosts. Desktop Node/Python/Bash/SSH/Notebook execution is not included.
 
-- the connector operation and capability manifest shared by mobile adapters;
-- an Android/Kotlin state-machine interface;
-- a HarmonyOS/ArkTS state-machine interface;
-- offline conformance tests that reject endpoint and credential material.
-
-The scaffold intentionally does not contain:
-
-- an issuer, authorization endpoint, token endpoint, redirect URI, client ID,
-  client secret, access token, refresh token, AK/SK, or private host;
-- a real HTTP transport;
-- a production browser callback registration;
-- Node, Python, Bash, SSH, or Desktop runtime code.
-
-The source contract is the published `dsh-scnet@0.6.13` connector contract.
-Changes to that contract must still begin at canonical `scnet-hpc`, then flow
-through `dsh-scnet` before mobile adapters consume them.
+The source is the published `dsh-scnet@0.6.13` connector contract. Changes begin at canonical `scnet-hpc`, flow through `dsh-scnet`, then reach mobile adapters.
 
 ## Offline check
 
@@ -28,7 +14,4 @@ through `dsh-scnet` before mobile adapters consume them.
 node --test mobile-skeleton/tests/*.test.mjs
 ```
 
-The local environment used for this scaffold does not include an Android SDK,
-Gradle, Java, or the HarmonyOS DevEco toolchain. APK/HAP builds are therefore
-intentionally deferred until those toolchains and platform repositories are
-available.
+APK/HAP builds require the Android SDK/Gradle/Java and HarmonyOS DevEco toolchains in their platform repositories. Offline conformance is not evidence of a buildable or authenticated mobile application.

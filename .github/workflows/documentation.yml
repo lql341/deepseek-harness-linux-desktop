@@ -1,0 +1,40 @@
+name: Bilingual documentation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '**/*.md'
+      - 'ci/check-docs.mjs'
+      - 'ci/check-docs.test.mjs'
+      - 'ci/docs-pairs.json'
+      - 'ci/upstream-base-tag'
+      - '.github/workflows/documentation.yml'
+  push:
+    branches: [main]
+    paths:
+      - '**/*.md'
+      - 'ci/check-docs.mjs'
+      - 'ci/check-docs.test.mjs'
+      - 'ci/docs-pairs.json'
+      - 'ci/upstream-base-tag'
+      - '.github/workflows/documentation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  documentation:
+    name: English defaults, Chinese pairs and link consistency
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Check all documentation pairs
+        run: node ci/check-docs.mjs
+      - name: Verify invalid documentation is rejected
+        run: node --test ci/check-docs.test.mjs
