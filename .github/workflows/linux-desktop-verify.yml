@@ -167,6 +167,19 @@ jobs:
         working-directory: ${{ env.UPSTREAM_DIR }}
         run: pnpm run typecheck
 
+      - name: Desktop backport and Linux integration regression tests
+        working-directory: ${{ env.UPSTREAM_DIR }}
+        run: |
+          pnpm exec vitest run \
+            apps/desktop/tests/fatal-recovery.spec.ts \
+            apps/desktop/tests/update-overlay.spec.ts \
+            apps/desktop/tests/update-dialog.spec.ts \
+            apps/desktop/tests/mandatory-update-window.spec.ts \
+            apps/desktop/tests/main-startup.spec.ts \
+            apps/desktop/tests/keyboard.spec.ts \
+            apps/desktop/tests/harness-update.spec.ts \
+            apps/desktop/tests/scnet-diagnostics-window.spec.ts
+
       - name: Build the desktop application
         working-directory: ${{ env.UPSTREAM_DIR }}
         run: |
