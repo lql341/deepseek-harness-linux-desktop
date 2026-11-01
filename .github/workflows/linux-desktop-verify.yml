@@ -169,6 +169,8 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Validate generated diagnostic contracts and bilingual source documentation
+        id: diagnostic-contracts
+        continue-on-error: true
         working-directory: ${{ env.UPSTREAM_DIR }}
         run: bash "$GITHUB_WORKSPACE/ci/history-generated-check.sh"
 
@@ -257,6 +259,12 @@ jobs:
             "$GITHUB_WORKSPACE/ci/desktop-operation-audit.mjs" "/opt/DeepSeek Harness/resources"
           dbus-run-session -- xvfb-run -a -s "-screen 0 1280x900x24" \
             bash "$GITHUB_WORKSPACE/ci/desktop-session.sh"
+
+      - name: Require generated diagnostic contracts to pass
+        if: ${{ always() && steps.diagnostic-contracts.outcome != 'success' }}
+        run: |
+          echo "::error::Generated diagnostic contracts or bilingual source documentation did not pass."
+          exit 1
 
       - name: Collect diagnostics
         if: always()

@@ -1853,27 +1853,27 @@ index ad3660e..77815f0 100644
    en: c6538243d8702a0d
    zh: 04a82d923353c75f
 diff --git a/packages/boot/plugin-manager/README.md b/packages/boot/plugin-manager/README.md
-index c12c12b..790d4d3 100644
+index c12c12b..487a57d 100644
 --- a/packages/boot/plugin-manager/README.md
 +++ b/packages/boot/plugin-manager/README.md
 @@ -95,6 +95,8 @@ The CLI exposes `dsh plugin --profile <profile> version-exemptions`, `allow-vers
  <details>
  <summary>Implementation internals — click to expand</summary>
  
-+`plugin-manager/operation` publishes correlated `started`, `settled` and `unknown` management facts without waiting for diagnostic subscribers; subscriber failure does not change the management result. The `./diagnostic` export validates transported records and strips fields outside the diagnostic whitelist. [Management records](../../../docs/subsystems/boot.md#management-records) defines the fields; Desktop owns bounded persistence and report collection. Recent operations provide context, not proof of a crash cause.
++`plugin-manager/operation` publishes correlated `started`, `settled` and `unknown` management facts without waiting for diagnostic subscribers; subscriber failure does not change the management result. The `./diagnostic` export validates transported records and strips fields outside the diagnostic whitelist. [Management records](../../../docs/subsystems/boot.md) defines the fields; Desktop owns bounded persistence and report collection. Recent operations provide context, not proof of a crash cause.
 +
  The service and `dsh plugin` share the package operations in [operations.ts](src/operations.ts). The launcher supplies the current profile; [DSH HMR](../hmr/README.md) serializes module reloads, file watching and management writes. Each configuration refresh re-reads bundle selection and patch layers, updates the original root Include, and awaits removed plugin resources as well as the remaining Loader tree. CLI and service operations share the profile manifest writer lock to prevent concurrent package and manifest writes. HMR does not acquire that lock. Pnpm runs outside the HMR queue; installation selects the bundle after pnpm succeeds, while removal deselects and unloads the bundle before pnpm runs.
  
  Without HMR, installing a new package, enabling a bundle and a successful removal publish the profile's runtime resolution; with HMR, every operation leaves publication to [HMR](../hmr/README.md)'s recomposition, which removes dropped mappings after their plugins stop. Shared dependencies may pass to another bundle's declaration when their normalized directory and scope stay unchanged. Without HMR, a deselected startup bundle still runs: while any such bundle is absent from the saved selection, subsequent package operations retain the entire current table and report `restart-required`. Other new installations and removals of non-running bundles can still publish without HMR; activation waits for restart. With HMR, `installBundle()` refuses a package that is already installed with `already-installed`, before pnpm runs, when the spec names it: a registry name, a local directory, or the git or tarball spec its dependency was saved with. A package that cannot be removed, such as a bundle carrying plugin management, therefore cannot be installed over with HMR. Installing another version is a removal and an installation, so the previous version's plugins stop, its modules are evicted and its mappings removed before the new one is installed; the Web page's Update for an Official plugin does both. A git or tarball spec whose package is known only after pnpm ran can still install over an installed package: without HMR it reports `restart-required`, and with HMR the recomposition replaces the running plugins whose loaded files changed. A replacement that fails to import or start reports `failed` with the activation diagnostic, which names the import error; the previous version no longer runs, and every later operation imports it again, so it starts once its files or dependencies are corrected. An unchanged import failure is a warning of later operations; a changed one fails them. A publication the runtime resolution rejects, because an installed package now resolves to another directory or a mapping of the DSH installation changed, leaves the composition as it was, after stopping and starting again the rows it would drop, and reports `restart-required` with `package-moved`. Disabling or removing a bundle evicts the modules of the packages whose mappings it drops. Every `restart-required` result carries `restartReason`: `no-hmr`, `package-moved`, or the [HMR pending reason](../hmr/README.md) of a changed module that loads only after a restart, unless the operation reports `overridden` ([decision](../../../.agents/notes/implemented/architecture/2026-09-30-profile-package-refresh-and-manifest-invalidation.md)).
 diff --git a/packages/boot/plugin-manager/README.zh.md b/packages/boot/plugin-manager/README.zh.md
-index 17fcf8e..461c7a3 100644
+index 17fcf8e..d3d3038 100644
 --- a/packages/boot/plugin-manager/README.zh.md
 +++ b/packages/boot/plugin-manager/README.zh.md
 @@ -95,6 +95,8 @@ CLI 提供 `dsh plugin --profile <profile> version-exemptions`、`allow-version
  <details>
  <summary>实现细节——点击展开</summary>
  
-+`plugin-manager/operation` 不等待诊断订阅者，发布可关联的 `started`、`settled` 和 `unknown` 管理事实；订阅者失败不改变管理结果。`./diagnostic` 导出校验传输记录，并移除诊断白名单之外的字段。[管理记录](../../../docs/subsystems/boot.zh.md#管理记录)定义字段，Desktop 负责有界持久化和报告收集。近期操作只提供上下文，不证明崩溃原因。
++`plugin-manager/operation` 不等待诊断订阅者，发布可关联的 `started`、`settled` 和 `unknown` 管理事实；订阅者失败不改变管理结果。`./diagnostic` 导出校验传输记录，并移除诊断白名单之外的字段。[管理记录](../../../docs/subsystems/boot.zh.md)定义字段，Desktop 负责有界持久化和报告收集。近期操作只提供上下文，不证明崩溃原因。
 +
  服务与 `dsh plugin` 共用 [operations.ts](src/operations.ts) 中的包管理操作。启动器提供当前 profile；[DSH HMR](../hmr/README.zh.md) 串行执行模块重载、文件监听和管理写入。每次配置刷新重新读取组合包选择与 patch 层，更新原有根 Include，并等待已移除插件释放资源及剩余 Loader 树稳定。CLI 与 service 操作共用 profile manifest 写锁，防止并发包操作和 manifest 写入。HMR 不获取该锁。pnpm 在 HMR 队列之外执行；安装在 pnpm 成功后选入组合包，删除则在执行 pnpm 前取消选入并完成卸载。
  
