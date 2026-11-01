@@ -11,6 +11,7 @@
 | [交接提示词](SCNET-HANDOFF-PROMPT.zh-CN.md) | 可复制的起步指令；基线、流程或发布门禁变化时刷新 |
 | [ADR-0001](ADR-0001-plugin-and-connector-architecture.zh-CN.md) | 桌面/服务端插件与移动/原生连接器分层；后续决策新增 ADR |
 | [ADR-0002](ADR-0002-dsh-superagent-bundle.zh-CN.md) | dsh-superagent 原型的可选打包决策、兼容性证据和实施阶段 |
+| [ADR-0003](ADR-0003-file-drag-backport.zh-CN.md) | 分阶段回移原生文件拖拽，先做 Wayland/X11 可行性验证 |
 
 ## 状态词汇
 
