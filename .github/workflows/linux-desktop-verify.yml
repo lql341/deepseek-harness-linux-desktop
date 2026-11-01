@@ -11,6 +11,13 @@ name: Linux desktop verification
 # startup, close behaviour and dsh:// activation. Debian and other distribution containers are
 # deliberately manual multi-distro checks so a secondary distribution cannot block daily changes.
 #
+# Draft pull requests do not start this job. A draft is work in progress by definition, and every
+# intermediate push used to start a 20-minute job whose failure mailed the author about code that
+# the next push already replaced. Convert the pull request to ready for review (which triggers this
+# workflow through `ready_for_review`) or run it manually on the branch when a draft needs checking.
+# A newer push cancels an in-flight pull-request run; cancelled runs send no failure notification and
+# do not keep a runner busy for changes that no longer exist.
+#
 # Real-desktop verification is the authority for window behaviour, not this workflow.
 
 on:
@@ -69,11 +76,19 @@ on:
         default: default
   pull_request:
     branches: [main]
+    # ready_for_review is not one of the default activity types; without it, the draft guard below
+    # would never let a converted pull request run until an unrelated push arrived.
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'patches/**'
       - 'apply.sh'
       - 'verify.sh'
       - 'ci/**'
+      # The documentation pair list and checker never reach this job; the documentation workflow
+      # owns them. Without these exclusions a pure documentation change started a 20-minute build.
+      - '!ci/docs-pairs.json'
+      - '!ci/check-docs.mjs'
+      - '!ci/check-docs.test.mjs'
       - '.github/workflows/linux-desktop-verify.yml'
       - '.github/workflows/publish-linux-desktop.yml'
       - '.github/workflows/upstream-sync-check.yml'
@@ -84,9 +99,19 @@ on:
       - 'apply.sh'
       - 'verify.sh'
       - 'ci/**'
+      - '!ci/docs-pairs.json'
+      - '!ci/check-docs.mjs'
+      - '!ci/check-docs.test.mjs'
       - '.github/workflows/linux-desktop-verify.yml'
       - '.github/workflows/publish-linux-desktop.yml'
       - '.github/workflows/upstream-sync-check.yml'
+
+concurrency:
+  # One verification per pull request or ref. Pull-request pushes cancel their predecessor so a
+  # superseded commit cannot fail after the author has already moved on; main runs to completion
+  # because its result is the published quality claim.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   actions: read
@@ -104,7 +129,7 @@ jobs:
   typecheck:
     name: install + typecheck + package preflight + Linux package smoke
     runs-on: ubuntu-24.04
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.run-core || inputs.run-multidistro || inputs.run-candidate-upgrade }}
+    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.run-core || inputs.run-multidistro || inputs.run-candidate-upgrade) && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
     timeout-minutes: 60
     steps:
       - name: Environment report

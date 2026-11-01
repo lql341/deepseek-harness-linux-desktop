@@ -38,6 +38,8 @@ jobs:
     timeout-minutes: 180
     outputs:
       validated: ${{ steps.result.outputs.validated }}
+      result: ${{ steps.result.outputs.result }}
+      fresh: ${{ steps.result.outputs.fresh }}
       tag: ${{ steps.upstream.outputs.tag }}
       sha: ${{ steps.upstream.outputs.sha }}
     steps:
@@ -169,6 +171,8 @@ jobs:
             status=conflict
           fi
           echo "validated=$([ "$status" = success ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "result=${status:-failed}" >> "$GITHUB_OUTPUT"
+          echo "fresh=$([ -z "$PRIOR_STATUS" ] && [ -n "$status" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
           # Only explicit patch conflicts and completed builds are reusable.
           if [ -z "$PRIOR_STATUS" ] && [ -n "$status" ]; then
             printf '%s\n' "$status" > sync-validation-status.txt
@@ -205,6 +209,7 @@ jobs:
             if [ "$PRIOR_STATUS" = conflict ]; then
               printf '\n**Still blocked by the previously reported patch conflict.** See the original run linked above.\n'
             fi
+            printf '\nA fresh patch conflict is recorded as an issue instead of a failed scheduled run.\n'
             printf '\nThis workflow never publishes a release. PR creation is a separate job.\n'
           } | tee upstream-sync-report.md >> "$GITHUB_STEP_SUMMARY"
 
@@ -223,12 +228,66 @@ jobs:
           if-no-files-found: warn
 
       - name: Fail when the candidate could not be validated
-        if: steps.compare.outputs.newer == 'true' && steps.prior.outputs.status == ''
+        # A patch conflict is an expected consequence of an upstream release and is reported as an
+        # issue by the conflict-report job instead: failing the scheduled run mailed the owner every
+        # day for a state that only a human patch edit can fix. Build and infrastructure failures
+        # still fail, because those may be transient and must not be cached.
+        if: steps.compare.outputs.newer == 'true' && steps.result.outputs.fresh == 'true' && steps.result.outputs.result == 'failed'
         env:
           PATCH_OUTCOME: ${{ steps.apply.outcome }}
           BUILD_OUTCOME: ${{ steps.build.outcome }}
         run: |
+          echo "::error::the candidate did not build; see the uploaded logs"
           [ "$PATCH_OUTCOME" = success ] && [ "$BUILD_OUTCOME" = success ]
+
+  conflict-report:
+    name: record an expected patch conflict
+    needs: check
+    if: needs.check.outputs.result == 'conflict' && needs.check.outputs.fresh == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the pinned upstream base
+        run: echo "CURRENT_BASE_TAG=$(cat ci/upstream-base-tag)" >> "$GITHUB_ENV"
+
+      - name: Open or update the conflict issue
+        # One open issue at a time keeps this channel quiet while staying visible and searchable.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_TAG: ${{ needs.check.outputs.tag }}
+        run: |
+          set -euo pipefail
+          title_prefix='Upstream sync blocked: the patch series conflicts with '
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 100 \
+            --json number,title \
+            --jq "[.[] | select(.title | startswith(\"$title_prefix\"))][0].number // empty")
+          body=$(cat <<EOF
+          The scheduled upstream check applied the Linux patch series with `git apply --3way` and could
+          not apply it to `$UPSTREAM_TAG`.
+
+          - Pinned base: `$CURRENT_BASE_TAG`
+          - Candidate: `$UPSTREAM_TAG`
+          - Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+
+          Download the `upstream-sync-*` artifact from that run for `patch-apply.log` and the build logs,
+          then resolve the conflicts in a normal pull request. This issue replaces a failing scheduled
+          run, so the check does not mail a failure every day for a conflict that only a human patch
+          edit can fix. Close it once the migration lands or the pinned base is updated.
+          EOF
+          )
+          # The YAML block indentation would otherwise reach the issue body as leading spaces.
+          body=$(printf '%s\n' "$body" | sed 's/^[[:space:]]*//')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body "$body"
+            echo "Commented on issue #$existing." >> "$GITHUB_STEP_SUMMARY"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title_prefix$UPSTREAM_TAG" --body "$body"
+          fi
 
   migration-pr:
     name: open upstream base migration PR

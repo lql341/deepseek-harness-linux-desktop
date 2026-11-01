@@ -56,11 +56,11 @@ pnpm --dir apps/desktop run package:linux:x64
 
 ## 验证与发布
 
-PR 和相关 main push 会应用补丁、检查全仓类型、运行定向桌面回归、构建 deb、审计 SCNet 内容，再在 Ubuntu 24.04 的 Xvfb 中安装并启动同一个候选包。普通第二次启动的窗口断言在无头会话中跳过，需要真实桌面验证。已发布字节、升级、AppArmor、Wayland 和 Debian 13 是单独的手动 job；跳过不等于平台检查通过。
+PR 和相关 main push 会应用补丁、检查全仓类型、运行定向桌面回归、构建 deb、审计 SCNet 内容，再在 Ubuntu 24.04 的 Xvfb 中安装并启动同一个候选包。草稿 PR 不启动该 job，同 PR 的新推送会取消正在运行的旧 job，因此未完成的工作不会为已被替换的提交发送失败邮件。普通第二次启动的窗口断言在无头会话中跳过，需要真实桌面验证。已发布字节、升级、AppArmor、Wayland 和 Debian 13 是单独的手动 job；跳过不等于平台检查通过。
 
 [PR #5](https://github.com/lql341/deepseek-harness-linux-desktop/pull/5) 在 [Run 41273560891](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41273560891) 通过 254 项桌面回归、全仓类型检查、打包和安装会话检查；合并后的 main 也在 [Run 41274912984](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41274912984) 通过。这些运行早于 SCNet 配置修复，当前改动仍需自己的 CI 证据。
 
-发布由 [publish-linux-desktop.yml](.github/workflows/publish-linux-desktop.yml) 手动触发：固定构建提交、记录暂存区补丁树、审计并安装构建字节，然后发布 deb 和 checksum。上游同步只创建可审查 PR，不会合并或发布，见[同步操作](ci/UPSTREAM-SYNC.zh-CN.md)。
+发布由 [publish-linux-desktop.yml](.github/workflows/publish-linux-desktop.yml) 手动触发：固定构建提交、记录暂存区补丁树、审计并安装构建字节，然后发布 deb 和 checksum。上游同步只创建可审查 PR，不会合并或发布；新的上游补丁冲突会登记为 issue，不再让定时任务失败。见[同步操作](ci/UPSTREAM-SYNC.zh-CN.md)。
 
 ## 文档与目录
 
