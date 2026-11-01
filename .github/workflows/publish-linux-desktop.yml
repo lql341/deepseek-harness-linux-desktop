@@ -175,6 +175,8 @@ jobs:
             echo
             echo '```sh'
             echo "git clone https://github.com/$GITHUB_REPOSITORY.git"
+            echo "cd ${GITHUB_REPOSITORY#*/}"
+            echo "git checkout $GITHUB_SHA"
             echo "sh apply.sh && git -C deepseek-harness write-tree"
             echo "#   expect: $PATCHED_TREE"
             echo '```'
