@@ -139,6 +139,21 @@ index 31c64f1..f42d41a 100644
      { "path": "../../vendor/cordis" },
      { "path": "../../packages/core/agent" },
      { "path": "../../packages/jobs/jobs" },
+diff --git a/apps/desktop/README.i18n.yaml b/apps/desktop/README.i18n.yaml
+index 6060f79..6b5d631 100644
+--- a/apps/desktop/README.i18n.yaml
++++ b/apps/desktop/README.i18n.yaml
+@@ -6,8 +6,8 @@
+   en: 0d36989eb614345d
+   zh: a0a1a18c07621393
+ /deepseek-harness-desktop:
+-  en: 69a6e0c6712e463b
+-  zh: 84e1d0b09c803704
++  en: 7dfc0abb3a7f03fc
++  zh: bec6aa15970391fe
+ /deepseek-harness-desktop/summary:
+   en: 7bc8bf30de693222
+   zh: e85993d8852b6cab
 diff --git a/apps/desktop/README.md b/apps/desktop/README.md
 index c199a6d..ca6ba42 100644
 --- a/apps/desktop/README.md
@@ -1679,8 +1694,23 @@ index 92f648d..b58c6cb 100644
    {
      entry: ['lib/types/command-manager-entry.js'],
      plugins: [packagedImportsPlugin({ packages: new Set(), nodeBuiltins: true })],
+diff --git a/docs/subsystems/boot.i18n.yaml b/docs/subsystems/boot.i18n.yaml
+index 79070a4..ff33a90 100644
+--- a/docs/subsystems/boot.i18n.yaml
++++ b/docs/subsystems/boot.i18n.yaml
+@@ -6,8 +6,8 @@
+   en: 962b4398c9052959
+   zh: 14471c340a9f6e60
+ /profile-management/management-records:
+-  en: a1412da0219c2a09
+-  zh: b6869fd548f4c693
++  en: 1dd3bd8ec774d762
++  zh: 0aa8a3ce0b0a96de
+ /profile-management/market-records:
+   en: a28421bc6481b0ed
+   zh: 73142d6163a20f50
 diff --git a/docs/subsystems/boot.md b/docs/subsystems/boot.md
-index ba75525..d928170 100644
+index ba75525..0d33e8c 100644
 --- a/docs/subsystems/boot.md
 +++ b/docs/subsystems/boot.md
 @@ -6,6 +6,8 @@ The [boot package group](../../packages/boot/README.md) owns launcher-provided p
@@ -1692,8 +1722,32 @@ index ba75525..d928170 100644
  `PluginEntryId` identifies one Loader entry; callers obtain it from `listPlugins` rather than constructing a patch id.
  
  `PluginInfo` carries module identity, effective enablement, fiber phase and optional display `meta`, plus a unique `patchId` or a `readOnlyReason`.
+@@ -425,6 +427,23 @@ An installation moved between its Host phases. `installing` is announced once pe
+ 
+ Source: [`packages/boot/plugin-manager/src/types.ts`](../../packages/boot/plugin-manager/src/types.ts)
+ 
++<a id="plugin-manageroperation--parallel"></a>
++
++#### `plugin-manager/operation` — parallel
++
++One manager invocation started or ended; subscribers run independently without delaying management.
++
++```ts cordis-catalog
++/**
++ * One manager invocation started or ended; subscribers run independently without delaying management.
++ * @mode parallel
++ * @param operation - Correlated operation facts; a start without an end has an unknown outcome.
++ */
++'plugin-manager/operation'(operation: PluginOperation): void | Promise<void>
++```
++
++Source: [`packages/boot/plugin-manager/src/types.ts`](../../packages/boot/plugin-manager/src/types.ts)
++
+ <a id="plugin-market-events"></a>
+ 
+ ### `plugin-market/*` events
 diff --git a/docs/subsystems/boot.zh.md b/docs/subsystems/boot.zh.md
-index f6260e8..04d018e 100644
+index f6260e8..7eceb56 100644
 --- a/docs/subsystems/boot.zh.md
 +++ b/docs/subsystems/boot.zh.md
 @@ -6,6 +6,8 @@
@@ -1713,7 +1767,7 @@ index f6260e8..04d018e 100644
 +
 +#### `plugin-manager/operation` — parallel
 +
-+一次管理调用开始或结束；订阅者独立运行，不延迟管理操作。
++One manager invocation started or ended; subscribers run independently without delaying management.
 +
 +```ts cordis-catalog
 +/**
@@ -1729,6 +1783,21 @@ index f6260e8..04d018e 100644
  <a id="plugin-market-events"></a>
  
  ### `plugin-market/*` events
+diff --git a/packages/boot/app-boot/README.i18n.yaml b/packages/boot/app-boot/README.i18n.yaml
+index c13fb64..cee0ce4 100644
+--- a/packages/boot/app-boot/README.i18n.yaml
++++ b/packages/boot/app-boot/README.i18n.yaml
+@@ -24,8 +24,8 @@
+   en: 4a424cd401556f20
+   zh: 0b34dd18e0db6cea
+ /deepseek-ai-dsh-app-boot/use-this-package/profiles:
+-  en: d2d520668668292c
+-  zh: b7deeab27032a3ad
++  en: aa1b3908f164da2b
++  zh: 7fe37f9b8ccaa710
+ /deepseek-ai-dsh-app-boot/use-this-package/previewing-the-effective-configuration:
+   en: 646a0ccdd7881ad1
+   zh: e3696acb1573dd7b
 diff --git a/packages/boot/app-boot/README.md b/packages/boot/app-boot/README.md
 index 59c3847..ab2b4b2 100644
 --- a/packages/boot/app-boot/README.md
@@ -1768,6 +1837,21 @@ index fded02c..a1229cf 100644
  } from './profile-compatibility.ts'
  import { prepareProfilePatches } from './compatibility-preflight.ts'
  import { ProfileRuntimeResolution, type RuntimeResolution } from './profile.ts'
+diff --git a/packages/boot/plugin-manager/README.i18n.yaml b/packages/boot/plugin-manager/README.i18n.yaml
+index ad3660e..77815f0 100644
+--- a/packages/boot/plugin-manager/README.i18n.yaml
++++ b/packages/boot/plugin-manager/README.i18n.yaml
+@@ -24,8 +24,8 @@
+   en: d5643a06f300c30a
+   zh: 9348b6a7676a2849
+ /deepseek-ai-dsh-plugin-manager/understand-the-implementation:
+-  en: 495dadf79c48c43c
+-  zh: 9884dd04a5bb49dc
++  en: aa6f8b2174fd790f
++  zh: c71066a28241d521
+ /deepseek-ai-dsh-plugin-manager/further-exploration:
+   en: c6538243d8702a0d
+   zh: 04a82d923353c75f
 diff --git a/packages/boot/plugin-manager/README.md b/packages/boot/plugin-manager/README.md
 index c12c12b..790d4d3 100644
 --- a/packages/boot/plugin-manager/README.md
@@ -2296,6 +2380,40 @@ index da58379..1766e8d 100644
 +  expect(facts.slice(-2).map(record => record.target)).toEqual([null, null])
 +  expect(JSON.stringify(facts)).not.toContain('secret')
 +})
+diff --git a/packages/extensions/tool-cordis/src/api-catalog.ts b/packages/extensions/tool-cordis/src/api-catalog.ts
+index 03fdcaa..765dac7 100644
+--- a/packages/extensions/tool-cordis/src/api-catalog.ts
++++ b/packages/extensions/tool-cordis/src/api-catalog.ts
+@@ -4405,6 +4405,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
+     description: 'An installation moved between its Host phases. `installing` is announced once per registry the installation asks, with the attempt\'s registry and position; `cancelling` and `applying` once.',
+     parameters: [{ name: 'progress', description: 'the installation\'s request id and phase, with the attempt while installing.' }],
+   },
++  {
++    name: 'plugin-manager/operation',
++    mode: 'parallel',
++    signature: '\'plugin-manager/operation\'(operation: PluginOperation): void | Promise<void>',
++    summary: 'One manager invocation started or ended; subscribers run independently without delaying management.',
++    description: 'One manager invocation started or ended; subscribers run independently without delaying management.',
++    parameters: [{ name: 'operation', description: 'Correlated operation facts; a start without an end has an unknown outcome.' }],
++  },
+   {
+     name: 'plugin-market/changed',
+     mode: 'emit',
+@@ -6433,6 +6441,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
+     name: 'PluginLocalizedMeta',
+     declaration: 'export interface PluginLocalizedMeta {\n    readonly title?: LocalizedText;\n    readonly description?: LocalizedText;\n    readonly icon?: string;\n    readonly error?: string;\n}',
+   },
++  {
++    name: 'PluginOperation',
++    declaration: 'export type PluginOperation = {\n    readonly id: PluginOperationId;\n    readonly time: string;\n    readonly reason: PluginChange[\'reason\'];\n    readonly target: string | null;\n    readonly stage: ChangeResult[\'stage\'];\n    readonly enabled?: boolean | undefined;\n    readonly version?: string | undefined;\n} & ({\n    readonly phase: \'started\';\n} | {\n    readonly phase: \'settled\';\n    readonly application: ChangeResult[\'application\'];\n    readonly changed: boolean;\n    readonly errorCode?: ManagementError[\'code\'] | undefined;\n    readonly restartReason?: RestartReason | undefined;\n} | {\n    readonly phase: \'unknown\';\n});',
++  },
++  {
++    name: 'PluginOperationId',
++    declaration: 'export type PluginOperationId = Branded<\'PluginOperationId\'>;',
++  },
+   {
+     name: 'PluginOptions',
+     declaration: 'export type PluginOptions = Readonly<Record<string, PluginOptionValue>>;',
 diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
 index d6df9aa..081a62b 100644
 --- a/pnpm-lock.yaml
