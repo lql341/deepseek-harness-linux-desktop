@@ -2323,6 +2323,18 @@ index d6df9aa..081a62b 100644
        '@deepseek-ai/cordis':
          specifier: workspace:~
          version: link:../../vendor/cordis
+diff --git a/scripts/gen-cordis-catalog.ts b/scripts/gen-cordis-catalog.ts
+index ebd7527..99e417a 100644
+--- a/scripts/gen-cordis-catalog.ts
++++ b/scripts/gen-cordis-catalog.ts
+@@ -317,6 +317,7 @@ export const LINK_MAP: Readonly<Record<string, string>> = {
+   PluginInstallRequestId: 'boot.md',
+   PluginSpecInspection: 'boot.md',
+   PluginChange: 'boot.md',
++  PluginOperation: 'boot.md',
+   PluginInstallLogChunk: 'boot.md',
+   PluginInstallProgress: 'boot.md',
+   PluginRegistries: 'boot.md',
 diff --git a/tsconfig.base.json b/tsconfig.base.json
 index f083f9b..3365f12 100644
 --- a/tsconfig.base.json
