@@ -31,8 +31,10 @@ Without `--tag`, the script uses GitHub's latest non-prerelease endpoint; it may
 | Recovery | Retrieve a saved crash report, including delayed writes and visible reveal failures |
 | Update dialogs | Owner-attached isolated views, Linux caption/fullscreen handling, cancellation and mandatory-view recovery |
 | SCNet setup repair | External Python uses unpacked files; completion/errors remain visible in the terminal and spawn failures reject the action |
+| Plugin history | Correlated manager events, a bounded local journal and an isolated report Worker for crash diagnostics |
+| Linux menu actions | Check for Updates uses the release package feed and asks before installing; Manage dsh Command is available |
 
-The final four rows describe the source patch series. See [desktop follow-up](docs/DESKTOP-FOLLOWUP.md) for evidence and remaining differences. Real SCNet OAuth2 login is still blocked on its formal service contract and sandbox credentials. Local diagnostics and an installed Bundle do not establish authorization.
+The final six rows describe the source patch series. See [desktop follow-up](docs/DESKTOP-FOLLOWUP.md) for evidence and remaining differences. Real SCNet OAuth2 login is still blocked on its formal service contract and sandbox credentials. Local diagnostics and an installed Bundle do not establish authorization.
 
 ## Build from source
 
