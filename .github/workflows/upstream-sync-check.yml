@@ -172,7 +172,7 @@ jobs:
           fi
           echo "validated=$([ "$status" = success ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "result=${status:-failed}" >> "$GITHUB_OUTPUT"
-          echo "fresh=$([ -z "$PRIOR_STATUS" ] && [ -n "$status" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "fresh=$([ -z "$PRIOR_STATUS" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
           # Only explicit patch conflicts and completed builds are reusable.
           if [ -z "$PRIOR_STATUS" ] && [ -n "$status" ]; then
             printf '%s\n' "$status" > sync-validation-status.txt
