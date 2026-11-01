@@ -13,11 +13,11 @@ Updated 2026-11-01. Status: `in progress`. Repositories: Linux Desktop and `dsh-
 | Last merged desktop backport | PR #6, main commit `c23d3cb6c849307d6eaaa2640016ec9b26436c8c` |
 | PR verification | Run `41278271808`: ten suites/268 tests, full typecheck, build, deb audit and installed Xvfb session passed |
 | Main verification | Run `41274912984`: passed |
-| Verified public prerelease | `v0.2.1-rc.5-linux.1`, built from `b860c05d4f771aa105290394e5d05fd2311e571f` |
-| Publish verification | Run `41269979995`: passed |
-| Released deb SHA-256 | `8ee9616ee40db44330c4b77dbae24173d0a48665a3478d075ff7c168422888c6` |
+| Verified public prerelease | `v0.2.1-rc.5-linux.2`, built from `32a509c6e5db91d6210f4fe23d4f9290c0df310a` |
+| Publish verification | Run `41311729795`: passed |
+| Released deb SHA-256 | `6b7dc77e7757826e20d60834ae87c812411d2e3cb79ff22a9a3cefc4d1491cb3` |
 
-The published prerelease does not contain patches 0007/0008/0009. Patch 0008 repairs Configure SCNet and passed the PR verification above. Patch 0009 adds local plugin operation history as a new candidate; its full CI and packaged producer/Worker acceptance remain pending. Query GitHub before treating this snapshot as latest. Use the [release page](https://github.com/lql341/deepseek-harness-linux-desktop/releases/tag/v0.2.1-rc.5-linux.1) and [Actions](https://github.com/lql341/deepseek-harness-linux-desktop/actions).
+`v0.2.1-rc.5-linux.2` contains patches 0001 to 0011, including the SCNet setup repair, plugin operation history and the signed update path. The published bytes passed the manual acceptance suite (signed manifest, upgrade, AppArmor, Wayland, Debian 13 and candidate upgrade) in run `41317916316`. Query GitHub before treating this snapshot as latest. Use the [release page](https://github.com/lql341/deepseek-harness-linux-desktop/releases/tag/v0.2.1-rc.5-linux.2) and [Actions](https://github.com/lql341/deepseek-harness-linux-desktop/actions).
 
 ## Implemented behavior
 
