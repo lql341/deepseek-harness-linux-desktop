@@ -68,6 +68,7 @@ English is the default documentation language. Every page has a Chinese counterp
 
 - [Linux build and acceptance guide](LINUX-DESKTOP.md)
 - [Desktop feature follow-up](docs/DESKTOP-FOLLOWUP.md)
+- [Desktop platform parity](docs/DESKTOP-PARITY.md)
 - [SCNet roadmap and handoff](docs/roadmap/README.md)
 - [Android/HarmonyOS offline scaffold](mobile-skeleton/README.md)
 - `patches/`: active upstream diffs; `patches-legacy-dsh-v0.2.0-rc.2/`: historical series

@@ -16,6 +16,10 @@
     "zh": "docs/DESKTOP-FOLLOWUP.zh-CN.md"
   },
   {
+    "en": "docs/DESKTOP-PARITY.md",
+    "zh": "docs/DESKTOP-PARITY.zh-CN.md"
+  },
+  {
     "en": "mobile-skeleton/README.md",
     "zh": "mobile-skeleton/README.zh-CN.md"
   },
@@ -46,6 +50,10 @@
   {
     "en": "docs/roadmap/ADR-0001-plugin-and-connector-architecture.md",
     "zh": "docs/roadmap/ADR-0001-plugin-and-connector-architecture.zh-CN.md"
+  },
+  {
+    "en": "docs/roadmap/ADR-0002-dsh-superagent-bundle.md",
+    "zh": "docs/roadmap/ADR-0002-dsh-superagent-bundle.zh-CN.md"
   },
   {
     "en": "docs/DOCUMENTATION.md",
