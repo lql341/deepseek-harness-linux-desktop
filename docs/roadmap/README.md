@@ -11,6 +11,7 @@ Planning and handoff for SCNet authentication, the fixed `dsh-scnet` Bundle and 
 | [Handoff prompt](SCNET-HANDOFF-PROMPT.md) | Copy-ready starting instructions; refresh when base, workflow or release gate changes |
 | [ADR-0001](ADR-0001-plugin-and-connector-architecture.md) | Desktop/server plugin versus mobile/native connectors; later decisions need a new ADR |
 | [ADR-0002](ADR-0002-dsh-superagent-bundle.md) | Opt-in packaging decision for the dsh-superagent prototype, with compatibility evidence and phases |
+| [ADR-0003](ADR-0003-file-drag-backport.md) | Staged backport of native file drag, starting with a Wayland/X11 feasibility spike |
 
 ## Status vocabulary
 

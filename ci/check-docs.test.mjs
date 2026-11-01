@@ -21,7 +21,7 @@ function edit(root, path, before, after) {
 }
 
 test('the complete repository has paired English defaults and Chinese pages', () => {
-  assert.deepEqual(checkDocs(source), { pairs: 15, pages: 30 })
+  assert.deepEqual(checkDocs(source), { pairs: 16, pages: 32 })
 })
 for (const [name, mutate, failure] of [
   ['missing translation', root => unlinkSync(join(root, 'docs/DOCUMENTATION.zh-CN.md')), /missing translation/],
@@ -31,7 +31,7 @@ for (const [name, mutate, failure] of [
   ['broken local link', root => edit(root, 'README.md', '(LINUX-DESKTOP.md)', '(missing.md)'), /broken local link/],
   ['broken anchor', root => edit(root, 'README.md', '(LINUX-DESKTOP.md)', '(LINUX-DESKTOP.md#missing-anchor)'), /broken anchor/],
   ['different command', root => edit(root, 'README.zh.md', 'pnpm run typecheck', 'pnpm run test'), /commands differ/],
-  ['different release version', root => edit(root, 'README.zh.md', 'v0.2.1-rc.5-linux.1', 'v0.2.1-rc.5-linux.9'), /versions\/hashes\/run IDs differ/],
+  ['different release version', root => edit(root, 'README.zh.md', 'v0.2.1-rc.5-linux.2', 'v0.2.1-rc.5-linux.9'), /versions\/hashes\/run IDs differ/],
   ['broken table continuation', root => edit(root, 'docs/DESKTOP-FOLLOWUP.zh-CN.md', '\n| 0009 |', '\n\n| 0009 |'), /table structure differs/],
   ['missing translated table row', root => edit(root, 'docs/DESKTOP-FOLLOWUP.zh-CN.md', '| 0009 |', '0009 |'), /table structure differs/],
   ['invalid pinned base', root => writeFileSync(join(root, 'ci/upstream-base-tag'), 'not-a-tag\n'), /invalid pinned base/],
@@ -44,5 +44,5 @@ for (const [name, mutate, failure] of [
 test('valid upstream migrations do not invalidate dated verification snapshots', t => {
   const root = fixture(t)
   writeFileSync(join(root, 'ci/upstream-base-tag'), 'dsh-v9.9.9-rc.1\n')
-  assert.deepEqual(checkDocs(root), { pairs: 15, pages: 30 })
+  assert.deepEqual(checkDocs(root), { pairs: 16, pages: 32 })
 })

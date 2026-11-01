@@ -56,6 +56,10 @@
     "zh": "docs/roadmap/ADR-0002-dsh-superagent-bundle.zh-CN.md"
   },
   {
+    "en": "docs/roadmap/ADR-0003-file-drag-backport.md",
+    "zh": "docs/roadmap/ADR-0003-file-drag-backport.zh-CN.md"
+  },
+  {
     "en": "docs/DOCUMENTATION.md",
     "zh": "docs/DOCUMENTATION.zh-CN.md"
   }

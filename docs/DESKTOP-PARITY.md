@@ -34,7 +34,7 @@ Evidence for each row comes from the pinned upstream tree and the patched tree p
 | Developer tools | Command+Option+I and a hidden menu item | F12, Ctrl+Shift+I, a visible localized menu entry and native accelerators | Covered by focused keyboard and menu tests |
 | Crash recovery | Reports under the macOS logs directory, with a native dialog | Reports under the userData logs directory, plus retrieval of a saved report from the Settings-owned menu | Real-desktop check of the reveal action and the ten-report retention |
 | Computer use | The dedicated macOS provider uses Accessibility and Screen Recording | No Linux provider exists | Needs X11 and Wayland control, accessibility trees, capture and approval tests |
-| Native file drag and new file actions | Present in the development line, not in the official baseline | Absent from the pinned baseline | Backport the file-drag provider, Host resource API and cleanup lifecycle together |
+| Native file drag and new file actions | Present in the development line, not in the official baseline | Absent from the pinned baseline | Staged backport per [ADR-0003](roadmap/ADR-0003-file-drag-backport.md), starting with a Wayland/X11 spike |
 | Plugin operation history | Present in the development line, not in the official baseline | Merged as patch 0009; the published package still predates it | Validate the journal and report Worker in a released package |
 
 ## Gaps that need development
