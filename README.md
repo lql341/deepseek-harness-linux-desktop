@@ -4,7 +4,7 @@ English | [中文](README.zh.md)
 
 Unofficial Linux x64 desktop port of [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). This repository maintains an ordered patch series and Linux build, verification and release tools. It is not affiliated with or endorsed by DeepSeek.
 
-The current upstream base is **`dsh-v0.2.1-rc.5`**, read from [ci/upstream-base-tag](ci/upstream-base-tag). Linux packages bundle **`dsh-scnet@0.6.13`**. Use [Actions](https://github.com/lql341/deepseek-harness-linux-desktop/actions) to check the result for an exact commit.
+The default upstream base is read from [ci/upstream-base-tag](ci/upstream-base-tag). The recorded verification baseline here is **`dsh-v0.2.1-rc.5`**. Linux packages bundle **`dsh-scnet@0.6.13`**. Use [Actions](https://github.com/lql341/deepseek-harness-linux-desktop/actions) to check the result for an exact commit.
 
 ## Install a published package
 

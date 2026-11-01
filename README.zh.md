@@ -4,7 +4,7 @@
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的非官方 Linux x64 桌面移植。本仓库维护按序应用的补丁，以及 Linux 构建、验证和发布工具。项目与 DeepSeek 无隶属关系，未获其背书。
 
-当前上游基线是 **`dsh-v0.2.1-rc.5`**，由 [ci/upstream-base-tag](ci/upstream-base-tag) 提供。Linux 包固定携带 **`dsh-scnet@0.6.13`**。请在 [Actions](https://github.com/lql341/deepseek-harness-linux-desktop/actions) 查看具体提交的检查结果。
+默认上游基线由 [ci/upstream-base-tag](ci/upstream-base-tag) 提供。本文记录的验证基线是 **`dsh-v0.2.1-rc.5`**。Linux 包固定携带 **`dsh-scnet@0.6.13`**。请在 [Actions](https://github.com/lql341/deepseek-harness-linux-desktop/actions) 查看具体提交的检查结果。
 
 ## 安装已发布的包
 

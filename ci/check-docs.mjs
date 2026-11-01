@@ -73,9 +73,7 @@ export function checkDocs(root) {
     }
   }
   const base = read(resolve(root, 'ci/upstream-base-tag')).trim()
-  for (const path of ['README.md', 'README.zh.md', 'LINUX-DESKTOP.md', 'LINUX-DESKTOP.zh-CN.md']) {
-    if (!read(resolve(root, path)).includes(base)) fail(`stale base: ${path} must reference ${base}`)
-  }
+  if (!/^dsh-v\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/.test(base)) fail(`invalid pinned base: ${base}`)
   if (errors.length) throw new Error(errors.join('\n'))
   return { pairs: pairs.length, pages: owned.size }
 }

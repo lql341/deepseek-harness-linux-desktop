@@ -4,7 +4,7 @@ English | [中文](LINUX-DESKTOP.zh-CN.md)
 
 ## 0. Scope
 
-This guide describes the current patch series on `dsh-v0.2.1-rc.5`, including fixed `dsh-scnet@0.6.13`. [README](README.md) distinguishes source capabilities from the published `v0.2.1-rc.5-linux.1` prerelease. Historical 0.2.0 topic patches are archived and must not be mixed into the active series.
+This guide records verification on `dsh-v0.2.1-rc.5`, including fixed `dsh-scnet@0.6.13`. Builds always read the current pinned tag from ci/upstream-base-tag. [README](README.md) distinguishes source capabilities from the published `v0.2.1-rc.5-linux.1` prerelease. Historical 0.2.0 topic patches are archived and must not be mixed into the active series.
 
 ## 1. Build prerequisites
 
