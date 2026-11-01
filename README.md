@@ -58,7 +58,7 @@ Use a fresh `$SRC`. `apply.sh` checks out the pinned upstream tag, creates the L
 
 PRs and relevant main pushes apply the series, typecheck the full workspace, run focused desktop regressions, build the deb, audit the SCNet payload, and install/start that same candidate on Ubuntu 24.04 under Xvfb. The ordinary second-launch window assertion is skipped in this headless session; it needs a real desktop. Published-byte verification, upgrades, AppArmor, Wayland and Debian 13 are separate manual jobs. A skipped job is not a passed platform check.
 
-[PR #5](https://github.com/lql341/deepseek-harness-linux-desktop/pull/5) passed 254 desktop regressions, full typecheck, packaging and installed-session checks in [run 41273560891](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41273560891); the merged main was also verified in [run 41274912984](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41274912984). Those runs predate the SCNet setup repair. Current changes require their own CI evidence.
+[PR #5](https://github.com/lql341/deepseek-harness-linux-desktop/pull/5) passed 254 desktop regressions, full typecheck, packaging and installed-session checks in [run 41273560891](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41273560891); the merged main was also verified in [run 41274912984](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41274912984). The SCNet setup repair and bilingual docs then passed [run 41278271808](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41278271808) with 268 desktop tests and [documentation run 41278271805](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41278271805). Plugin operation history is a new candidate requiring its own CI evidence.
 
 Publishing is manual through [publish-linux-desktop.yml](.github/workflows/publish-linux-desktop.yml). It pins the build commit, records the staged patched tree, audits and installs the built bytes, then publishes the deb and checksums. Upstream synchronization creates reviewable PRs and never merges or publishes; see [sync operations](ci/UPSTREAM-SYNC.md).
 
@@ -73,7 +73,7 @@ English is the default documentation language. Every page has a Chinese counterp
 - `patches/`: active upstream diffs; `patches-legacy-dsh-v0.2.0-rc.2/`: historical series
 - `apply.sh`, `verify.sh`, `ci/`: source preparation, diagnostics, audits and installation tools
 
-Only Linux x64 deb delivery is currently maintained here. macOS Dock/vibrancy, Windows installers and Linux permissions/compositors require distinct implementations. Native CUA, newer file interactions and complete plugin operation history are still pending. See the follow-up for their dependencies.
+Only Linux x64 deb delivery is currently maintained here. macOS Dock/vibrancy, Windows installers and Linux permissions/compositors require distinct implementations. Native CUA and newer file interactions remain pending. Plugin operation history is implemented in the candidate source and awaits full CI. See the follow-up for their dependencies.
 
 ## License
 

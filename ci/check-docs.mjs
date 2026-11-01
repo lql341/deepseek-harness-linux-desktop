@@ -5,6 +5,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const read = path => readFileSync(path, 'utf8')
 const prose = text => text.replace(/^```[^\n]*\n[\s\S]*?^```\s*$/gm, '')
 const headings = text => [...prose(text).matchAll(/^(#{1,6})\s+(.+)$/gm)]
+const tables = text => [...prose(text).matchAll(/(?:^\|[^\n]*\|[ \t]*\n?)+/gm)]
+  .map(match => match[0].trim().split('\n').map(row => row.split(/(?<!\\)\|/u).length - 2))
 const slug = text => text.toLowerCase().replace(/<[^>]+>/g, '').replace(/[^\p{L}\p{N}_\-\s]/gu, '').replace(/\s/g, '-')
 const executableBlocks = text => [...text.matchAll(/^```([^\n]*)\n([\s\S]*?)^```\s*$/gm)]
   .filter(match => match[1].trim() !== 'text').map(match => match[1] + '\n' + match[2])
@@ -45,6 +47,7 @@ export function checkDocs(root) {
     if (zh.split('\n')[0] !== `[English](${basename(pair.en)}) | 中文`) fail(`Chinese switch: ${pair.zh}`)
     if (/\p{Script=Han}/u.test(prose(en).split('\n').slice(1).join('\n'))) fail(`English prose contains Chinese: ${pair.en}`)
     if (JSON.stringify(headings(en).map(x => x[1])) !== JSON.stringify(headings(zh).map(x => x[1]))) fail(`heading structure differs: ${pair.en}`)
+    if (JSON.stringify(tables(en)) !== JSON.stringify(tables(zh))) fail(`table structure differs: ${pair.en}`)
     if (JSON.stringify(executableBlocks(en)) !== JSON.stringify(executableBlocks(zh))) fail(`commands differ: ${pair.en}`)
     if (JSON.stringify(facts(en)) !== JSON.stringify(facts(zh))) fail(`versions/hashes/run IDs differ: ${pair.en}`)
     for (const [path, text, lang] of [[pair.en, en, 'en'], [pair.zh, zh, 'zh']]) {

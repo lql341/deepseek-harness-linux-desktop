@@ -1,0 +1,2696 @@
+diff --git a/apps/desktop-host/package.json b/apps/desktop-host/package.json
+index 3bb27d7..ad95e9b 100644
+--- a/apps/desktop-host/package.json
++++ b/apps/desktop-host/package.json
+@@ -11,6 +11,7 @@
+     "lib/cli.js"
+   ],
+   "dependencies": {
++    "@deepseek-ai/dsh-plugin-manager": "workspace:*",
+     "koffi": "3.1.1",
+     "@deepseek-ai/libreoffice-kit": "^0.1.5",
+     "@deepseek-ai/cordis": "workspace:~",
+diff --git a/apps/desktop-host/src/index.ts b/apps/desktop-host/src/index.ts
+index 3086755..70d5f68 100644
+--- a/apps/desktop-host/src/index.ts
++++ b/apps/desktop-host/src/index.ts
+@@ -1,5 +1,8 @@
+ /** Launch the Desktop profile through the Web application and report its URL to Electron. */
+ 
++import { randomUUID } from 'node:crypto'
++import type { PluginOperationRunId } from '@deepseek-ai/dsh-plugin-manager/diagnostic'
++import { installOperationDiagnostics } from './operation-diagnostics.ts'
+ import { delimiter, join } from 'node:path'
+ import { inspect } from 'node:util'
+ import { loadLayeredEnv, loadProfileDirectory, reportSkippedBundles } from '@deepseek-ai/dsh-app-boot'
+@@ -16,6 +19,8 @@ import { installPlatformSessionPublisher } from './platform-session.ts'
+ import { installOfficeEngineResolution } from './office-engine.ts'
+ 
+ async function main(): Promise<void> {
++  const runId = randomUUID() as PluginOperationRunId
++  if (process.connected) process.send?.({ type: 'starting', runId }, (error) => { if (error !== null) console.error(error) })
+   const runtimeDir = process.argv[2] as string
+   const projectDir = process.argv[3] as string
+   installOfficeEngineResolution(runtimeDir)
+@@ -90,6 +95,7 @@ async function main(): Promise<void> {
+   })
+   process.once('disconnect', () => { void stop() })
+   const { ctx } = await application
++  installOperationDiagnostics(ctx, record => send({ type: 'plugin-operation', record }), 32, runId)
+   control.updateTasks = installDesktopUpdateTaskControl(ctx)
+   control.quitInspection = installDesktopQuitInspection(ctx)
+   await ctx.plugin(desktopOffice, {
+diff --git a/apps/desktop-host/src/operation-diagnostics.ts b/apps/desktop-host/src/operation-diagnostics.ts
+new file mode 100644
+index 0000000..3d29e97
+--- /dev/null
++++ b/apps/desktop-host/src/operation-diagnostics.ts
+@@ -0,0 +1,34 @@
++/** Bounded delivery of management facts to the shell which owns durable diagnostics. */
++import type { Context } from '@deepseek-ai/cordis'
++import { parsePluginOperationRecord, type PluginOperationRecord, type PluginOperationRunId } from '@deepseek-ai/dsh-plugin-manager/diagnostic'
++
++/**
++ * Observe manager operations after Host startup, with bounded concurrent IPC deliveries.
++ * @param ctx - Context owning the subscription and its pending deliveries.
++ * @param send - IPC transport promise which settles when delivery succeeds or fails.
++ * @param maxPending - Maximum number of outstanding deliveries; excess events are counted and omitted.
++ * @param runId - Host lifetime identity announced before profile startup.
++ */
++export function installOperationDiagnostics(
++  ctx: Context, send: (record: PluginOperationRecord) => Promise<void>, maxPending: number, runId: PluginOperationRunId,
++): void {
++  if (!Number.isSafeInteger(maxPending) || maxPending < 1) throw new RangeError('Invalid diagnostic delivery budget')
++  const pending = new Set<Promise<void>>()
++  let dropped = 0
++  let closed = false
++  ctx.on('plugin-manager/operation', (operation) => {
++    if (closed || pending.size >= maxPending) { dropped++; return }
++    const record = parsePluginOperationRecord({ runId, operation, transportDropped: dropped })
++    if (record === undefined) { dropped++; return }
++    const delivery = Promise.resolve().then(async () => {
++      try { await send(record) }
++      catch (_error) { dropped++ /* IPC failure does not change the management operation. */ }
++    })
++    pending.add(delivery)
++    void delivery.then(() => { pending.delete(delivery) })
++  })
++  ctx.effect(() => async () => {
++    closed = true
++    await Promise.allSettled(pending)
++  })
++}
+diff --git a/apps/desktop-host/tests/operation-diagnostics.spec.ts b/apps/desktop-host/tests/operation-diagnostics.spec.ts
+new file mode 100644
+index 0000000..fbf8f03
+--- /dev/null
++++ b/apps/desktop-host/tests/operation-diagnostics.spec.ts
+@@ -0,0 +1,41 @@
++import { Context } from '@deepseek-ai/cordis'
++import type { PluginOperation } from '@deepseek-ai/dsh-plugin-manager/types'
++import type { PluginOperationRunId } from '@deepseek-ai/dsh-plugin-manager/diagnostic'
++import { expect, it, onTestFinished, vi } from 'vitest'
++import { installOperationDiagnostics } from '../src/operation-diagnostics.ts'
++
++const operation: PluginOperation = {
++  id: 'c254ab28-97c9-4382-95e6-2db9c66f98c9' as PluginOperation['id'],
++  time: '2026-10-19T00:00:00.000Z', reason: 'plugin', phase: 'started', target: 'managed', stage: 'enable',
++}
++const runId = 'c254ab28-97c9-4382-95e6-2db9c66f98c8' as PluginOperationRunId
++
++it('bounds outstanding deliveries and drains them on context disposal', async () => {
++  const ctx = new Context()
++  const entered = Promise.withResolvers<undefined>()
++  const release = Promise.withResolvers<undefined>()
++  onTestFinished(async () => { release.resolve(undefined); await ctx.fiber.dispose() })
++  const send = vi.fn(async () => { entered.resolve(undefined); await release.promise })
++  installOperationDiagnostics(ctx, send, 1, runId)
++  ctx.emit('plugin-manager/operation', operation)
++  await entered.promise
++  for (let i = 0; i < 1000; i++) ctx.emit('plugin-manager/operation', operation)
++  expect(send).toHaveBeenCalledTimes(1)
++  expect(send).toHaveBeenCalledWith(expect.objectContaining({ runId }))
++  let stopped = false
++  const stopping = ctx.fiber.dispose().then(() => { stopped = true })
++  await Promise.resolve(undefined)
++  expect(stopped).toBe(false)
++  release.resolve(undefined)
++  await stopping
++  ctx.emit('plugin-manager/operation', operation)
++  expect(send).toHaveBeenCalledTimes(1)
++})
++
++it('contains transport rejections during teardown', async () => {
++  const ctx = new Context()
++  onTestFinished(async () => { await ctx.fiber.dispose() })
++  installOperationDiagnostics(ctx, async () => { throw new Error('disconnected') }, 1, runId)
++  ctx.emit('plugin-manager/operation', operation)
++  await expect(ctx.fiber.dispose()).resolves.toBeUndefined()
++})
+diff --git a/apps/desktop-host/tsconfig.json b/apps/desktop-host/tsconfig.json
+index 31c64f1..f42d41a 100644
+--- a/apps/desktop-host/tsconfig.json
++++ b/apps/desktop-host/tsconfig.json
+@@ -8,6 +8,7 @@
+     "src"
+   ],
+   "references": [
++    { "path": "../../packages/boot/plugin-manager" },
+     { "path": "../../vendor/cordis" },
+     { "path": "../../packages/core/agent" },
+     { "path": "../../packages/jobs/jobs" },
+diff --git a/apps/desktop/README.i18n.yaml b/apps/desktop/README.i18n.yaml
+index 6060f79..6b5d631 100644
+--- a/apps/desktop/README.i18n.yaml
++++ b/apps/desktop/README.i18n.yaml
+@@ -6,8 +6,8 @@
+   en: 0d36989eb614345d
+   zh: a0a1a18c07621393
+ /deepseek-harness-desktop:
+-  en: 69a6e0c6712e463b
+-  zh: 84e1d0b09c803704
++  en: 7dfc0abb3a7f03fc
++  zh: bec6aa15970391fe
+ /deepseek-harness-desktop/summary:
+   en: 7bc8bf30de693222
+   zh: e85993d8852b6cab
+diff --git a/apps/desktop/README.md b/apps/desktop/README.md
+index c199a6d..ca6ba42 100644
+--- a/apps/desktop/README.md
++++ b/apps/desktop/README.md
+@@ -6,6 +6,8 @@ description: "Desktop runs the Harness workspace in a native application. This r
+ 
+ English | [中文](README.zh.md)
+ 
++Plugin management facts are retained under the application user-data `plugin-operations` directory in two bounded 256 KiB segments. Records carry Host run identity and whitelisted operation metadata, excluding raw install specifications and error output. After the independent basic crash report is saved, an isolated Worker may append at most 100 recent records within 64 KiB read/output budgets. Counters and a completion marker distinguish missing, truncated or cancelled collection; missing records never establish that no plugin changes occurred. Diagnostic collection does not authorize installation, delay management operations or upload reports.
++
+ ## Summary
+ 
+ Desktop runs the Harness workspace in a native application. This reference covers application behavior, development and integration; the packaging, Windows signing and publication guides own build and release operations.
+diff --git a/apps/desktop/README.zh.md b/apps/desktop/README.zh.md
+index 079991f..b63f851 100644
+--- a/apps/desktop/README.zh.md
++++ b/apps/desktop/README.zh.md
+@@ -6,6 +6,8 @@ description: "Desktop 在原生应用中运行 Harness 工作区。本参考文
+ 
+ [English](README.md) | 中文
+ 
++插件管理事实保存在应用 user-data 的 `plugin-operations` 目录，以两个各 256 KiB 的有界文件保留。记录包含 Host 运行标识和白名单操作元数据，不含原始安装 spec 或错误输出。独立的基础崩溃报告保存后，隔离 Worker 可在读取/输出各 64 KiB 的预算内追加至多 100 条近期记录。计数器和完成标记区分缺失、截断或取消，缺少记录不代表没有插件变更。诊断收集不会授权安装、延迟管理操作或上传报告。
++
+ ## 概述
+ 
+ Desktop 在原生应用中运行 Harness 工作区。本参考文档说明应用行为、开发与集成；打包、Windows 签名和发布指南分别维护构建与发布操作。
+diff --git a/apps/desktop/package.json b/apps/desktop/package.json
+index 597c896..ea769ee 100644
+--- a/apps/desktop/package.json
++++ b/apps/desktop/package.json
+@@ -52,6 +52,8 @@
+     "@deepseek-ai/cordis": "workspace:~"
+   },
+   "devDependencies": {
++    "zod": "4.4.3",
++    "@deepseek-ai/dsh-plugin-manager": "workspace:*",
+     "@deepseek-ai/dsh-app-boot": "workspace:*",
+     "@deepseek-ai/dsh-client-ui-settings-general": "workspace:*",
+     "@deepseek-ai/dsh-client-ui-sidebar-browser": "workspace:*",
+diff --git a/apps/desktop/scripts/electron-builder-config.mjs b/apps/desktop/scripts/electron-builder-config.mjs
+index 4b2b77b..6fcf59b 100644
+--- a/apps/desktop/scripts/electron-builder-config.mjs
++++ b/apps/desktop/scripts/electron-builder-config.mjs
+@@ -77,6 +77,7 @@ export function createElectronBuilderConfig(
+   let dshDestination
+   let windowsCode = []
+   const unpack = ['**/*.{node,dylib,dll,so,exe}', '**/*.so.*', '**/spawn-helper', '**/@vscode/ripgrep-*/bin/rg',
++    'lib/operation-report-worker.js',
+     // External Python cannot open Electron's virtual ASAR paths, including adjacent imports.
+     ...packagesLinux ? ['**/node_modules/dsh-scnet/**/*'] : [],
+     `**/node_modules/@deepseek-ai/libreoffice-kit-${resolvedPlatform}-${resolvedArch}/**/*`,
+@@ -142,6 +143,7 @@ export function createElectronBuilderConfig(
+     },
+     files: [
+       'lib/main.js',
++      'lib/operation-report-worker.js',
+       'lib/welcome/**/*',
+       'lib/preload-app.cjs',
+       'lib/preload-mandatory.cjs',
+diff --git a/apps/desktop/src/crash-report.ts b/apps/desktop/src/crash-report.ts
+index 9c6d9ed..3bfe824 100644
+--- a/apps/desktop/src/crash-report.ts
++++ b/apps/desktop/src/crash-report.ts
+@@ -29,6 +29,8 @@ export interface CrashReportApp {
+ 
+ /** Inputs of {@link renderCrashReport} and {@link writeCrashReport}. */
+ export interface CrashReportInput {
++  /** An independently bounded history append may follow this basic report. */
++  readonly operationHistoryPlanned?: boolean
+   readonly source: CrashReportSource
+   readonly phase: CrashReportPhase
+   readonly error: unknown
+@@ -125,6 +127,9 @@ export function renderCrashReport(input: CrashReportInput): string {
+     ...(input.hostDiagnostic === undefined ? [] : ['--- host diagnostic (as reported by the Host process) ---', input.hostDiagnostic, '']),
+     '--- renderer console (error level, oldest first) ---',
+     consoleSection,
++    ...(input.operationHistoryPlanned === true ? ['', '--- auxiliary diagnostics ---',
++      'Operation history is best effort. Without its completion marker below, it is unavailable or incomplete.',
++      'Recent operations are context only. Missing records do not establish that no changes occurred.'] : []),
+     '',
+   ].join('\n')
+ }
+diff --git a/apps/desktop/src/host-process.ts b/apps/desktop/src/host-process.ts
+index 948a88e..8e38dea 100644
+--- a/apps/desktop/src/host-process.ts
++++ b/apps/desktop/src/host-process.ts
+@@ -2,6 +2,8 @@
+ 
+ import { spawn, type ChildProcess } from 'node:child_process'
+ import { join } from 'node:path'
++import { z } from 'zod'
++import { parsePluginOperationRecord, type PluginOperationRecord, type PluginOperationRunId } from '@deepseek-ai/dsh-plugin-manager/diagnostic'
+ import type { PlatformSession } from '@deepseek-ai/dsh-deepseek-account'
+ import { desktopNodeEnvironment } from './node-environment.ts'
+ 
+@@ -23,7 +25,7 @@ interface PlatformSessionEvent {
+   readonly session: PlatformSession | null
+ }
+ 
+-type DesktopHostEvent = ReadyEvent | FatalEvent | PlatformSessionEvent | { readonly type: 'shutdown-complete' } | {
++type DesktopHostEvent = ReadyEvent | FatalEvent | PlatformSessionEvent | { readonly type: 'starting'; readonly runId: PluginOperationRunId } | { readonly type: 'shutdown-complete' } | {
+   readonly type: 'update-tasks'
+   readonly requestId: number
+   readonly active: boolean
+@@ -49,11 +51,13 @@ export interface DesktopQuitInspection {
+ export const QUIT_INSPECTION_DEADLINE_MS = 2_000
+ 
+ const MAX_HOST_DIAGNOSTIC_CHARS = 64 * 1024
++const runIdSchema = z.uuid()
+ 
+ function isDesktopHostEvent(message: unknown): message is DesktopHostEvent {
+   if (typeof message !== 'object' || message === null || !('type' in message)) return false
+   const candidate = message as Record<string, unknown>
+   switch (candidate.type) {
++    case 'starting': return runIdSchema.safeParse(candidate.runId).success
+     case 'shutdown-complete':
+       return true
+     case 'ready':
+@@ -136,6 +140,7 @@ export class DesktopHostFatalError extends Error {
+ 
+ /** One Web backend running under the Electron executable in Node mode. */
+ export class DesktopHostProcess {
++  private runId: PluginOperationRunId | undefined
+   private child: ChildProcess | undefined
+   private readyResolve!: (ready: DesktopHostReady) => void
+   private readyReject!: (error: Error) => void
+@@ -165,6 +170,7 @@ export class DesktopHostProcess {
+    *   `office-skills` resources fail Host startup.
+    * @param packageManager - Bundled pnpm entry and Node launcher directory, scoped to package operations.
+    * @param onPlatformSession - Private credential updates for embedded Platform views.
++   * @param onPluginOperation - Optional bounded diagnostic sink; rejected records do not fail business IPC.
+    */
+   constructor(
+     private readonly node: string,
+@@ -177,6 +183,7 @@ export class DesktopHostProcess {
+     private readonly packageManager?: { readonly pnpm: string; readonly nodeBin: string },
+ 
+     private readonly onPlatformSession?: (session: PlatformSession | null) => void,
++    private readonly onPluginOperation?: (record: PluginOperationRecord) => void,
+   ) {}
+ 
+   /**
+@@ -204,12 +211,24 @@ export class DesktopHostProcess {
+     child.stderr?.on('data', (chunk: string) => { this.stderr = (this.stderr + chunk).slice(-MAX_HOST_DIAGNOSTIC_CHARS) })
+     child.stdout?.pipe(process.stdout)
+     child.on('message', (message: unknown) => {
++      if (typeof message === 'object' && message !== null && 'type' in message && message.type === 'plugin-operation') {
++        const record = 'record' in message ? parsePluginOperationRecord(message.record) : undefined
++        if (record !== undefined && record.runId === this.runId) {
++          try { this.onPluginOperation?.(record) }
++          catch (_error) {
++            // Diagnostic persistence cannot invalidate the Host's business IPC channel.
++            console.error('desktop plugin operation diagnostic sink failed')
++          }
++        }
++        return
++      }
+       if (!isDesktopHostEvent(message)) {
+         this.fail(new Error('dsh desktop host sent an invalid IPC event'))
+         child.kill('SIGTERM')
+         return
+       }
+-      if (message.type === 'ready') this.readyResolve({ url: message.url, injections: message.injections })
++      if (message.type === 'starting') this.runId = message.runId
++      else if (message.type === 'ready') this.readyResolve({ url: message.url, injections: message.injections })
+       else if (message.type === 'platform-session') this.onPlatformSession?.(message.session)
+       else if (message.type === 'shutdown-complete') {
+         if (this.stopping) this.shutdownCompleted = true
+@@ -308,6 +327,7 @@ export class DesktopHostProcess {
+   }
+ 
+   private fail(error: Error): void {
++    if (this.runId !== undefined) Object.assign(error, { hostRunId: this.runId })
+     this.onPlatformSession?.(null)
+     this.readyReject(error)
+     for (const request of this.controlRequests.values()) request.reject(error)
+diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
+index 08b79d1..b29b073 100644
+--- a/apps/desktop/src/main.ts
++++ b/apps/desktop/src/main.ts
+@@ -65,6 +65,8 @@ import { HarnessUpdateCoordinator } from './harness-update.ts'
+ import { openScnetDiagnosticsWindow } from './scnet-diagnostics-window.ts'
+ import { readScnetDiagnostics } from './scnet-diagnostics.ts'
+ import { openScnetSetup } from './scnet-setup.ts'
++import { OperationJournal } from './operation-journal.ts'
++import { runOperationReportJob, type OperationReportJobResult } from './operation-report-job.ts'
+ 
+ let focusPrimaryWindow = (): void => {}
+ let stopForRecovery = async (): Promise<void> => {}
+@@ -111,8 +113,36 @@ const recovery = new DesktopFatalRecovery({
+   revealReport: async (path) => { await access(path); shell.showItemInFolder(path) },
+ })
+ 
++let operationJournal: OperationJournal | undefined
++let operationReportJob: Promise<OperationReportJobResult> | undefined
++let operationReportAbort: AbortController | undefined
++let operationReportsStopping = false
++let operationReportStop: Promise<void> | undefined
++
++/** Bound application shutdown waiting without claiming that an unresponsive Worker has exited. */
++function stopOperationReports(): Promise<void> {
++  operationReportStop ??= waitForOperationReports()
++  return operationReportStop
++}
++
++async function waitForOperationReports(): Promise<void> {
++  operationReportsStopping = true
++  operationReportAbort?.abort()
++  const job = operationReportJob
++  if (job === undefined) return
++  let timer: ReturnType<typeof setTimeout> | undefined
++  try {
++    const exited = await Promise.race([job.then(() => true), new Promise<false>((resolve) => {
++      timer = setTimeout(() => { resolve(false) }, 500)
++    })])
++    if (!exited) console.error('dsh desktop: operation report Worker has not exited; continuing shutdown')
++  } finally { clearTimeout(timer) }
++}
++
+ function persistCrashReport(error: unknown, source: CrashReportSource): Promise<string | undefined> {
+-  return writeCrashReport(app.getPath('logs'), {
++  const directory = app.getPath('logs')
++  const report = writeCrashReport(directory, {
++    operationHistoryPlanned: !shuttingDown && !operationReportsStopping,
+     source,
+     phase: backendReady ? 'running' : 'startup',
+     error,
+@@ -124,6 +154,17 @@ function persistCrashReport(error: unknown, source: CrashReportSource): Promise<
+     },
+     time: new Date(),
+   })
++  void report.then((path) => {
++    if (path !== undefined && operationReportJob === undefined && !shuttingDown && !operationReportsStopping) {
++      operationReportAbort = new AbortController()
++      operationReportJob = runOperationReportJob({ reportPath: path, directory: join(app.getPath('userData'), 'plugin-operations'),
++        limits: { bytes: 64 * 1024, recordBytes: 4096, records: 100, outputBytes: 64 * 1024 },
++        journal: operationJournal?.status() ?? null,
++      }, { timeoutMs: 500, cancellationGraceMs: 100 }, operationReportAbort.signal)
++      void operationReportJob.finally(() => { operationReportJob = undefined; operationReportAbort = undefined })
++    }
++  }).catch((_error: unknown) => { /* Basic persistence failure is owned by fatal recovery. */ })
++  return report
+ }
+ 
+ function reportFatal(error: unknown, source: CrashReportSource): void {
+@@ -465,7 +506,12 @@ async function main(): Promise<void> {
+     const host = new DesktopHostProcess(resources.node, resources.dsh, activeProject,
+       hostInspectPort, { ...hostEnvironment, DSH_CLIENT_VERSION: desktopClientVersion() }, onFailure,
+       primaryRuntime,
+-      resources, (next) => { platformView.setSession(next) })
++      resources, (next) => { platformView.setSession(next) }, (record) => {
++        operationJournal ??= new OperationJournal(join(app.getPath('userData'), 'plugin-operations'), {
++          segmentBytes: 256 * 1024, recordBytes: 4096, queuedBytes: 64 * 1024,
++        })
++        operationJournal.enqueue(JSON.stringify(record))
++      })
+     return {
+       start: async () => {
+         const ready = await host.start()
+@@ -554,6 +600,10 @@ async function main(): Promise<void> {
+       window.webContents.send(DESKTOP_IPC.updatesPresentation, presentDesktopUpdate(state, app.getVersion()))
+     }
+     if (state.phase === 'error' && state.failedOperation !== 'check') {
++      if (state.failedOperation === 'install' && !quitting) {
++        operationReportsStopping = shuttingDown
++        operationReportStop = undefined
++      }
+       const restoreHost = state.failedOperation === 'install' && updateStoppedHost && !quitting
+       shellInstallerOwnsQuit = false
+       updateStoppedHost = false
+@@ -583,7 +633,11 @@ async function main(): Promise<void> {
+     if (backend.host === undefined || welcomeBackend === undefined) throw new Error('desktop welcome: backend unavailable')
+     return welcomeBackend.read()
+   }
+-  stopForRecovery = () => backend.close()
++  stopForRecovery = async () => {
++    const reports = stopOperationReports()
++    try { await backend.close() }
++    finally { await Promise.all([operationJournal?.drain(500), reports]) }
++  }
+ 
+   const reconcileBackend = (): Promise<void> => {
+     startup ??= (async () => {
+@@ -640,7 +694,9 @@ async function main(): Promise<void> {
+         await platformView.closeAndWait()
+         requireCleanStop = true
+         updateStopFailure = undefined
++        await stopOperationReports()
+         await backend.stop()
++        await operationJournal?.drain(500)
+         updateStoppedHost = true
+         // The backend's async cleanup callback can assign this after the reset above.
+         const stopFailure = updateStopFailure as DesktopHostUncleanExitError | undefined
+@@ -648,6 +704,8 @@ async function main(): Promise<void> {
+         updateJournal?.action('install-confirmed')
+         shellInstallerOwnsQuit = true
+       } catch (error) {
++        operationReportsStopping = shuttingDown
++        operationReportStop = undefined
+         if (!updateStoppedHost) await host.updateTasks('unlock').catch((unlockError: unknown) => { console.error(unlockError) })
+         throw error
+       } finally {
+@@ -833,14 +891,16 @@ async function main(): Promise<void> {
+       read: () => readScnetDiagnostics({ profilePath: paths.profile, environment: process.env }),
+       setup: () => {
+         return openScnetSetup({ dshRoot: resources.dsh, environment: process.env,
+-          failureMessage: currentDesktopLocale().messages.scnetSetupFailed, closeMessage: currentDesktopLocale().messages.scnetSetupClose })
++          failureMessage: currentDesktopLocale().messages.scnetSetupFailed,
++          closeMessage: currentDesktopLocale().messages.scnetSetupClose })
+       },
+     })
+   })
+   ipcMain.handle(DESKTOP_IPC.scnetSetup, (event) => {
+     assertProductSender(event)
+     return openScnetSetup({ dshRoot: resources.dsh, environment: process.env,
+-          failureMessage: currentDesktopLocale().messages.scnetSetupFailed, closeMessage: currentDesktopLocale().messages.scnetSetupClose })
++      failureMessage: currentDesktopLocale().messages.scnetSetupFailed,
++      closeMessage: currentDesktopLocale().messages.scnetSetupClose })
+   })
+   ipcMain.handle(DESKTOP_IPC.deviceInfo, (event) => {
+     assertProductSender(event)
+@@ -1070,7 +1130,8 @@ async function main(): Promise<void> {
+         read: () => readScnetDiagnostics({ profilePath: paths.profile, environment: process.env }),
+         setup: () => {
+           return openScnetSetup({ dshRoot: resources.dsh, environment: process.env,
+-          failureMessage: currentDesktopLocale().messages.scnetSetupFailed, closeMessage: currentDesktopLocale().messages.scnetSetupClose })
++            failureMessage: currentDesktopLocale().messages.scnetSetupFailed,
++            closeMessage: currentDesktopLocale().messages.scnetSetupClose })
+         },
+       }).catch((error: unknown) => { console.error(error) })
+     } },
+@@ -1384,7 +1445,11 @@ async function main(): Promise<void> {
+     updateSchedule.dispose()
+     updateDialog.dispose()
+     mandatoryUI?.dispose()
+-    void Promise.all([Promise.resolve(mandatoryPolicy?.dispose()).then(() => policyAuth?.dispose()), backend.close(),
++    void Promise.all([Promise.resolve(mandatoryPolicy?.dispose()).then(() => policyAuth?.dispose()), stopOperationReports(),
++      (async () => {
++        try { await backend.close() }
++        finally { await operationJournal?.drain(500) }
++      })(),
+       // A Platform cleanup failure is logged without cutting the remaining Host shutdown short.
+       platformView.dispose().catch((error: unknown) => { console.error(error) })])
+       .catch((error: unknown) => { console.error(error) }).finally(() => { app.quit() })
+diff --git a/apps/desktop/src/operation-history.ts b/apps/desktop/src/operation-history.ts
+new file mode 100644
+index 0000000..ca9584f
+--- /dev/null
++++ b/apps/desktop/src/operation-history.ts
+@@ -0,0 +1,120 @@
++/** Bounded, cancellable reads of Desktop-owned plugin operation history. */
++import { open } from 'node:fs/promises'
++import { join } from 'node:path'
++import { setImmediate } from 'node:timers/promises'
++import { parsePluginOperationRecord, type PluginOperationRecord } from '@deepseek-ai/dsh-plugin-manager/diagnostic'
++
++/** Resource budgets for auxiliary history collection, independent of basic crash report writing. */
++export interface OperationHistoryReadLimits {
++  readonly bytes: number
++  readonly recordBytes: number
++  readonly records: number
++}
++
++/** Collection facts; incomplete history must not be interpreted as absence of plugin changes. */
++export interface OperationHistoryReadResult {
++  readonly records: readonly PluginOperationRecord[]
++  readonly bytesRead: number
++  /** Distinct files from which at least one byte was read. */
++  readonly filesRead: number
++  readonly truncated: boolean
++  readonly invalidRecords: number
++  readonly unavailableFiles: number
++  readonly cancelled: boolean
++}
++
++/**
++ * Read only the bounded tails of the two owned history files, newest segment first.
++ * Cancellation is observed between bounded records after yielding to Worker messages and stops subsequent I/O and parsing.
++ * An already-issued OS read must settle before its handle closes.
++ * @param directory - Desktop's operation history directory; unrelated files are never enumerated.
++ * @param limits - Positive byte, record-size and record-count budgets.
++ * @param signal - Caller-owned collection deadline or shutdown cancellation.
++ * @returns Partial records and explicit omissions; filesystem failures never reject the collection.
++ */
++export async function readOperationHistory(
++  directory: string,
++  limits: OperationHistoryReadLimits,
++  signal: AbortSignal,
++): Promise<OperationHistoryReadResult> {
++  if (![limits.bytes, limits.recordBytes, limits.records].every(value => Number.isSafeInteger(value) && value > 0)) {
++    throw new RangeError('Operation history budgets must be positive safe integers')
++  }
++  await setImmediate()
++  const cancelled = (): boolean => signal.aborted
++  const records: PluginOperationRecord[] = []
++  let bytesRead = 0
++  const seenFiles = new Set<string>()
++  let truncated = false
++  let invalidRecords = 0
++  let unavailableFiles = 0
++  for (const name of ['operations.jsonl', 'operations.previous.jsonl']) {
++    if (cancelled()) break
++    try {
++      await using handle = await open(join(directory, name), 'r')
++      if (cancelled()) break
++      const fileStat = await handle.stat()
++      if (cancelled()) break
++      if (!fileStat.isFile()) {
++        unavailableFiles++
++        continue
++      }
++      const identity = `${String(fileStat.dev)}:${String(fileStat.ino)}`
++      if (seenFiles.has(identity)) {
++        truncated = true
++        continue
++      }
++      if (fileStat.size > 0 && (bytesRead >= limits.bytes || records.length >= limits.records)) {
++        truncated = true
++        break
++      }
++
++      const readLength = Math.min(fileStat.size, limits.bytes - bytesRead)
++      const readStart = fileStat.size - readLength
++      const buffer = Buffer.alloc(readLength)
++      let readOffset = 0
++      while (readOffset < readLength && !cancelled()) {
++        const read = await handle.read(buffer, readOffset, Math.min(16 * 1024, readLength - readOffset), readStart + readOffset)
++        bytesRead += read.bytesRead
++        if (read.bytesRead === 0) break
++        readOffset += read.bytesRead
++      }
++      if (readOffset > 0) seenFiles.add(identity)
++      if (cancelled()) break
++      truncated ||= readStart > 0 || readOffset < readLength
++
++      // An unterminated last record can still be in flight; never parse it as a committed record.
++      if (readOffset === 0) continue
++      let lineEnd = buffer.lastIndexOf(10, readOffset - 1)
++      if (lineEnd !== readOffset - 1) truncated = true
++      while (lineEnd >= 0 && records.length < limits.records && !cancelled()) {
++        await setImmediate()
++        if (cancelled()) break
++        const previousLineEnd = lineEnd === 0 ? -1 : buffer.lastIndexOf(10, lineEnd - 1)
++        if (previousLineEnd < 0 && readStart > 0) {
++          truncated = true
++          break
++        }
++        const recordBytes = lineEnd - previousLineEnd - 1
++        if (recordBytes > limits.recordBytes) {
++          invalidRecords++
++        } else if (recordBytes > 0) {
++          try {
++            const value: unknown = JSON.parse(buffer.subarray(previousLineEnd + 1, lineEnd).toString('utf8'))
++            const record = parsePluginOperationRecord(value)
++            if (record === undefined) invalidRecords++
++            else records.push(record)
++          } catch (_error) {
++            // A corrupt record does not invalidate independently delimited older records.
++            invalidRecords++
++          }
++        }
++        lineEnd = previousLineEnd
++      }
++      if (lineEnd >= 0) truncated = true
++    } catch (error) {
++      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') unavailableFiles++
++    }
++  }
++  return { records, bytesRead, filesRead: seenFiles.size, truncated, invalidRecords, unavailableFiles, cancelled: cancelled() }
++}
+diff --git a/apps/desktop/src/operation-journal.ts b/apps/desktop/src/operation-journal.ts
+new file mode 100644
+index 0000000..b72cc6b
+--- /dev/null
++++ b/apps/desktop/src/operation-journal.ts
+@@ -0,0 +1,208 @@
++/** Single-shell, bounded persistence for already-projected operation diagnostics. */
++import { mkdir, open, rename, stat, writeFile } from 'node:fs/promises'
++import { join } from 'node:path'
++
++/** Budgets include serialized JSON and its line delimiter. */
++export interface OperationJournalLimits {
++  readonly segmentBytes: number
++  readonly recordBytes: number
++  readonly queuedBytes: number
++}
++
++/** In-memory omissions for the current shell lifetime; missing records never imply no operations occurred. */
++export interface OperationJournalStatus {
++  readonly dropped: number
++  readonly failed: number
++  readonly queuedBytes: number
++  readonly disabled: boolean
++  /** Damaged or oversized segments repaired; their lost record count is unknown. */
++  readonly repairedSegments: number
++}
++
++/** Owns two known files and one serial writer; the owning shell must exclude other writers. */
++export class OperationJournal {
++  private readonly queue: string[] = []
++  private queuedBytes = 0
++  private dropped = 0
++  private failed = 0
++  private repairedSegments = 0
++  private disabled = false
++  private closed = false
++  private writing: Promise<void> | undefined
++  private initialized = false
++  private readonly abort = new AbortController()
++
++  /**
++   * @param directory - Directory reserved for the shell's operation journal.
++   * @param limits - Positive byte budgets, with recordBytes no greater than either other budget.
++   */
++  constructor(
++    private readonly directory: string,
++    private readonly limits: OperationJournalLimits,
++  ) {
++    if (![limits.segmentBytes, limits.recordBytes, limits.queuedBytes].every(value => Number.isSafeInteger(value) && value > 0)
++      || limits.recordBytes > limits.segmentBytes || limits.recordBytes > limits.queuedBytes) {
++      throw new RangeError('Invalid operation journal budgets')
++    }
++  }
++
++  /**
++   * Queue one prevalidated, whitelisted JSON record without awaiting disk I/O.
++   * @param record - An already serialized JSON object without literal line delimiters.
++   * @returns Whether the record was accepted; disk failures are reported separately by status().
++   */
++  enqueue(record: string): boolean {
++    const line = record + '\n'
++    const bytes = Buffer.byteLength(line)
++    if (this.closed || this.disabled || bytes > this.limits.recordBytes
++      || bytes + this.queuedBytes > this.limits.queuedBytes || /[\r\n]/u.test(record)) {
++      this.dropped++
++      return false
++    }
++    this.queue.push(line)
++    this.queuedBytes += bytes
++    this.startWriter()
++    return true
++  }
++
++  /** @returns Current queue occupancy and omission counters. */
++  status(): OperationJournalStatus {
++    return {
++      dropped: this.dropped,
++      failed: this.failed,
++      queuedBytes: this.queuedBytes,
++      disabled: this.disabled,
++      repairedSegments: this.repairedSegments,
++    }
++  }
++
++  /** Stop accepting records and await completion of the owned writer. */
++  async close(): Promise<void> {
++    this.closed = true
++    while (this.writing !== undefined) await this.writing
++  }
++
++  /**
++   * Wait for queued records during shutdown or installer handoff without holding the application indefinitely.
++   * @param timeoutMs - Waiting budget before disabling the writer and cancelling subsequent I/O.
++   * @returns True after the queue settles successfully; false immediately when disabled, or on failure or deadline.
++   * False does not confirm that an issued OS request has settled.
++   */
++  async drain(timeoutMs: number): Promise<boolean> {
++    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new RangeError('Invalid journal drain deadline')
++    if (this.disabled) return false
++    let timer: ReturnType<typeof setTimeout> | undefined
++    try {
++      return await Promise.race([
++        (async () => {
++          while (this.writing !== undefined) await this.writing
++          return !this.disabled
++        })(),
++        new Promise<false>((resolve) => {
++          timer = setTimeout(() => {
++            this.disabled = true
++            this.abort.abort()
++            resolve(false)
++          }, timeoutMs)
++        }),
++      ])
++    } finally {
++      clearTimeout(timer)
++    }
++  }
++
++  private startWriter(): void {
++    this.writing ??= this.writeQueue().finally(() => {
++      this.writing = undefined
++      if (this.queue.length > 0) this.startWriter()
++    })
++  }
++
++  private async writeQueue(): Promise<void> {
++    try {
++      await mkdir(this.directory, { recursive: true, mode: 0o700 })
++      this.abort.signal.throwIfAborted()
++      const current = join(this.directory, 'operations.jsonl')
++      const previous = join(this.directory, 'operations.previous.jsonl')
++      if (!this.initialized) {
++        await this.prepareSegments(current, previous)
++        this.initialized = true
++      }
++      for (let line = this.queue[0]; line !== undefined; line = this.queue[0]) {
++        this.abort.signal.throwIfAborted()
++        const bytes = Buffer.byteLength(line)
++        let size = 0
++        try {
++          size = (await stat(current)).size
++        }
++        catch (error) {
++          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
++        }
++        this.abort.signal.throwIfAborted()
++        if (size > this.limits.segmentBytes) {
++          // An oversized pre-existing segment is not copied into the bounded retained history.
++          await writeFile(current, '', { mode: 0o600 })
++          this.repairedSegments++
++        } else if (size + bytes > this.limits.segmentBytes) {
++          await rename(current, previous)
++        }
++        this.abort.signal.throwIfAborted()
++        await writeFile(current, line, { flag: 'a', mode: 0o600, signal: this.abort.signal })
++        this.queue.shift()
++        this.queuedBytes -= bytes
++      }
++    } catch (_error) {
++      // A failed append may have written a partial line; disable this writer rather than concatenate another record.
++      this.disabled = true
++      this.failed += this.queue.length
++      this.queue.length = 0
++      this.queuedBytes = 0
++    }
++  }
++
++  private async prepareSegments(current: string, previous: string): Promise<void> {
++    try {
++      const size = (await stat(previous)).size
++      this.abort.signal.throwIfAborted()
++      if (size > this.limits.segmentBytes) {
++        await writeFile(previous, '', { mode: 0o600 })
++        this.repairedSegments++
++      }
++    } catch (error) {
++      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
++    }
++    this.abort.signal.throwIfAborted()
++    {
++      await using handle = await open(current, 'r+').catch((error: unknown) => {
++        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
++        this.abort.signal.throwIfAborted()
++        return open(current, 'wx+', 0o600)
++      })
++      this.abort.signal.throwIfAborted()
++      const size = (await handle.stat()).size
++      this.abort.signal.throwIfAborted()
++      if (size > this.limits.segmentBytes) {
++        await handle.truncate(0)
++        this.repairedSegments++
++      } else if (size > 0) {
++        const byte = Buffer.alloc(1)
++        const read = await handle.read(byte, 0, 1, size - 1)
++        if (read.bytesRead !== 1 || byte[0] !== 10) {
++          const buffer = Buffer.alloc(size)
++          let offset = 0
++          while (offset < size) {
++            this.abort.signal.throwIfAborted()
++            const chunk = await handle.read(buffer, offset, size - offset, offset)
++            if (chunk.bytesRead === 0) break
++            offset += chunk.bytesRead
++          }
++          this.abort.signal.throwIfAborted()
++          // Keep committed lines in both segments; only the unfinished append is discarded.
++          await handle.truncate(buffer.subarray(0, offset).lastIndexOf(10) + 1)
++          this.repairedSegments++
++        }
++      }
++    }
++    this.abort.signal.throwIfAborted()
++  }
++}
+diff --git a/apps/desktop/src/operation-report-job.ts b/apps/desktop/src/operation-report-job.ts
+new file mode 100644
+index 0000000..04b7ec4
+--- /dev/null
++++ b/apps/desktop/src/operation-report-job.ts
+@@ -0,0 +1,109 @@
++/** Worker lifetime for an auxiliary report; completion includes worker exit. */
++import { Worker } from 'node:worker_threads'
++import type { OperationReportLimits } from './operation-report.ts'
++import type { OperationJournalStatus } from './operation-journal.ts'
++
++/** Facts passed to the isolated collector after the basic report is saved. */
++export interface OperationReportJobInput {
++  readonly reportPath: string
++  readonly directory: string
++  readonly limits: OperationReportLimits
++  readonly journal: OperationJournalStatus | null
++}
++
++/** Collection and cooperative shutdown share one total budget. */
++export interface OperationReportJobOptions {
++  /** Deadline for requesting forced termination, including Worker startup. */
++  readonly timeoutMs: number
++  /** Reserved part of timeoutMs for cancellation and resource cleanup. */
++  readonly cancellationGraceMs: number
++}
++
++/** Cancellation can leave a partial append; the independently saved basic report remains valid. */
++export interface OperationReportJobResult {
++  readonly appended: boolean
++  readonly timedOut: boolean
++  readonly cancelled: boolean
++}
++
++/**
++ * Collect history, request cooperative cancellation, then force termination if cleanup exceeds its budget.
++ * @param input - Bounded collection request for an existing basic report.
++ * @param options - Total deadline and the cleanup window reserved within it.
++ * @param signal - Application shutdown or recovery cancellation; an already-aborted signal prevents startup.
++ * @returns Append outcome only after Worker exit; cancellation or termination requests alone do not confirm exit.
++ */
++export async function runOperationReportJob(
++  input: OperationReportJobInput,
++  options: OperationReportJobOptions,
++  signal: AbortSignal,
++): Promise<OperationReportJobResult> {
++  const { timeoutMs, cancellationGraceMs } = options
++  if (!Number.isSafeInteger(timeoutMs) || !Number.isSafeInteger(cancellationGraceMs)
++    || cancellationGraceMs < 1 || timeoutMs <= cancellationGraceMs) throw new RangeError('Invalid operation report deadlines')
++  if (signal.aborted) return { appended: false, timedOut: false, cancelled: true }
++  const terminationDeadline = performance.now() + timeoutMs
++  let worker: Worker
++  try {
++    const entry = new URL('./operation-report-worker.js', import.meta.url)
++    // Native Worker loading needs the physical file, independent of Electron's ASAR fs hooks.
++    entry.pathname = entry.pathname.replace(/(^|\/)([^/]+\.asar)(?=\/|$)/u, '$1$2.unpacked')
++    worker = new Worker(entry, {
++      workerData: input,
++      resourceLimits: {
++        maxOldGenerationSizeMb: 32,
++        maxYoungGenerationSizeMb: 8,
++        stackSizeMb: 2,
++      },
++    })
++  }
++  catch (_error) {
++    return { appended: false, timedOut: false, cancelled: false }
++  }
++  return new Promise((resolve) => {
++    let appended = false
++    let failed = false
++    let timedOut = false
++    let cancelled = false
++    let terminationTimer: ReturnType<typeof setTimeout> | undefined
++
++    const terminateWorker = (): void => {
++      void worker.terminate().catch(() => {
++        failed = true
++      })
++    }
++
++    const requestCancellation = (): void => {
++      if (cancelled) return
++      cancelled = true
++      clearTimeout(collectionTimer)
++      try {
++        worker.postMessage('cancel')
++      }
++      catch (_error) {
++        failed = true
++      }
++      terminationTimer = setTimeout(terminateWorker, Math.max(0, Math.min(cancellationGraceMs, terminationDeadline - performance.now())))
++    }
++
++    const collectionTimer = setTimeout(() => {
++      timedOut = true
++      requestCancellation()
++    }, Math.max(0, terminationDeadline - performance.now() - cancellationGraceMs))
++
++    signal.addEventListener('abort', requestCancellation, { once: true })
++    worker.on('message', (message: unknown) => {
++      appended = message === true
++    })
++    worker.once('error', () => {
++      failed = true
++    })
++    worker.once('exit', (code) => {
++      clearTimeout(collectionTimer)
++      clearTimeout(terminationTimer)
++      signal.removeEventListener('abort', requestCancellation)
++      resolve({ appended: appended && code === 0 && !failed && !cancelled, timedOut, cancelled })
++    })
++    if (signal.aborted) requestCancellation()
++  })
++}
+diff --git a/apps/desktop/src/operation-report-worker.ts b/apps/desktop/src/operation-report-worker.ts
+new file mode 100644
+index 0000000..c7ee527
+--- /dev/null
++++ b/apps/desktop/src/operation-report-worker.ts
+@@ -0,0 +1,36 @@
++/** Isolated auxiliary-report I/O; the shell owns termination and observes worker exit. */
++import { parentPort, workerData } from 'node:worker_threads'
++import { z } from 'zod'
++import { appendOperationReport } from './operation-report.ts'
++
++const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
++const input = z.object({
++  reportPath: z.string(),
++  directory: z.string(),
++  limits: z.object({
++    bytes: positive,
++    recordBytes: positive,
++    records: positive,
++    outputBytes: positive,
++  }),
++  journal: z.object({
++    dropped: z.number().int().nonnegative(),
++    failed: z.number().int().nonnegative(),
++    repairedSegments: z.number().int().nonnegative(),
++    queuedBytes: z.number().int().nonnegative(),
++    disabled: z.boolean(),
++  }).nullable(),
++}).parse(workerData)
++
++const cancellation = new AbortController()
++const cancel = (message: unknown): void => {
++  if (message === 'cancel') cancellation.abort()
++}
++parentPort?.on('message', cancel)
++try {
++  const appended = await appendOperationReport(input.reportPath, input.directory, input.limits, cancellation.signal, input.journal)
++  parentPort?.postMessage(appended)
++} finally {
++  parentPort?.off('message', cancel)
++  parentPort?.close()
++}
+diff --git a/apps/desktop/src/operation-report.ts b/apps/desktop/src/operation-report.ts
+new file mode 100644
+index 0000000..2c023ab
+--- /dev/null
++++ b/apps/desktop/src/operation-report.ts
+@@ -0,0 +1,62 @@
++/** Best-effort operation history appended only after the independent basic report exists. */
++import { writeFile } from 'node:fs/promises'
++import { setImmediate } from 'node:timers/promises'
++import { readOperationHistory, type OperationHistoryReadLimits } from './operation-history.ts'
++import type { OperationJournalStatus } from './operation-journal.ts'
++
++/** Read budgets and the complete appended section's UTF-8 byte budget. */
++export interface OperationReportLimits extends OperationHistoryReadLimits {
++  readonly outputBytes: number
++}
++
++/**
++ * Append a bounded summary without rewriting the basic report's bytes.
++ * A missing completion marker means the auxiliary section is unavailable or incomplete.
++ * @param reportPath - Successfully saved basic report.
++ * @param directory - Owned operation history directory.
++ * @param limits - Read and parse budgets.
++ * @param signal - Collection deadline or shutdown cancellation; already-issued OS I/O must settle.
++ * @param journal - Current writer status, or null when this shell has not received operation records.
++ * @returns Whether the complete auxiliary section was appended.
++ */
++export async function appendOperationReport(
++  reportPath: string,
++  directory: string,
++  limits: OperationReportLimits,
++  signal: AbortSignal,
++  journal: OperationJournalStatus | null,
++): Promise<boolean> {
++  try {
++    if (!Number.isSafeInteger(limits.outputBytes) || limits.outputBytes < 1) return false
++    const cancelled = (): boolean => signal.aborted
++    const history = await readOperationHistory(directory, limits, signal)
++    if (cancelled()) return false
++
++    const { records, ...facts } = history
++    const renderHeader = (omitted: number): string => '\n--- recent plugin operations (context, not proof of cause) ---\n'
++      + JSON.stringify({ journal, ...facts, outputRecordsOmitted: omitted }).slice(0, -1) + ',"records":['
++    const completionFooter = ']}\n--- operation history collection complete; consult omission counters above ---\n'
++    let outputBytes = Buffer.byteLength(renderHeader(records.length) + completionFooter)
++    if (outputBytes > limits.outputBytes) return false
++
++    const encodedRecords: string[] = []
++    for (const record of records) {
++      await setImmediate()
++      if (cancelled()) return false
++      const encodedRecord = JSON.stringify(record)
++      const additionalBytes = Buffer.byteLength(encodedRecord) + (encodedRecords.length === 0 ? 0 : 1)
++      if (outputBytes + additionalBytes > limits.outputBytes) break
++      encodedRecords.push(encodedRecord)
++      outputBytes += additionalBytes
++    }
++
++    const reportSection = renderHeader(records.length - encodedRecords.length) + encodedRecords.join(',') + completionFooter
++    await setImmediate()
++    if (cancelled()) return false
++    await writeFile(reportPath, reportSection, { flag: 'a', signal })
++    return true
++  } catch (_error) {
++    // The independently written basic report remains usable, including after a partial append.
++    return false
++  }
++}
+diff --git a/apps/desktop/tests/expected/operation-history.txt b/apps/desktop/tests/expected/operation-history.txt
+new file mode 100644
+index 0000000..7ce5170
+--- /dev/null
++++ b/apps/desktop/tests/expected/operation-history.txt
+@@ -0,0 +1,4 @@
++
++--- recent plugin operations (context, not proof of cause) ---
++{"journal":null,"bytesRead":260,"filesRead":1,"truncated":false,"invalidRecords":0,"unavailableFiles":0,"cancelled":false,"outputRecordsOmitted":0,"records":[{"runId":"c254ab28-97c9-4382-95e6-2db9c66f98c8","operation":{"id":"c254ab28-97c9-4382-95e6-2db9c66f98c9","time":"2026-10-19T00:00:00.000Z","reason":"bundle","target":"test-bundle","stage":"enable","phase":"started"},"transportDropped":0}]}
++--- operation history collection complete; consult omission counters above ---
+diff --git a/apps/desktop/tests/host-process.spec.ts b/apps/desktop/tests/host-process.spec.ts
+index daeddc7..428fb9d 100644
+--- a/apps/desktop/tests/host-process.spec.ts
++++ b/apps/desktop/tests/host-process.spec.ts
+@@ -1,7 +1,9 @@
++import { OperationJournal } from '../src/operation-journal.ts'
++import { readOperationHistory } from '../src/operation-history.ts'
+ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+ import { tmpdir } from 'node:os'
+ import { join } from 'node:path'
+-import { afterEach, describe, expect, it, vi } from 'vitest'
++import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
+ import { DesktopHostFatalError, DesktopHostProcess, DesktopHostUncleanExitError, QUIT_INSPECTION_DEADLINE_MS } from '../src/host-process.ts'
+ 
+ const roots: string[] = []
+@@ -73,6 +75,60 @@ afterEach(async () => {
+ })
+ 
+ describe('desktop host process', () => {
++  it('retains the announced run identity when startup fails before readiness', async () => {
++    const runtime = projectWithHost(`
++process.send({ type: 'starting', runId: 'c254ab28-97c9-4382-95e6-2db9c66f98c8' })
++process.send({ type: 'fatal', message: 'profile startup failed', diagnostic: 'required plugin failed' }, () => process.disconnect())
++`)
++    const host = hostProcess(runtime)
++    const failure: unknown = await host.start().catch((error: unknown) => error)
++    await host.stop()
++    expect(failure).toBeInstanceOf(DesktopHostFatalError)
++    expect(failure).toHaveProperty('hostRunId', 'c254ab28-97c9-4382-95e6-2db9c66f98c8')
++  })
++
++  it('persists validated operation IPC across Host lifetimes and isolates a failing diagnostic sink', async () => {
++    const record = {
++      runId: 'c254ab28-97c9-4382-95e6-2db9c66f98c8', transportDropped: 0,
++      operation: { id: 'c254ab28-97c9-4382-95e6-2db9c66f98c9', time: '2026-10-19T00:00:00.000Z',
++        reason: 'bundle', phase: 'started', target: 'test-bundle', stage: 'enable' },
++      secret: 'not-persisted',
++    }
++    const runtime = projectWithHost(`
++process.send({ type: 'starting', runId: ${JSON.stringify(record.runId)} })
++process.send({ type: 'plugin-operation', record: { invalid: true } })
++process.send({ type: 'plugin-operation', record: { ...${JSON.stringify(record)}, runId: 'c254ab28-97c9-4382-95e6-2db9c66f98c0' } })
++process.send({ type: 'plugin-operation', record: ${JSON.stringify(record)} })
++${HTTP_HOST}`)
++    const directory = join(runtime, 'operation-history')
++    const journal = new OperationJournal(directory, { recordBytes: 4096, segmentBytes: 8192, queuedBytes: 8192 })
++    onTestFinished(async () => { await journal.close() })
++    const sink = vi.fn(value => journal.enqueue(JSON.stringify(value)))
++    const first = new DesktopHostProcess(process.execPath, runtime, runtime, undefined, process.env,
++      undefined, undefined, undefined, undefined, sink)
++    hosts.push(first)
++    await first.start()
++    await first.stop()
++    await journal.close()
++    expect(sink).toHaveBeenCalledTimes(1)
++    const saved = await readOperationHistory(directory, { bytes: 8192, recordBytes: 4096, records: 10 }, new AbortController().signal)
++    expect(saved.records).toEqual([{ runId: record.runId, transportDropped: 0, operation: record.operation }])
++
++    const warning = vi.spyOn(console, 'error').mockImplementation(() => {})
++    try {
++      const failure = vi.fn()
++      const second = new DesktopHostProcess(process.execPath, runtime, runtime, undefined, process.env,
++        failure, undefined, undefined, undefined, () => { throw new Error('sink unavailable') })
++      hosts.push(second)
++      await second.start()
++      expect(await second.updateTasks('inspect')).toBe(false)
++      await second.stop()
++      expect(failure).not.toHaveBeenCalled()
++      expect(warning).toHaveBeenCalledWith('desktop plugin operation diagnostic sink failed')
++    } finally { warning.mockRestore() }
++  })
++
++
+   it('correlates task inspections and admission changes over private IPC', async () => {
+     const host = hostProcess(projectWithHost())
+     await expect(host.updateTasks('inspect')).rejects.toThrow('Host is unavailable')
+diff --git a/apps/desktop/tests/keyboard.spec.ts b/apps/desktop/tests/keyboard.spec.ts
+index e642640..23eee25 100644
+--- a/apps/desktop/tests/keyboard.spec.ts
++++ b/apps/desktop/tests/keyboard.spec.ts
+@@ -93,7 +93,7 @@ async function fixture(platform: 'macos' | 'windows' | 'linux' = 'macos') {
+   let current: WindowFixture | undefined = window
+   const updateMenu = vi.fn()
+   const updateOverlays = new DesktopUpdateOverlays()
+-  const keyboard = installFixture(() => current, root, platform, updateMenu, window => updateOverlays.input(window as BrowserWindow))
++  const keyboard = installFixture(() => current, root, platform, updateMenu, window => updateOverlays.input(window))
+   keyboard.attach(current)
+   onTestFinished(() => { keyboard.dispose() })
+   const handlers = new Map<string, (event: InvokeFixture, ...args: unknown[]) => unknown>(
+diff --git a/apps/desktop/tests/main-startup.spec.ts b/apps/desktop/tests/main-startup.spec.ts
+index 829454d..81fa3fe 100644
+--- a/apps/desktop/tests/main-startup.spec.ts
++++ b/apps/desktop/tests/main-startup.spec.ts
+@@ -1,3 +1,4 @@
++import type { PluginOperationRecord } from '@deepseek-ai/dsh-plugin-manager/diagnostic'
+ import type { AccountView } from '@deepseek-ai/dsh-deepseek-account/types'
+ import { WINDOWS_TITLEBAR_HEIGHT } from '../src/windows-layout.ts'
+ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
+@@ -16,6 +17,7 @@ import { writeCrashReport } from '../src/crash-report.ts'
+ type InvokeEvent = { sender?: unknown; senderFrame: { url: string } }
+ type InvokeHandler = (event: InvokeEvent, ...args: unknown[]) => unknown
+ 
++vi.mock('../src/operation-report-job.ts', () => ({ runOperationReportJob: vi.fn(async () => ({ appended: true, timedOut: false, cancelled: false })) }))
+ vi.mock('../src/web-document.ts', () => ({ authenticateWebHost: async () => 'test-cookie', serveWebDocument: vi.fn(), forwardWebRequest: vi.fn() }))
+ // Report persistence has its own unit tests; here it resolves within microtasks so the fatal
+ // dialog never outlives the test that triggered it.
+@@ -148,6 +150,8 @@ const harness = await vi.hoisted(async () => {
+       readonly inspectPort?: number, readonly environment?: NodeJS.ProcessEnv, readonly onFailure?: (error: Error) => void,
+       readonly primaryRuntime?: string,
+       readonly packageManager?: { pnpm: string; nodeBin: string },
++      _onPlatformSession?: unknown,
++      readonly onPluginOperation?: (record: PluginOperationRecord) => void,
+     ) { hosts.push(this) }
+   }
+   const app = Object.assign(new EventEmitter(), {
+@@ -443,6 +447,18 @@ afterEach(async () => {
+ })
+ 
+ describe('desktop main startup', () => {
++  it('persists bounded plugin facts from the Host in the application journal', async () => {
++    const host = await readyForUpdate()
++    const record: PluginOperationRecord = {
++      runId: 'c254ab28-97c9-4382-95e6-2db9c66f98c8' as PluginOperationRecord['runId'], transportDropped: 0,
++      operation: { id: 'c254ab28-97c9-4382-95e6-2db9c66f98c9' as PluginOperationRecord['operation']['id'],
++        time: '2026-10-19T00:00:00.000Z', reason: 'bundle', phase: 'started', target: 'test-bundle', stage: 'enable' },
++    }
++    host.onPluginOperation?.(record)
++    const path = join(harness.app.getPath('userData'), 'plugin-operations', 'operations.jsonl')
++    await vi.waitFor(() => { expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual(record) })
++  })
++
+   it.each([true, false])('selects the package manager before Host startup (packaged=%s)', async (packaged) => {
+     harness.app.isPackaged = packaged
+     await readyForUpdate()
+diff --git a/apps/desktop/tests/operation-history.spec.ts b/apps/desktop/tests/operation-history.spec.ts
+new file mode 100644
+index 0000000..237287d
+--- /dev/null
++++ b/apps/desktop/tests/operation-history.spec.ts
+@@ -0,0 +1,172 @@
++import { mkdtemp, mkdir, open, rename, rm, writeFile } from 'node:fs/promises'
++import { tmpdir } from 'node:os'
++import { join } from 'node:path'
++import { expect, it, onTestFinished, vi } from 'vitest'
++import { readOperationHistory } from '../src/operation-history.ts'
++
++vi.mock('node:fs/promises', async (importOriginal) => {
++  const actual = await importOriginal<typeof import('node:fs/promises')>()
++  return { ...actual, open: vi.fn(actual.open) }
++})
++
++const limits = { bytes: 64 * 1024, recordBytes: 2048, records: 100 }
++function record(id: string | number) {
++  return { runId: 'c254ab28-97c9-4382-95e6-2db9c66f98c8', transportDropped: 0,
++    operation: { id: 'c254ab28-97c9-4382-95e6-2db9c66f98c9', time: '2026-10-19T00:00:00.000Z',
++      reason: 'plugin', phase: 'started', target: String(id), stage: 'enable' } }
++}
++function line(id: string | number) { return JSON.stringify(record(id)) + '\n' }
++
++async function fixture() {
++  const path = await mkdtemp(join(tmpdir(), 'desktop-operation-history-'))
++  onTestFinished(async () => { await rm(path, { recursive: true, force: true }) })
++  return path
++}
++
++it('collects recent complete records and reports malformed and incomplete entries', async () => {
++  const path = await fixture()
++  await writeFile(join(path, 'operations.jsonl'), line(1) + '{broken}\n' + line(2) + '{"incomplete":')
++  await writeFile(join(path, 'operations.previous.jsonl'), line(0))
++  const result = await readOperationHistory(path, limits, new AbortController().signal)
++  expect(result.records).toEqual([record(2), record(1), record(0)])
++  expect(result).toMatchObject({ invalidRecords: 1, truncated: true, cancelled: false, unavailableFiles: 0 })
++})
++
++it('reads no more than its byte budget from a two GiB file and ignores unrelated history', async () => {
++  const path = await fixture()
++  await using large = await open(join(path, 'operations.jsonl'), 'w')
++  const size = 2 * 1024 * 1024 * 1024
++  await large.truncate(size)
++  const tail = Buffer.from('\n' + line('last'))
++  await large.write(tail, 0, tail.length, size - tail.length)
++  await writeFile(join(path, 'pnpm.log'), 'unrelated output')
++  const result = await readOperationHistory(path, limits, new AbortController().signal)
++  expect(result.records).toEqual([record('last')])
++  expect(result.bytesRead).toBe(limits.bytes)
++  expect(result.truncated).toBe(true)
++})
++
++it('bounds parsed record size and output count independently', async () => {
++  const path = await fixture()
++  await writeFile(join(path, 'operations.jsonl'), line(1) + '{"large":"' + 'x'.repeat(4096) + '"}\n' + line(2))
++  const result = await readOperationHistory(path, { ...limits, records: 2 }, new AbortController().signal)
++  expect(result.records).toEqual([record(2), record(1)])
++  expect(result.invalidRecords).toBe(1)
++})
++
++it('returns immediately without I/O when already cancelled', async () => {
++  const result = await readOperationHistory('not-a-directory', limits, AbortSignal.abort())
++  expect(result).toMatchObject({ records: [], bytesRead: 0, cancelled: true, unavailableFiles: 0 })
++})
++
++it('reports unreadable segments without failing the whole collection', async () => {
++  const path = await fixture()
++  await mkdir(join(path, 'operations.jsonl'))
++  await writeFile(join(path, 'operations.previous.jsonl'), line(1))
++  const result = await readOperationHistory(path, limits, new AbortController().signal)
++  expect(result.records).toEqual([record(1)])
++  expect(result.unavailableFiles).toBe(1)
++})
++
++it('awaits an in-flight read before closing and schedules no further reads after cancellation', async () => {
++  const path = await fixture()
++  const filename = join(path, 'operations.jsonl')
++  await writeFile(filename, ' '.repeat(limits.bytes))
++  const handle = await open(filename, 'r')
++  onTestFinished(async () => { await handle.close() })
++  const started = Promise.withResolvers<undefined>()
++  const release = Promise.withResolvers<undefined>()
++  const opener = vi.mocked(open).mockClear().mockResolvedValueOnce(handle)
++  const reader = vi.spyOn(handle, 'read').mockImplementationOnce(async () => {
++    started.resolve(undefined)
++    await release.promise
++    return { bytesRead: 1, buffer: Buffer.alloc(1) }
++  })
++  const controller = new AbortController()
++  let settled = false
++  const collecting = readOperationHistory(path, limits, controller.signal)
++    .then((result) => { settled = true; return result })
++  try {
++    await started.promise
++    controller.abort()
++    await Promise.resolve(undefined)
++    expect(settled).toBe(false)
++    expect(handle.fd).not.toBe(-1)
++    release.resolve(undefined)
++    expect(await collecting).toMatchObject({ cancelled: true, bytesRead: 1, records: [] })
++    expect(handle.fd).toBe(-1)
++    expect(reader).toHaveBeenCalledTimes(1)
++    expect(opener).toHaveBeenCalledTimes(1)
++  } finally {
++    release.resolve(undefined)
++    await collecting
++    reader.mockRestore()
++    opener.mockClear()
++    await handle.close()
++  }
++})
++
++it('contains truncation between stat and read and still collects the previous segment', async () => {
++  const path = await fixture()
++  const filename = join(path, 'operations.jsonl')
++  await writeFile(filename, line(2))
++  await writeFile(join(path, 'operations.previous.jsonl'), line(1))
++  const handle = await open(filename, 'r+')
++  onTestFinished(async () => { await handle.close() })
++  const originalStat = await handle.stat()
++  const stat = vi.spyOn(handle, 'stat').mockImplementationOnce(async () => {
++    await handle.truncate(0)
++    return originalStat
++  })
++  const opener = vi.mocked(open).mockClear().mockResolvedValueOnce(handle)
++  try {
++    const result = await readOperationHistory(path, limits, new AbortController().signal)
++    expect(result).toMatchObject({ records: [record(1)], truncated: true, unavailableFiles: 0 })
++    expect(handle.fd).toBe(-1)
++  } finally {
++    stat.mockRestore()
++    opener.mockClear()
++    await handle.close()
++  }
++})
++
++it('rejects invalid resource budgets before opening a file', async () => {
++  for (const bytes of [0, -1, 0.5, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
++    await expect(readOperationHistory('not-a-directory', { ...limits, bytes }, new AbortController().signal))
++      .rejects.toThrow(RangeError)
++  }
++})
++
++it('does not collect the same open segment twice when it rotates during collection', async () => {
++  const path = await fixture()
++  const current = join(path, 'operations.jsonl')
++  await writeFile(current, line(1))
++  const handle = await open(current, 'r')
++  onTestFinished(async () => { await handle.close() })
++  const opener = vi.mocked(open).mockImplementationOnce(async () => {
++    await rename(current, join(path, 'operations.previous.jsonl'))
++    await writeFile(current, line(2))
++    return handle
++  })
++  try {
++    const result = await readOperationHistory(path, limits, new AbortController().signal)
++    expect(result.records).toEqual([record(1)])
++    expect(result).toMatchObject({ filesRead: 1, truncated: true })
++    expect(handle.fd).toBe(-1)
++  } finally {
++    opener.mockClear()
++    await handle.close()
++  }
++})
++
++it.each(['absent', 'empty', 'nonempty'])('reports omitted bytes at an exact budget: previous segment %s', async (previous) => {
++  const path = await fixture()
++  const current = line(1)
++  await writeFile(join(path, 'operations.jsonl'), current)
++  if (previous !== 'absent') await writeFile(join(path, 'operations.previous.jsonl'), previous === 'empty' ? '' : line(0))
++  const result = await readOperationHistory(path,
++    { ...limits, bytes: Buffer.byteLength(current), records: 1 }, new AbortController().signal)
++  expect(result.records).toEqual([record(1)])
++  expect(result.truncated).toBe(previous === 'nonempty')
++  expect(result.filesRead).toBe(1)
++})
+diff --git a/apps/desktop/tests/operation-journal.spec.ts b/apps/desktop/tests/operation-journal.spec.ts
+new file mode 100644
+index 0000000..98e97d3
+--- /dev/null
++++ b/apps/desktop/tests/operation-journal.spec.ts
+@@ -0,0 +1,115 @@
++import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
++import { tmpdir } from 'node:os'
++import { join } from 'node:path'
++import { expect, it, onTestFinished, vi } from 'vitest'
++import { OperationJournal } from '../src/operation-journal.ts'
++
++vi.mock('node:fs/promises', async (importOriginal) => {
++  const actual = await importOriginal<typeof import('node:fs/promises')>()
++  return { ...actual, mkdir: vi.fn(actual.mkdir) }
++})
++
++async function fixture() {
++  const directory = await mkdtemp(join(tmpdir(), 'desktop-operation-journal-'))
++  onTestFinished(async () => { await rm(directory, { recursive: true, force: true }) })
++  return directory
++}
++
++it('retains two bounded segments after dense operations across 50 plugins', async () => {
++  const directory = await fixture()
++  const journal = new OperationJournal(directory, { recordBytes: 128, segmentBytes: 1024, queuedBytes: 128 * 1000 })
++  onTestFinished(async () => { await journal.close() })
++  for (let i = 0; i < 1000; i++) expect(journal.enqueue(JSON.stringify({ plugin: i % 50, operation: i }))).toBe(true)
++  await journal.close()
++  expect((await readdir(directory)).sort()).toEqual(['operations.jsonl', 'operations.previous.jsonl'])
++  for (const name of await readdir(directory)) {
++    expect((await stat(join(directory, name))).size).toBeLessThanOrEqual(1024)
++    for (const line of (await readFile(join(directory, name), 'utf8')).trim().split('\n')) expect(() => { JSON.parse(line) }).not.toThrow()
++  }
++  expect(await readFile(join(directory, 'operations.jsonl'), 'utf8')).toContain('"operation":999')
++  expect(journal.status()).toEqual({ dropped: 0, failed: 0, queuedBytes: 0, disabled: false, repairedSegments: 0 })
++})
++
++it('bounds the queue and encoded record bytes including multibyte characters and newline', async () => {
++  const directory = await fixture()
++  const journal = new OperationJournal(directory, { recordBytes: 8, segmentBytes: 32, queuedBytes: 16 })
++  onTestFinished(async () => { await journal.close() })
++  expect(journal.enqueue('{"中":1}')).toBe(false)
++  expect(journal.enqueue('{"a":1}')).toBe(true)
++  expect(journal.enqueue('{"a":2}')).toBe(true)
++  expect(journal.enqueue('{"a":3}')).toBe(false)
++  expect(journal.status()).toMatchObject({ queuedBytes: 16, dropped: 2 })
++  await journal.close()
++  expect(await readFile(join(directory, 'operations.jsonl'), 'utf8')).toBe('{"a":1}\n{"a":2}\n')
++  expect(journal.enqueue('{}')).toBe(false)
++})
++
++it('disables persistence after a write failure without rejecting producers or close', async () => {
++  const directory = await fixture()
++  const blocked = join(directory, 'file')
++  await writeFile(blocked, 'untouched')
++  const journal = new OperationJournal(blocked, { recordBytes: 32, segmentBytes: 64, queuedBytes: 64 })
++  expect(journal.enqueue('{"operation":1}')).toBe(true)
++  await expect(journal.close()).resolves.toBeUndefined()
++  expect(journal.status()).toEqual({ dropped: 0, failed: 1, queuedBytes: 0, disabled: true, repairedSegments: 0 })
++  expect(await readFile(blocked, 'utf8')).toBe('untouched')
++})
++
++it.each(['', '{"old":1}\n'])('preserves both segments when repairing a partial append after %j', async (prefix) => {
++  const directory = await fixture()
++  const previous = '{"previous":0}\n'
++  await writeFile(join(directory, 'operations.previous.jsonl'), previous)
++  await writeFile(join(directory, 'operations.jsonl'), prefix + '{"partial":')
++  const journal = new OperationJournal(directory, { recordBytes: 32, segmentBytes: 64, queuedBytes: 64 })
++  expect(journal.enqueue('{"new":2}')).toBe(true)
++  await journal.close()
++  expect(await readFile(join(directory, 'operations.jsonl'), 'utf8')).toBe(prefix + '{"new":2}\n')
++  expect(await readFile(join(directory, 'operations.previous.jsonl'), 'utf8')).toBe(previous)
++  expect(journal.status()).toMatchObject({ repairedSegments: 1, disabled: false })
++})
++
++it('bounds both pre-existing oversized segments before writing new records', async () => {
++  const directory = await fixture()
++  for (const name of ['operations.jsonl', 'operations.previous.jsonl']) await writeFile(join(directory, name), 'x'.repeat(1000))
++  const journal = new OperationJournal(directory, { recordBytes: 32, segmentBytes: 64, queuedBytes: 64 })
++  journal.enqueue('{"new":2}')
++  await journal.close()
++  for (const name of await readdir(directory)) expect((await stat(join(directory, name))).size).toBeLessThanOrEqual(64)
++  expect(journal.status()).toMatchObject({ repairedSegments: 2, disabled: false })
++})
++
++it('stops scheduling writes after a drain deadline without claiming the in-flight request ended', async () => {
++  const directory = await fixture()
++  const entered = Promise.withResolvers<undefined>()
++  const release = Promise.withResolvers<undefined>()
++  vi.mocked(mkdir).mockImplementationOnce(async () => { entered.resolve(undefined); await release.promise; return undefined })
++  const journal = new OperationJournal(directory, { recordBytes: 32, segmentBytes: 64, queuedBytes: 64 })
++  onTestFinished(async () => { release.resolve(undefined); await journal.close(); vi.useRealTimers() })
++  journal.enqueue('{"operation":1}')
++  await entered.promise
++  vi.useFakeTimers()
++  const draining = journal.drain(500)
++  await vi.advanceTimersByTimeAsync(500)
++  expect(await draining).toBe(false)
++  expect(journal.status()).toMatchObject({ disabled: true, queuedBytes: 16 })
++  expect(journal.enqueue('{"operation":2}')).toBe(false)
++  let repeated: boolean | undefined
++  void journal.drain(500).then((result) => { repeated = result })
++  await vi.advanceTimersByTimeAsync(0)
++  expect(repeated).toBe(false)
++  release.resolve(undefined)
++  await journal.close()
++  expect(await readdir(directory)).toEqual([])
++  expect(journal.status()).toMatchObject({ failed: 1, queuedBytes: 0 })
++})
++
++it('can keep recording after successful installer preparation when the installer later fails', async () => {
++  const directory = await fixture()
++  const journal = new OperationJournal(directory, { recordBytes: 32, segmentBytes: 64, queuedBytes: 64 })
++  onTestFinished(async () => { await journal.close() })
++  journal.enqueue('{"operation":1}')
++  expect(await journal.drain(1000)).toBe(true)
++  expect(journal.enqueue('{"operation":2}')).toBe(true)
++  await journal.close()
++  expect(await readFile(join(directory, 'operations.jsonl'), 'utf8')).toBe('{"operation":1}\n{"operation":2}\n')
++})
+diff --git a/apps/desktop/tests/operation-report-job.spec.ts b/apps/desktop/tests/operation-report-job.spec.ts
+new file mode 100644
+index 0000000..1c27d99
+--- /dev/null
++++ b/apps/desktop/tests/operation-report-job.spec.ts
+@@ -0,0 +1,119 @@
++import { EventEmitter } from 'node:events'
++import { afterEach, expect, it, vi } from 'vitest'
++import { runOperationReportJob } from '../src/operation-report-job.ts'
++
++const create = vi.hoisted(() => vi.fn<(...args: unknown[]) => EventEmitter>())
++vi.mock('node:worker_threads', () => ({ Worker: function (...args: unknown[]) { return create(...args) } }))
++afterEach(() => { vi.useRealTimers(); create.mockReset(); vi.unstubAllGlobals() })
++const input = { reportPath: 'saved.log', directory: 'history',
++  limits: { bytes: 65536, recordBytes: 4096, records: 100, outputBytes: 65536 }, journal: null }
++
++it('does not report cancellation complete until the terminated worker exits', async () => {
++  vi.useFakeTimers()
++  const worker = Object.assign(new EventEmitter(), { postMessage: vi.fn(), terminate: vi.fn(async () => 1) })
++  create.mockReturnValue(worker)
++  let settled = false
++  const result = runOperationReportJob(input, { timeoutMs: 500, cancellationGraceMs: 100 }, new AbortController().signal).then((value) => {
++    settled = true
++    return value
++  })
++  await vi.advanceTimersByTimeAsync(500)
++  expect(worker.terminate).toHaveBeenCalledTimes(1)
++  expect(settled).toBe(false)
++  worker.emit('exit', 1)
++  expect(await result).toEqual({ appended: false, timedOut: true, cancelled: true })
++  expect(vi.getTimerCount()).toBe(0)
++})
++
++it('requires successful worker exit after the complete append message', async () => {
++  vi.useFakeTimers()
++  const worker = new EventEmitter()
++  create.mockReturnValue(worker)
++  const result = runOperationReportJob(input, { timeoutMs: 500, cancellationGraceMs: 100 }, new AbortController().signal)
++  worker.emit('message', true)
++  worker.emit('exit', 0)
++  expect(await result).toEqual({ appended: true, timedOut: false, cancelled: false })
++  expect(vi.getTimerCount()).toBe(0)
++})
++
++it('contains startup and runtime worker failures', async () => {
++  create.mockImplementationOnce(() => { throw new Error('worker unavailable') })
++  expect(await runOperationReportJob(input, { timeoutMs: 500, cancellationGraceMs: 100 }, new AbortController().signal))
++    .toEqual({ appended: false, timedOut: false, cancelled: false })
++  const worker = new EventEmitter()
++  create.mockReturnValue(worker)
++  const result = runOperationReportJob(input, { timeoutMs: 500, cancellationGraceMs: 100 }, new AbortController().signal)
++  worker.emit('error', new Error('collector failed'))
++  worker.emit('exit', 1)
++  expect(await result).toEqual({ appended: false, timedOut: false, cancelled: false })
++})
++
++it('retains ownership after termination rejects until the worker actually exits', async () => {
++  vi.useFakeTimers()
++  const worker = Object.assign(new EventEmitter(), { postMessage: vi.fn(), terminate: vi.fn(async () => { throw new Error('termination failed') }) })
++  create.mockReturnValue(worker)
++  let settled = false
++  const result = runOperationReportJob(input, { timeoutMs: 500, cancellationGraceMs: 100 }, new AbortController().signal).then((value) => {
++    settled = true
++    return value
++  })
++  await vi.advanceTimersByTimeAsync(500)
++  expect(worker.terminate).toHaveBeenCalledTimes(1)
++  expect(settled).toBe(false)
++  worker.emit('exit', 1)
++  expect(await result).toEqual({ appended: false, timedOut: true, cancelled: true })
++  expect(vi.getTimerCount()).toBe(0)
++})
++
++
++it('allows cooperative exit during the reserved cleanup window', async () => {
++  vi.useFakeTimers()
++  const worker = Object.assign(new EventEmitter(), { postMessage: vi.fn(), terminate: vi.fn() })
++  create.mockReturnValue(worker)
++  const result = runOperationReportJob(input, { timeoutMs: 500, cancellationGraceMs: 100 }, new AbortController().signal)
++  await vi.advanceTimersByTimeAsync(400)
++  expect(worker.postMessage).toHaveBeenCalledExactlyOnceWith('cancel')
++  expect(worker.terminate).not.toHaveBeenCalled()
++  worker.emit('exit', 0)
++  expect(await result).toEqual({ appended: false, timedOut: true, cancelled: true })
++  expect(vi.getTimerCount()).toBe(0)
++})
++
++it('cancels on application shutdown without extending the cleanup window', async () => {
++  vi.useFakeTimers()
++  const worker = Object.assign(new EventEmitter(), { postMessage: vi.fn(), terminate: vi.fn(async () => 1) })
++  create.mockReturnValue(worker)
++  const controller = new AbortController()
++  const result = runOperationReportJob(input, { timeoutMs: 500, cancellationGraceMs: 100 }, controller.signal)
++  await vi.advanceTimersByTimeAsync(200)
++  controller.abort()
++  controller.abort()
++  expect(worker.postMessage).toHaveBeenCalledExactlyOnceWith('cancel')
++  await vi.advanceTimersByTimeAsync(100)
++  expect(worker.terminate).toHaveBeenCalledTimes(1)
++  worker.emit('exit', 1)
++  expect(await result).toEqual({ appended: false, timedOut: false, cancelled: true })
++  expect(vi.getTimerCount()).toBe(0)
++})
++
++it('does not start a collector after shutdown was requested', async () => {
++  expect(await runOperationReportJob(input, { timeoutMs: 500, cancellationGraceMs: 100 }, AbortSignal.abort()))
++    .toEqual({ appended: false, timedOut: false, cancelled: true })
++  expect(create).not.toHaveBeenCalled()
++})
++
++it('starts the physical worker beside a packaged ASAR while preserving spaces in its path', async () => {
++  const NativeURL = URL
++  // The source test substitutes only import.meta's packaged base; worker naming/resolution remain real.
++  vi.stubGlobal('URL', class extends NativeURL {
++    constructor(value: string | URL, base?: string | URL) {
++      super(value, base === undefined ? undefined : 'file:///opt/DeepSeek%20Harness/resources/app.asar/lib/main.js')
++    }
++  })
++  const worker = new EventEmitter()
++  create.mockReturnValue(worker)
++  const result = runOperationReportJob(input, { timeoutMs: 500, cancellationGraceMs: 100 }, new AbortController().signal)
++  expect(create.mock.calls[0]?.[0]).toHaveProperty('href', 'file:///opt/DeepSeek%20Harness/resources/app.asar.unpacked/lib/operation-report-worker.js')
++  worker.emit('message', true); worker.emit('exit', 0)
++  expect(await result).toMatchObject({ appended: true })
++})
+diff --git a/apps/desktop/tests/operation-report.spec.ts b/apps/desktop/tests/operation-report.spec.ts
+new file mode 100644
+index 0000000..46e6f6a
+--- /dev/null
++++ b/apps/desktop/tests/operation-report.spec.ts
+@@ -0,0 +1,73 @@
++import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
++import { tmpdir } from 'node:os'
++import { join } from 'node:path'
++import { expect, it, onTestFinished } from 'vitest'
++import { appendOperationReport } from '../src/operation-report.ts'
++import { writeCrashReport, type CrashReportInput } from '../src/crash-report.ts'
++
++const input: CrashReportInput = {
++  operationHistoryPlanned: true, source: 'host', phase: 'startup', error: new Error('startup failed'),
++  rendererConsole: [], time: new Date('2026-10-19T00:00:00Z'),
++  app: { name: 'test', version: '1', platform: 'win32', arch: 'x64', electron: '44', node: '24', locale: 'zh-CN' },
++}
++const limits = { bytes: 65536, recordBytes: 4096, records: 100, outputBytes: 65536 }
++async function fixture() {
++  const directory = await mkdtemp(join(tmpdir(), 'desktop-operation-report-'))
++  onTestFinished(async () => { await rm(directory, { recursive: true, force: true }) })
++  const report = await writeCrashReport(directory, input)
++  if (report === undefined) throw new Error('Basic report fixture was not saved')
++  return { directory, report, basic: await readFile(report, 'utf8') }
++}
++
++it('preserves the independently saved basic report and appends whitelisted recent history', async () => {
++  const { directory, report, basic } = await fixture()
++  const record = { runId: 'c254ab28-97c9-4382-95e6-2db9c66f98c8', transportDropped: 0,
++    operation: { id: 'c254ab28-97c9-4382-95e6-2db9c66f98c9', time: '2026-10-19T00:00:00.000Z',
++      reason: 'bundle', phase: 'started', target: 'test-bundle', stage: 'enable', diagnostic: 'secret' } }
++  await writeFile(join(directory, 'operations.jsonl'), JSON.stringify(record) + '\n')
++  expect(await appendOperationReport(report, directory, limits, new AbortController().signal, null)).toBe(true)
++  const combined = await readFile(report, 'utf8')
++  expect(combined.startsWith(basic)).toBe(true)
++  expect(combined).toContain('test-bundle')
++  expect(combined).not.toContain('secret')
++  expect(combined).toContain('operation history collection complete')
++  await expect(combined.slice(basic.length)).toMatchFileSnapshot('./expected/operation-history.txt')
++})
++
++it('leaves basic bytes unchanged when collection is cancelled or fails before append', async () => {
++  const { directory, report, basic } = await fixture()
++  expect(await appendOperationReport(report, directory, limits, AbortSignal.abort(), null)).toBe(false)
++  expect(await appendOperationReport(report, directory, { ...limits, bytes: 0 }, new AbortController().signal, null)).toBe(false)
++  expect(await readFile(report, 'utf8')).toBe(basic)
++  expect(basic).toContain('unavailable or incomplete')
++})
++
++it('bounds the entire appended section and refuses a budget smaller than its metadata', async () => {
++  const { directory, report, basic } = await fixture()
++  expect(await appendOperationReport(report, directory, { ...limits, outputBytes: 1 }, new AbortController().signal, null)).toBe(false)
++  expect(await readFile(report, 'utf8')).toBe(basic)
++  expect(await appendOperationReport(report, directory, { ...limits, outputBytes: 512 }, new AbortController().signal, null)).toBe(true)
++  const summary = (await readFile(report, 'utf8')).slice(basic.length)
++  expect(Buffer.byteLength(summary)).toBeLessThanOrEqual(512)
++  expect(summary).toContain('"outputRecordsOmitted":0')
++})
++
++it('omits oldest records to fit the output budget, counting UTF-8 bytes and all metadata', async () => {
++  const { directory, report, basic } = await fixture()
++  const records = Array.from({ length: 20 }, (_, index) => ({
++    runId: 'c254ab28-97c9-4382-95e6-2db9c66f98c8', transportDropped: 0,
++    operation: { id: 'c254ab28-97c9-4382-95e6-2db9c66f98c9', time: '2026-10-19T00:00:00.000Z',
++      reason: 'bundle', phase: 'started', target: `测试插件-${index}`, stage: 'enable' },
++  }))
++  await writeFile(join(directory, 'operations.jsonl'), records.map(record => JSON.stringify(record)).join('\n') + '\n')
++  expect(await appendOperationReport(report, directory, { ...limits, outputBytes: 1024 }, new AbortController().signal, null)).toBe(true)
++  const section = (await readFile(report, 'utf8')).slice(basic.length)
++  expect(Buffer.byteLength(section)).toBeLessThanOrEqual(1024)
++  const summary = JSON.parse(section.split('\n').find(line => line.startsWith('{'))!) as {
++    outputRecordsOmitted: number
++    records: { operation: { target: string } }[]
++  }
++  expect(summary.outputRecordsOmitted).toBeGreaterThan(0)
++  expect(summary.records.length + summary.outputRecordsOmitted).toBe(20)
++  expect(summary.records[0]?.operation.target).toBe('测试插件-19')
++})
+diff --git a/apps/desktop/tests/scnet-setup.spec.ts b/apps/desktop/tests/scnet-setup.spec.ts
+index 730ed7e..45e9881 100644
+--- a/apps/desktop/tests/scnet-setup.spec.ts
++++ b/apps/desktop/tests/scnet-setup.spec.ts
+@@ -21,7 +21,7 @@ function fixture(packaged = false) {
+ }
+ 
+ describe('SCNet setup launcher', () => {
+-  it.each([false, true])('launches a real filesystem script with a visible completion prompt (packaged=%s)', async packaged => {
++  it.each([false, true])('launches a real filesystem script with a visible completion prompt (packaged=%s)', async (packaged) => {
+     const f = fixture(packaged)
+     await openScnetSetup(f.options)
+     const [terminal, args] = f.launch.mock.calls[0]!
+diff --git a/apps/desktop/tsconfig.host.json b/apps/desktop/tsconfig.host.json
+index 982d783..4479a88 100644
+--- a/apps/desktop/tsconfig.host.json
++++ b/apps/desktop/tsconfig.host.json
+@@ -8,6 +8,7 @@
+     "src"
+   ],
+   "references": [
++    { "path": "../../packages/boot/plugin-manager" },
+     {
+       "path": "../../packages/boot/app-boot"
+     },
+diff --git a/apps/desktop/tsdown.config.ts b/apps/desktop/tsdown.config.ts
+index 92f648d..b58c6cb 100644
+--- a/apps/desktop/tsdown.config.ts
++++ b/apps/desktop/tsdown.config.ts
+@@ -33,6 +33,12 @@ if (clientVersion === undefined) throw new Error('desktop build: the client envi
+ const clientVersionDefine = { 'process.env.DSH_CLIENT_VERSION': JSON.stringify(clientVersion) }
+ 
+ export default defineConfig([
++  {
++    entry: ['lib/types/operation-report-worker.js'],
++    plugins: [packagedImportsPlugin({ packages: new Set(), nodeBuiltins: true })],
++    outDir: 'lib', format: ['esm'], platform: 'node', target: 'es2024',
++    fixedExtension: false, dts: false, clean: false, codeSplitting: false,
++  },
+   {
+     entry: ['lib/types/command-manager-entry.js'],
+     plugins: [packagedImportsPlugin({ packages: new Set(), nodeBuiltins: true })],
+diff --git a/docs/event-producer-consumer.md b/docs/event-producer-consumer.md
+index 4aebd22..ab7ab53 100644
+--- a/docs/event-producer-consumer.md
++++ b/docs/event-producer-consumer.md
+@@ -56,9 +56,10 @@ This matrix shows which packages dispatch each harness-owned event and which pac
+ | `llm/adapters-updated` | `emit` | [`packages/llm/llm/src/types.ts:23`](../packages/llm/llm/src/types.ts) | [`llm`](../packages/llm/llm) (`events.dispatch`) | [`acp`](../packages/acp/acp), `remotes` |
+ | `llm/stream` | `waterfall` | [`packages/llm/llm/src/index.ts:75`](../packages/llm/llm/src/index.ts) | [`llm`](../packages/llm/llm) (`waterfall`) | [`llm-replay`](../packages/test-support/llm-replay), [`session-checkpoint-policy`](../packages/session/session-checkpoint-policy), [`session-title`](../packages/session/session-title) |
+ | `permission-presets/catalog-changed` | `emit` | [`packages/interaction/permission-presets/src/types.ts:48`](../packages/interaction/permission-presets/src/types.ts) | [`permission-presets`](../packages/interaction/permission-presets) (`events.dispatch`) | `remotes` |
+-| `plugin-manager/changed` | `emit` | [`packages/boot/plugin-manager/src/types.ts:269`](../packages/boot/plugin-manager/src/types.ts) | [`plugin-manager`](../packages/boot/plugin-manager) (`emit`) | `remotes` |
+-| `plugin-manager/install-log` | `emit` | [`packages/boot/plugin-manager/src/types.ts:275`](../packages/boot/plugin-manager/src/types.ts) | [`plugin-manager`](../packages/boot/plugin-manager) (`emit`) | `remotes` |
+-| `plugin-manager/install-state` | `emit` | [`packages/boot/plugin-manager/src/types.ts:282`](../packages/boot/plugin-manager/src/types.ts) | [`plugin-manager`](../packages/boot/plugin-manager) (`emit`) | `remotes` |
++| `plugin-manager/changed` | `emit` | [`packages/boot/plugin-manager/src/types.ts:302`](../packages/boot/plugin-manager/src/types.ts) | [`plugin-manager`](../packages/boot/plugin-manager) (`emit`) | `remotes` |
++| `plugin-manager/install-log` | `emit` | [`packages/boot/plugin-manager/src/types.ts:308`](../packages/boot/plugin-manager/src/types.ts) | [`plugin-manager`](../packages/boot/plugin-manager) (`emit`) | `remotes` |
++| `plugin-manager/install-state` | `emit` | [`packages/boot/plugin-manager/src/types.ts:315`](../packages/boot/plugin-manager/src/types.ts) | [`plugin-manager`](../packages/boot/plugin-manager) (`emit`) | `remotes` |
++| `plugin-manager/operation` | `parallel` | [`packages/boot/plugin-manager/src/types.ts:294`](../packages/boot/plugin-manager/src/types.ts) | [`plugin-manager`](../packages/boot/plugin-manager) (`parallel`) | - |
+ | `plugin-market/changed` | `emit` | [`packages/boot/plugin-market/src/types.ts:136`](../packages/boot/plugin-market/src/types.ts) | [`plugin-market`](../packages/boot/plugin-market) (`emit`) | `remotes` |
+ | `schedule/changed` | `emit` | [`packages/schedule/schedule/src/types.ts:478`](../packages/schedule/schedule/src/types.ts) | [`schedule`](../packages/schedule/schedule) (`emit`) | `remotes` |
+ | `session-telemetry/record` | `waterfall` | [`packages/session/session-telemetry/src/index.ts:44`](../packages/session/session-telemetry/src/index.ts) | [`session-telemetry`](../packages/session/session-telemetry) (`waterfall`) | - |
+diff --git a/docs/event-producer-consumer.zh.md b/docs/event-producer-consumer.zh.md
+index 901dfca..02cae52 100644
+--- a/docs/event-producer-consumer.zh.md
++++ b/docs/event-producer-consumer.zh.md
+@@ -58,9 +58,10 @@
+ | `llm/adapters-updated` | `emit` | [`packages/llm/llm/src/types.ts:23`](../packages/llm/llm/src/types.ts) | [`llm`](../packages/llm/llm) (`events.dispatch`) | [`acp`](../packages/acp/acp), `remotes` |
+ | `llm/stream` | `waterfall` | [`packages/llm/llm/src/index.ts:75`](../packages/llm/llm/src/index.ts) | [`llm`](../packages/llm/llm) (`waterfall`) | [`llm-replay`](../packages/test-support/llm-replay), [`session-checkpoint-policy`](../packages/session/session-checkpoint-policy), [`session-title`](../packages/session/session-title) |
+ | `permission-presets/catalog-changed` | `emit` | [`packages/interaction/permission-presets/src/types.ts:48`](../packages/interaction/permission-presets/src/types.ts) | [`permission-presets`](../packages/interaction/permission-presets) (`events.dispatch`) | `remotes` |
+-| `plugin-manager/changed` | `emit` | [`packages/boot/plugin-manager/src/types.ts:269`](../packages/boot/plugin-manager/src/types.ts) | [`plugin-manager`](../packages/boot/plugin-manager) (`emit`) | `remotes` |
+-| `plugin-manager/install-log` | `emit` | [`packages/boot/plugin-manager/src/types.ts:275`](../packages/boot/plugin-manager/src/types.ts) | [`plugin-manager`](../packages/boot/plugin-manager) (`emit`) | `remotes` |
+-| `plugin-manager/install-state` | `emit` | [`packages/boot/plugin-manager/src/types.ts:282`](../packages/boot/plugin-manager/src/types.ts) | [`plugin-manager`](../packages/boot/plugin-manager) (`emit`) | `remotes` |
++| `plugin-manager/changed` | `emit` | [`packages/boot/plugin-manager/src/types.ts:302`](../packages/boot/plugin-manager/src/types.ts) | [`plugin-manager`](../packages/boot/plugin-manager) (`emit`) | `remotes` |
++| `plugin-manager/install-log` | `emit` | [`packages/boot/plugin-manager/src/types.ts:308`](../packages/boot/plugin-manager/src/types.ts) | [`plugin-manager`](../packages/boot/plugin-manager) (`emit`) | `remotes` |
++| `plugin-manager/install-state` | `emit` | [`packages/boot/plugin-manager/src/types.ts:315`](../packages/boot/plugin-manager/src/types.ts) | [`plugin-manager`](../packages/boot/plugin-manager) (`emit`) | `remotes` |
++| `plugin-manager/operation` | `parallel` | [`packages/boot/plugin-manager/src/types.ts:294`](../packages/boot/plugin-manager/src/types.ts) | [`plugin-manager`](../packages/boot/plugin-manager) (`parallel`) | - |
+ | `plugin-market/changed` | `emit` | [`packages/boot/plugin-market/src/types.ts:136`](../packages/boot/plugin-market/src/types.ts) | [`plugin-market`](../packages/boot/plugin-market) (`emit`) | `remotes` |
+ | `schedule/changed` | `emit` | [`packages/schedule/schedule/src/types.ts:478`](../packages/schedule/schedule/src/types.ts) | [`schedule`](../packages/schedule/schedule) (`emit`) | `remotes` |
+ | `session-telemetry/record` | `waterfall` | [`packages/session/session-telemetry/src/index.ts:44`](../packages/session/session-telemetry/src/index.ts) | [`session-telemetry`](../packages/session/session-telemetry) (`waterfall`) | - |
+diff --git a/docs/subsystems/boot.i18n.yaml b/docs/subsystems/boot.i18n.yaml
+index 79070a4..ff33a90 100644
+--- a/docs/subsystems/boot.i18n.yaml
++++ b/docs/subsystems/boot.i18n.yaml
+@@ -6,8 +6,8 @@
+   en: 962b4398c9052959
+   zh: 14471c340a9f6e60
+ /profile-management/management-records:
+-  en: a1412da0219c2a09
+-  zh: b6869fd548f4c693
++  en: 1dd3bd8ec774d762
++  zh: 0aa8a3ce0b0a96de
+ /profile-management/market-records:
+   en: a28421bc6481b0ed
+   zh: 73142d6163a20f50
+diff --git a/docs/subsystems/boot.md b/docs/subsystems/boot.md
+index ba75525..0d33e8c 100644
+--- a/docs/subsystems/boot.md
++++ b/docs/subsystems/boot.md
+@@ -6,6 +6,8 @@ The [boot package group](../../packages/boot/README.md) owns launcher-provided p
+ 
+ ## Management records
+ 
++`PluginOperation` identifies one manager invocation with a UUID, ISO timestamp, reason, stage, known target or null, and optional enable/version facts. Its phase is `started`, `settled` or `unknown`; only `settled` supplies application outcome, changed state and optional error/restart codes. `PluginOperationRecord` adds the observing Host run UUID and transport omission count. The diagnostic parser accepts only these bounded fields. An unmatched start or missing record does not establish a successful or absent change.
++
+ `PluginEntryId` identifies one Loader entry; callers obtain it from `listPlugins` rather than constructing a patch id.
+ 
+ `PluginInfo` carries module identity, effective enablement, fiber phase and optional display `meta`, plus a unique `patchId` or a `readOnlyReason`.
+@@ -425,6 +427,23 @@ An installation moved between its Host phases. `installing` is announced once pe
+ 
+ Source: [`packages/boot/plugin-manager/src/types.ts`](../../packages/boot/plugin-manager/src/types.ts)
+ 
++<a id="plugin-manageroperation--parallel"></a>
++
++#### `plugin-manager/operation` — parallel
++
++One manager invocation started or ended; subscribers run independently without delaying management.
++
++```ts cordis-catalog
++/**
++ * One manager invocation started or ended; subscribers run independently without delaying management.
++ * @mode parallel
++ * @param operation - Correlated operation facts; a start without an end has an unknown outcome.
++ */
++'plugin-manager/operation'(operation: PluginOperation): void | Promise<void>
++```
++
++Source: [`packages/boot/plugin-manager/src/types.ts`](../../packages/boot/plugin-manager/src/types.ts)
++
+ <a id="plugin-market-events"></a>
+ 
+ ### `plugin-market/*` events
+diff --git a/docs/subsystems/boot.zh.md b/docs/subsystems/boot.zh.md
+index f6260e8..7eceb56 100644
+--- a/docs/subsystems/boot.zh.md
++++ b/docs/subsystems/boot.zh.md
+@@ -6,6 +6,8 @@
+ 
+ ## 管理记录
+ 
++`PluginOperation` 以 UUID、ISO 时间戳、原因、阶段、已知目标或 null，以及可选启用/版本信息标识一次管理调用。阶段为 `started`、`settled` 或 `unknown`，只有 `settled` 提供应用结果、变更状态和可选错误/重启原因码。`PluginOperationRecord` 增加观察该操作的 Host 运行 UUID 和传输遗漏计数。诊断解析器只接受这些有界字段；未配对的开始或缺失记录不代表变更成功或不存在。
++
+ `PluginEntryId` 标识一个 Loader 条目；调用方从 `listPlugins` 获取，不自行拼接 patch id。
+ 
+ `PluginInfo` 包含模块标识、实际启停状态、fiber 阶段和可选的展示 `meta`，以及唯一的 `patchId` 或 `readOnlyReason`。
+@@ -425,6 +427,23 @@ An installation moved between its Host phases. `installing` is announced once pe
+ 
+ Source: [`packages/boot/plugin-manager/src/types.ts`](../../packages/boot/plugin-manager/src/types.ts)
+ 
++<a id="plugin-manageroperation--parallel"></a>
++
++#### `plugin-manager/operation` — parallel
++
++One manager invocation started or ended; subscribers run independently without delaying management.
++
++```ts cordis-catalog
++/**
++ * One manager invocation started or ended; subscribers run independently without delaying management.
++ * @mode parallel
++ * @param operation - Correlated operation facts; a start without an end has an unknown outcome.
++ */
++'plugin-manager/operation'(operation: PluginOperation): void | Promise<void>
++```
++
++Source: [`packages/boot/plugin-manager/src/types.ts`](../../packages/boot/plugin-manager/src/types.ts)
++
+ <a id="plugin-market-events"></a>
+ 
+ ### `plugin-market/*` events
+diff --git a/packages/boot/app-boot/README.i18n.yaml b/packages/boot/app-boot/README.i18n.yaml
+index c13fb64..cee0ce4 100644
+--- a/packages/boot/app-boot/README.i18n.yaml
++++ b/packages/boot/app-boot/README.i18n.yaml
+@@ -24,8 +24,8 @@
+   en: 4a424cd401556f20
+   zh: 0b34dd18e0db6cea
+ /deepseek-ai-dsh-app-boot/use-this-package/profiles:
+-  en: d2d520668668292c
+-  zh: b7deeab27032a3ad
++  en: aa1b3908f164da2b
++  zh: 7fe37f9b8ccaa710
+ /deepseek-ai-dsh-app-boot/use-this-package/previewing-the-effective-configuration:
+   en: 646a0ccdd7881ad1
+   zh: e3696acb1573dd7b
+diff --git a/packages/boot/app-boot/README.md b/packages/boot/app-boot/README.md
+index 59c3847..ab2b4b2 100644
+--- a/packages/boot/app-boot/README.md
++++ b/packages/boot/app-boot/README.md
+@@ -55,6 +55,8 @@ Admission happens only at composition boundaries DSH owns, and a denied row is d
+ 
+ Exact-version exemptions live in the profile's own `compatibility.json`, not in its `package.json`, so an exemption write never touches the dependency manifest, the bundle list, or Cordis patch files. It maps exact `package-name@version` keys to lists of exact DSH runtime versions; neither a plugin upgrade nor a DSH upgrade inherits permission. A missing file means no exemptions. A malformed one never stops the profile from starting: records the reader accepts still apply, each rejected record is reported on stderr beside the plugin denials, and the file is then treated as read-only, so a grant or revocation refuses and asks the user to repair it by hand instead of overwriting their content. [Plugin Manager](../plugin-manager/README.md#version-compatibility-and-exemptions) owns the grant, revocation, and risk confirmation each change requires.
+ 
++`validatePluginVersionExemption(packageVersion, runtimeVersion)` validates canonical exact identities without granting permission or writing profile data. `setProfileVersionExemption` still owns consent, current-runtime checks and the atomic update.
++
+ Your machine-local preferences also live in the Harness home:
+ 
+ - **`.env`** — your ordinary environment layers: the invoking directory's file outranks the Harness-home file, and both sit below the inherited environment. Variables that decide how the process starts (`PATH`, `DSH_*`, `XDG_*` and similar) are rejected from files: export them instead. The four proxy names (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`) are accepted from the Harness-home file only, never from the invoking directory's, which arrives with a clone. For a non-product bin that just wants one directory's `.env`, a missing file is fine and an unloadable one prints one labelled warning line.
+diff --git a/packages/boot/app-boot/README.zh.md b/packages/boot/app-boot/README.zh.md
+index 73e383e..cc044ea 100644
+--- a/packages/boot/app-boot/README.zh.md
++++ b/packages/boot/app-boot/README.zh.md
+@@ -55,6 +55,8 @@ profile 导入插件前，DSH 会将其声明的 DSH 版本要求与 `getDshRunt
+ 
+ 精确版本豁免保存在 profile 自己的 `compatibility.json` 中，而不是 `package.json`，因此写豁免不会触及依赖清单、组合包列表或 Cordis patch 文件。它把精确的 `package-name@version` 键映射到精确 DSH 运行时版本列表；插件升级和 DSH 升级都不继承授权。文件缺失表示没有豁免。文件损坏绝不会阻止 profile 启动：读取器接受的记录仍然生效，每条被拒绝的记录会与插件拒绝信息一起输出到 stderr，此后该文件被视为只读，因此授予或撤销会拒绝执行并要求用户手工修复，而不是覆盖用户的内容。[插件管理器](../plugin-manager/README.zh.md#version-compatibility-and-exemptions)负责每次变更所需的授权、撤销与风险确认。
+ 
++`validatePluginVersionExemption(packageVersion, runtimeVersion)` 校验规范的精确版本标识，不授予权限或写入 profile。`setProfileVersionExemption` 仍负责同意、当前运行时检查和原子更新。
++
+ 你的机器本地偏好同样位于 harness home 中：
+ 
+ - **`.env`**——你的普通环境层：调用目录的文件优先于 harness home 的文件，两者都低于继承环境。在文件中设置的进程启动变量（如 `PATH`、`DSH_*`、`XDG_*`）会被拒绝：请改为导出这些变量。四个代理名（`HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY`）只从 harness home 的文件接受，绝不从调用目录的文件接受——后者随 clone 一起到来。对于只想加载某个目录 `.env` 的非产品 bin，文件缺失不影响启动，文件无法加载时输出一行带标签的警告。
+diff --git a/packages/boot/app-boot/src/index.ts b/packages/boot/app-boot/src/index.ts
+index fded02c..a1229cf 100644
+--- a/packages/boot/app-boot/src/index.ts
++++ b/packages/boot/app-boot/src/index.ts
+@@ -22,7 +22,7 @@ export { sanitizeProfile } from './profile-sanitize.ts'
+ export { getDshRuntimeVersion, evaluatePluginCompatibility, pluginCompatibilityWarning, type PluginCompatibility } from './plugin-compatibility.ts'
+ export {
+   PROFILE_COMPATIBILITY_FILENAME, readProfileCompatibility, readProfileVersionExemptions,
+-  setProfileVersionExemption, type ProfileCompatibility,
++  setProfileVersionExemption, validatePluginVersionExemption, type ProfileCompatibility,
+ } from './profile-compatibility.ts'
+ import { prepareProfilePatches } from './compatibility-preflight.ts'
+ import { ProfileRuntimeResolution, type RuntimeResolution } from './profile.ts'
+diff --git a/packages/boot/plugin-manager/README.i18n.yaml b/packages/boot/plugin-manager/README.i18n.yaml
+index ad3660e..9a28de0 100644
+--- a/packages/boot/plugin-manager/README.i18n.yaml
++++ b/packages/boot/plugin-manager/README.i18n.yaml
+@@ -24,8 +24,8 @@
+   en: d5643a06f300c30a
+   zh: 9348b6a7676a2849
+ /deepseek-ai-dsh-plugin-manager/understand-the-implementation:
+-  en: 495dadf79c48c43c
+-  zh: 9884dd04a5bb49dc
++  en: 71a56994fb131442
++  zh: c3c07f53f2edb8ef
+ /deepseek-ai-dsh-plugin-manager/further-exploration:
+   en: c6538243d8702a0d
+   zh: 04a82d923353c75f
+diff --git a/packages/boot/plugin-manager/README.md b/packages/boot/plugin-manager/README.md
+index c12c12b..487a57d 100644
+--- a/packages/boot/plugin-manager/README.md
++++ b/packages/boot/plugin-manager/README.md
+@@ -95,6 +95,8 @@ The CLI exposes `dsh plugin --profile <profile> version-exemptions`, `allow-vers
+ <details>
+ <summary>Implementation internals — click to expand</summary>
+ 
++`plugin-manager/operation` publishes correlated `started`, `settled` and `unknown` management facts without waiting for diagnostic subscribers; subscriber failure does not change the management result. The `./diagnostic` export validates transported records and strips fields outside the diagnostic whitelist. [Management records](../../../docs/subsystems/boot.md) defines the fields; Desktop owns bounded persistence and report collection. Recent operations provide context, not proof of a crash cause.
++
+ The service and `dsh plugin` share the package operations in [operations.ts](src/operations.ts). The launcher supplies the current profile; [DSH HMR](../hmr/README.md) serializes module reloads, file watching and management writes. Each configuration refresh re-reads bundle selection and patch layers, updates the original root Include, and awaits removed plugin resources as well as the remaining Loader tree. CLI and service operations share the profile manifest writer lock to prevent concurrent package and manifest writes. HMR does not acquire that lock. Pnpm runs outside the HMR queue; installation selects the bundle after pnpm succeeds, while removal deselects and unloads the bundle before pnpm runs.
+ 
+ Without HMR, installing a new package, enabling a bundle and a successful removal publish the profile's runtime resolution; with HMR, every operation leaves publication to [HMR](../hmr/README.md)'s recomposition, which removes dropped mappings after their plugins stop. Shared dependencies may pass to another bundle's declaration when their normalized directory and scope stay unchanged. Without HMR, a deselected startup bundle still runs: while any such bundle is absent from the saved selection, subsequent package operations retain the entire current table and report `restart-required`. Other new installations and removals of non-running bundles can still publish without HMR; activation waits for restart. With HMR, `installBundle()` refuses a package that is already installed with `already-installed`, before pnpm runs, when the spec names it: a registry name, a local directory, or the git or tarball spec its dependency was saved with. A package that cannot be removed, such as a bundle carrying plugin management, therefore cannot be installed over with HMR. Installing another version is a removal and an installation, so the previous version's plugins stop, its modules are evicted and its mappings removed before the new one is installed; the Web page's Update for an Official plugin does both. A git or tarball spec whose package is known only after pnpm ran can still install over an installed package: without HMR it reports `restart-required`, and with HMR the recomposition replaces the running plugins whose loaded files changed. A replacement that fails to import or start reports `failed` with the activation diagnostic, which names the import error; the previous version no longer runs, and every later operation imports it again, so it starts once its files or dependencies are corrected. An unchanged import failure is a warning of later operations; a changed one fails them. A publication the runtime resolution rejects, because an installed package now resolves to another directory or a mapping of the DSH installation changed, leaves the composition as it was, after stopping and starting again the rows it would drop, and reports `restart-required` with `package-moved`. Disabling or removing a bundle evicts the modules of the packages whose mappings it drops. Every `restart-required` result carries `restartReason`: `no-hmr`, `package-moved`, or the [HMR pending reason](../hmr/README.md) of a changed module that loads only after a restart, unless the operation reports `overridden` ([decision](../../../.agents/notes/implemented/architecture/2026-09-30-profile-package-refresh-and-manifest-invalidation.md)).
+diff --git a/packages/boot/plugin-manager/README.zh.md b/packages/boot/plugin-manager/README.zh.md
+index 17fcf8e..d3d3038 100644
+--- a/packages/boot/plugin-manager/README.zh.md
++++ b/packages/boot/plugin-manager/README.zh.md
+@@ -95,6 +95,8 @@ CLI 提供 `dsh plugin --profile <profile> version-exemptions`、`allow-version
+ <details>
+ <summary>实现细节——点击展开</summary>
+ 
++`plugin-manager/operation` 不等待诊断订阅者，发布可关联的 `started`、`settled` 和 `unknown` 管理事实；订阅者失败不改变管理结果。`./diagnostic` 导出校验传输记录，并移除诊断白名单之外的字段。[管理记录](../../../docs/subsystems/boot.zh.md)定义字段，Desktop 负责有界持久化和报告收集。近期操作只提供上下文，不证明崩溃原因。
++
+ 服务与 `dsh plugin` 共用 [operations.ts](src/operations.ts) 中的包管理操作。启动器提供当前 profile；[DSH HMR](../hmr/README.zh.md) 串行执行模块重载、文件监听和管理写入。每次配置刷新重新读取组合包选择与 patch 层，更新原有根 Include，并等待已移除插件释放资源及剩余 Loader 树稳定。CLI 与 service 操作共用 profile manifest 写锁，防止并发包操作和 manifest 写入。HMR 不获取该锁。pnpm 在 HMR 队列之外执行；安装在 pnpm 成功后选入组合包，删除则在执行 pnpm 前取消选入并完成卸载。
+ 
+ 没有 HMR 时，安装新包、启用组合包以及删除成功后，都会发布 profile 的 runtime resolution；有 HMR 时，每个操作都把发布交给 [HMR](../hmr/README.zh.md) 的重新组合，该重新组合在相关插件停止后移除被丢弃的映射。共享依赖的规范化目录和作用域不变时，可以改由另一个组合包声明。没有 HMR 时，已取消选入的启动组合包仍在运行：只要保存的选择列表中缺少任何这样的组合包，后续包操作就保留整张当前表，并报告 `restart-required`。其他新安装和未运行组合包的删除仍可在没有 HMR 时发布；激活等待重启。有 HMR 时，spec 指明已安装的包，`installBundle()` 在运行 pnpm 之前以 `already-installed` 拒绝安装；spec 可以是 registry 包名、本地目录，或保存依赖时使用的 git 或 tarball spec。因此，有 HMR 时无法在不能删除的包（例如带有插件管理的组合包）上安装。安装另一个版本需要先卸载再安装，因此在安装新版本之前，旧版本的插件停止，其模块被逐出，其映射被移除；Web 页面中官方插件的更新会依次执行这两步。运行 pnpm 之后才能确定包名的 git 或 tarball spec 仍可能安装到已安装的包上：没有 HMR 时报告 `restart-required`；有 HMR 时，重新组合替换已加载文件发生变化的运行中插件。替换版本导入或启动失败时报告 `failed` 及激活诊断，该诊断给出导入错误；旧版本不再运行，此后每次操作都会再次导入它，因此其文件或依赖被修正后它即启动。未变化的导入失败在后续操作中作为警告报告；已变化的导入失败使后续操作失败。已安装的包现在解析到其他目录，或 DSH 安装的映射发生变化，使 runtime resolution 拒绝发布时，它停止并重新启动该发布将丢弃的行，组合保持不变，并报告带 `package-moved` 的 `restart-required`。停用或删除组合包时，会逐出因此被删除映射的那些包的模块。每个 `restart-required` 结果都带有 `restartReason`：`no-hmr`、`package-moved`，或只有重启后才能加载的已变化模块的 [HMR 待处理原因](../hmr/README.zh.md)，除非操作报告 `overridden`（[决策](../../../.agents/notes/implemented/architecture/2026-09-30-profile-package-refresh-and-manifest-invalidation.zh.md)）。
+diff --git a/packages/boot/plugin-manager/package.json b/packages/boot/plugin-manager/package.json
+index 02abcbd..bce0c77 100644
+--- a/packages/boot/plugin-manager/package.json
++++ b/packages/boot/plugin-manager/package.json
+@@ -22,6 +22,10 @@
+       "types": "./lib/types/types.d.ts",
+       "default": "./lib/types/types.js"
+     },
++    "./diagnostic": {
++      "types": "./lib/types/diagnostic.d.ts",
++      "default": "./lib/types/diagnostic.js"
++    },
+     "./registry": {
+       "types": "./lib/types/registry.d.ts",
+       "default": "./lib/types/registry.js"
+diff --git a/packages/boot/plugin-manager/src/diagnostic.ts b/packages/boot/plugin-manager/src/diagnostic.ts
+new file mode 100644
+index 0000000..d249f0b
+--- /dev/null
++++ b/packages/boot/plugin-manager/src/diagnostic.ts
+@@ -0,0 +1,84 @@
++/** Whitelisted operation records shared by diagnostic transport and durable readers. */
++import { z } from 'zod'
++import type { Branded } from '@deepseek-ai/dsh-brand'
++import type { ChangeResult, ManagementError, PluginChange, PluginOperation, PluginOperationId, RestartReason } from './types.ts'
++
++/** Identifies the process lifetime which observed management operations. */
++export type PluginOperationRunId = Branded<'PluginOperationRunId'>
++
++/** One diagnostic event; omissions and unknown outcomes must not be interpreted as successful operations. */
++export interface PluginOperationRecord {
++  readonly runId: PluginOperationRunId
++  readonly operation: PluginOperation
++  readonly transportDropped: number
++}
++
++const fields = {
++  id: z.uuid().transform(value => value as PluginOperationId),
++  time: z.iso.datetime().max(64),
++  reason: z.enum({
++    'plugin': 'plugin',
++    'bundle': 'bundle',
++    'install': 'install',
++    'remove': 'remove',
++  } satisfies { [K in PluginChange['reason']]: K }),
++  target: z.string().max(256).nullable(),
++  stage: z.enum({
++    'install': 'install',
++    'enable': 'enable',
++    'remove': 'remove',
++  } satisfies { [K in ChangeResult['stage']]: K }),
++  enabled: z.boolean().optional(),
++  version: z.string().max(128).optional(),
++}
++const operation: z.ZodType<PluginOperation> = z.discriminatedUnion('phase', [
++  z.object({ ...fields, phase: z.literal('started') }),
++  z.object({ ...fields, phase: z.literal('unknown') }),
++  z.object({ ...fields, phase: z.literal('settled'),
++    application: z.enum({
++      'applied': 'applied',
++      'restart-required': 'restart-required',
++      'overridden': 'overridden',
++      'failed': 'failed',
++      'cancelled': 'cancelled',
++    } satisfies { [K in ChangeResult['application']]: K }),
++    changed: z.boolean(),
++    errorCode: z.enum({
++      'management-required': 'management-required',
++      'unaddressable': 'unaddressable',
++      'unknown-plugin': 'unknown-plugin',
++      'invalid-spec': 'invalid-spec',
++      'already-installed': 'already-installed',
++      'ambiguous-install': 'ambiguous-install',
++      'not-bundle': 'not-bundle',
++      'not-removable': 'not-removable',
++      'stop-profile': 'stop-profile',
++      'bundle-in-use': 'bundle-in-use',
++      'stale-approval': 'stale-approval',
++      'incompatible-version': 'incompatible-version',
++      'operation-error': 'operation-error',
++    } satisfies { [K in ManagementError['code']]: K }).optional(),
++    restartReason: z.enum({
++      'no-hmr': 'no-hmr',
++      'package-moved': 'package-moved',
++      'host-module': 'host-module',
++      'unmanaged-plugin': 'unmanaged-plugin',
++      'module-comparison': 'module-comparison',
++    } satisfies { [K in RestartReason]: K }).optional(),
++  }),
++])
++const record = z.object({
++  runId: z.uuid().transform(value => value as PluginOperationRunId),
++  operation,
++  transportDropped: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
++})
++
++/**
++ * Validate transport/file data and discard fields outside the diagnostic whitelist.
++ * @param value - Untrusted decoded JSON.
++ * @returns A bounded record, or undefined for malformed, oversized or unsupported records.
++ */
++export function parsePluginOperationRecord(value: unknown): PluginOperationRecord | undefined {
++  const parsed = record.safeParse(value)
++  return parsed.success ? parsed.data : undefined
++}
+diff --git a/packages/boot/plugin-manager/src/index.ts b/packages/boot/plugin-manager/src/index.ts
+index 6734d28..50accb6 100644
+--- a/packages/boot/plugin-manager/src/index.ts
++++ b/packages/boot/plugin-manager/src/index.ts
+@@ -15,7 +15,7 @@ import {
+   readPluginMeta, readProfileManifest, resolveBundleDir, loadOverlayPatches, composeEntries,
+   readProfilePatches, OPTIONAL_BUNDLES, bundlePatchPaths,
+   evaluatePluginCompatibility, readProfileCompatibility, readProfileVersionExemptions,
+-  setProfileVersionExemption, PROFILE_COMPATIBILITY_FILENAME,
++  setProfileVersionExemption, validatePluginVersionExemption, PROFILE_COMPATIBILITY_FILENAME,
+   OFFICIAL_ON_DEMAND_CATALOG, getDshRuntimeVersion, ResolutionRestartRequired,
+ } from '@deepseek-ai/dsh-app-boot'
+ import type {} from '@deepseek-ai/dsh-hmr'
+@@ -31,6 +31,7 @@ import { approveBuilds, recordPendingBuilds } from './build-approval.ts'
+ import { checkGithubConnection } from './github-connection.ts'
+ import type {
+   BundleInfo, BundleRowInfo, ChangeResult, InspectOptions, InstallBundleOptions, ManagementError, PackageResult, PluginChange,
++  PluginOperation, PluginOperationId,
+   PluginEntryId, PluginInfo, PluginInspectProblem, PluginInstallCancellation, PluginInstallProgress, PluginInstallRequestId,
+   PluginRegistries, PluginSpecInspection, Registry,
+ } from './types.ts'
+@@ -196,6 +197,28 @@ function parsedForRegistry(spec: string): ParsedInstallSpec {
+   }
+ }
+ 
++/** Only registry package names are retained before installation resolves its target. */
++function installOperationTarget(spec: string): string | null {
++  let parsed: ParsedInstallSpec
++  try { parsed = parseInstallSpec(spec) }
++  catch (_error) { return null /* Invalid specs remain private; installation owns their refusal. */ }
++  return parsed.kind === 'registry' ? parsed.name : null
++}
++
++/** Exemption facts use canonical package identity, never the raw request or installed version. */
++function exemptionOperationIdentity(packageVersion: string, runtimeVersion: string): Pick<PluginOperation, 'target' | 'version'> {
++  try { validatePluginVersionExemption(packageVersion, runtimeVersion) }
++  catch (_error) { return { target: null } /* The operation still owns validation failure reporting. */ }
++  const separator = packageVersion.lastIndexOf('@')
++  return { target: installOperationTarget(packageVersion.slice(0, separator)),
++    version: diagnosticVersion(packageVersion.slice(separator + 1)) }
++}
++
++/** Unusable file metadata must not discard the rest of an operation record. */
++function diagnosticVersion(value: unknown): string | undefined {
++  return typeof value === 'string' && value.length <= 128 ? value : undefined
++}
++
+ declare module '@deepseek-ai/cordis' {
+   interface Context {
+     /** Persistent management of the current profile's composition and packages. */
+@@ -282,7 +305,7 @@ export class PluginManager extends TypertRemoteService {
+     return this.change(result => this.configure(async () => {
+       await setProfileVersionExemption(this.profile.dir, packageVersion, runtimeVersion, enabled, acceptRisk === true)
+       Object.assign(result, await this.reload())
+-    }), { stage: 'enable', target: packageVersion, enabled }, 'bundle')
++    }), { stage: 'enable', target: packageVersion, enabled }, 'bundle', exemptionOperationIdentity(packageVersion, runtimeVersion))
+   }
+ 
+   /** Read current plugins, including why a row cannot be changed through the profile patch.
+@@ -899,30 +922,86 @@ export class PluginManager extends TypertRemoteService {
+     operation: (result: ChangeResult) => Promise<ChangeResult['application'] | void>,
+     request: Pick<ChangeResult, 'stage' | 'target' | 'enabled'>,
+     reason: PluginChange['reason'],
++    identity?: Pick<PluginOperation, 'target' | 'version'>,
+   ): Promise<ChangeResult> {
+-    return withFileLock(join(this.profile.dir, 'package.json'), async () => {
+-      this.abort.signal.throwIfAborted()
+-      const before = this.diskState()
+-      const result: ChangeResult = { ...request, changed: false,
+-        ...this.ownerContext.get('hmr') !== undefined ? { application: 'applied' } : { application: 'restart-required', restartReason: 'no-hmr' } }
+-      try {
+-        const outcome = await operation(result)
+-        if (outcome !== undefined) result.application = outcome
+-        // A reload that waits for a restart leaves the change saved but not applied.
+-        else if (result.application === 'applied' && result.restartReason !== undefined) result.application = 'restart-required'
+-      } catch (error) {
+-        if (error instanceof InstallCancelledError) {
+-          result.application = 'cancelled'
+-        } else {
+-          result.application = 'failed'
+-          result.error = managementError(error)
++    const id = randomUUID() as PluginOperationId
++    const target = identity === undefined ? this.operationTarget(reason, request.target) : identity.target
++    const version = identity === undefined ? this.operationVersion(reason, reason === 'plugin' ? request.target : target) : identity.version
++    const facts = { id, reason, stage: request.stage,
++      target,
++      ...version === undefined ? {} : { version },
++      ...request.enabled === undefined ? {} : { enabled: request.enabled } }
++    this.reportOperation({ ...facts, time: new Date().toISOString(), phase: 'started' })
++    let settled: ChangeResult
++    try {
++      settled = await withFileLock(join(this.profile.dir, 'package.json'), async () => {
++        this.abort.signal.throwIfAborted()
++        const before = this.diskState()
++        const result: ChangeResult = { ...request, changed: false,
++          ...this.ownerContext.get('hmr') !== undefined ? { application: 'applied' } : { application: 'restart-required', restartReason: 'no-hmr' } }
++        try {
++          const outcome = await operation(result)
++          if (outcome !== undefined) result.application = outcome
++          // A reload that waits for a restart leaves the change saved but not applied.
++          else if (result.application === 'applied' && result.restartReason !== undefined) result.application = 'restart-required'
++        } catch (error) {
++          if (error instanceof InstallCancelledError) {
++            result.application = 'cancelled'
++          } else {
++            result.application = 'failed'
++            result.error = managementError(error)
++          }
+         }
+-      }
+-      if (result.application !== 'restart-required') delete result.restartReason
+-      result.changed = before !== this.diskState()
+-      this.ownerContext.emit('plugin-manager/changed', { reason })
+-      return result
+-    }, { waitMs: this.lockWaitMs })
++        if (result.application !== 'restart-required') delete result.restartReason
++        result.changed = before !== this.diskState()
++        this.ownerContext.emit('plugin-manager/changed', { reason })
++        return result
++      }, { waitMs: this.lockWaitMs })
++    } catch (error) {
++      this.reportOperation({ ...facts, time: new Date().toISOString(), phase: 'unknown' })
++      throw error
++    }
++    const refusedVersion = reason === 'install'
++      ? settled.error?.incompatible?.find(plugin => plugin.name === facts.target)?.version
++      : undefined
++    const observedVersion = diagnosticVersion(settled.version ?? refusedVersion)
++    this.reportOperation({ ...facts, time: new Date().toISOString(), phase: 'settled',
++      stage: settled.stage, target: settled.bundle === undefined ? facts.target : installOperationTarget(settled.bundle),
++      application: settled.application, changed: settled.changed,
++      ...observedVersion === undefined ? {} : { version: observedVersion },
++      ...settled.error === undefined ? {} : { errorCode: settled.error.code },
++      ...settled.restartReason === undefined ? {} : { restartReason: settled.restartReason } })
++    return settled
++  }
++
++  private reportOperation(operation: PluginOperation): void {
++    void this.ownerContext.parallel('plugin-manager/operation', operation).catch((_error: unknown) => {
++      // All subscribers run; diagnostic failures cannot change the management result.
++      console.error('dsh plugin-manager: operation diagnostic delivery failed')
++    })
++  }
++
++  private operationTarget(reason: PluginChange['reason'], target: string): string | null {
++    if (reason !== 'plugin') {
++      const name = installOperationTarget(target)
++      return reason === 'install' || name === target ? name : null
++    }
++    return target.length <= 256 && [...this.ctx.loader.entries()].some(entry => entry.id === target) ? target : null
++  }
++
++  /** Read the request-time package version without preventing recovery from damaged metadata. */
++  private operationVersion(reason: PluginChange['reason'], target: string | null): string | undefined {
++    if (reason === 'install' || target === null) return undefined
++    try {
++      if (reason !== 'plugin') return diagnosticVersion(bundleManifest(target, this.profile.dir, this.profile.installAnchor)?.version)
++      const entry = [...this.ctx.loader.entries()].find(row => row.id === target)
++      const source = entry?.parent.tree.ctx.baseUrl
++      if (entry === undefined || source === undefined) return undefined
++      return diagnosticVersion(this.ownerContext.get('pluginPackages')?.packageOf(entry.options.name, source)?.version)
++    } catch (_error) {
++      // Disabling or removing a broken package must not depend on diagnostic metadata being readable.
++      return undefined
++    }
+   }
+ 
+   private diskState(): string {
+diff --git a/packages/boot/plugin-manager/src/types.ts b/packages/boot/plugin-manager/src/types.ts
+index 4cd9d9b..03e3f0c 100644
+--- a/packages/boot/plugin-manager/src/types.ts
++++ b/packages/boot/plugin-manager/src/types.ts
+@@ -257,8 +257,41 @@ export interface PluginChange {
+   readonly reason: 'plugin' | 'bundle' | 'install' | 'remove'
+ }
+ 
++/** Identifies one manager invocation, including time spent waiting for its profile lock. */
++export type PluginOperationId = Branded<'PluginOperationId'>
++
++/** Management facts for diagnostic consumers; recent operations do not establish a crash's cause. */
++export type PluginOperation = {
++  readonly id: PluginOperationId
++  readonly time: string
++  readonly reason: PluginChange['reason']
++  /** Known entry id or parsed registry package name; unrecognized targets and raw specs are omitted. */
++  readonly target: string | null
++  readonly stage: ChangeResult['stage']
++  readonly enabled?: boolean | undefined
++  /** Request-time or resolved package version; absence means unusable or unavailable, never the latest registry version. */
++  readonly version?: string | undefined
++} & (
++  | { readonly phase: 'started' }
++  | {
++    readonly phase: 'settled'
++    readonly application: ChangeResult['application']
++    readonly changed: boolean
++    readonly errorCode?: ManagementError['code'] | undefined
++    readonly restartReason?: RestartReason | undefined
++  }
++  /** An exception escaped the operation result; persisted or applied changes cannot be inferred. */
++  | { readonly phase: 'unknown' }
++)
++
+ declare module '@deepseek-ai/cordis' {
+   interface Events {
++    /**
++     * One manager invocation started or ended; subscribers run independently without delaying management.
++     * @mode parallel
++     * @param operation - Correlated operation facts; a start without an end has an unknown outcome.
++     */
++    'plugin-manager/operation'(operation: PluginOperation): void | Promise<void>
+     /**
+      * The profile's plugins, bundles, or composition changed: a manager
+      * operation completed. A patch generation applied outside the manager,
+diff --git a/packages/boot/plugin-manager/tests/diagnostic.spec.ts b/packages/boot/plugin-manager/tests/diagnostic.spec.ts
+new file mode 100644
+index 0000000..cbb697d
+--- /dev/null
++++ b/packages/boot/plugin-manager/tests/diagnostic.spec.ts
+@@ -0,0 +1,34 @@
++import { expect, it } from 'vitest'
++import { parsePluginOperationRecord } from '../src/diagnostic.ts'
++
++const input = {
++  runId: 'c254ab28-97c9-4382-95e6-2db9c66f98c8', transportDropped: 0,
++  operation: { id: 'c254ab28-97c9-4382-95e6-2db9c66f98c9', time: '2026-10-19T00:00:00.000Z',
++    reason: 'plugin', phase: 'settled', target: 'managed', stage: 'enable', changed: true, application: 'restart-required' },
++}
++
++it('keeps only diagnostic fields at both record levels', () => {
++  expect(parsePluginOperationRecord({ ...input, credential: 'secret', operation: {
++    ...input.operation, diagnostic: 'raw secret output', packageResult: { output: 'raw output' },
++  } })).toEqual(input)
++})
++
++it('rejects unsupported phases, oversized identifiers and invalid result fields', () => {
++  for (const patch of [{ phase: 'future' }, { id: 'invalid' }, { target: 'x'.repeat(257) },
++    { time: 'not a time' }, { time: `2026-10-19T00:00:00.${'1'.repeat(1000)}Z` }, { changed: 'yes' }, { application: 'unknown-success' }, { errorCode: 'raw-message' }]) {
++    expect(parsePluginOperationRecord({ ...input, operation: { ...input.operation, ...patch } })).toBeUndefined()
++  }
++  expect(parsePluginOperationRecord({ ...input, transportDropped: -1 })).toBeUndefined()
++  expect(parsePluginOperationRecord({ ...input, runId: '' })).toBeUndefined()
++})
++
++it('retains an observed version before an operation settles', () => {
++  const started = { ...input, operation: { ...input.operation, phase: 'started', version: '1.2.3' } }
++  expect(parsePluginOperationRecord(started)?.operation).toMatchObject({ phase: 'started', version: '1.2.3' })
++  expect(parsePluginOperationRecord({ ...started, operation: { ...started.operation, version: 'x'.repeat(129) } })).toBeUndefined()
++})
++
++it('retains compatibility refusals in settled operation records', () => {
++  const record = { ...input, operation: { ...input.operation, application: 'failed', changed: false, errorCode: 'incompatible-version' } }
++  expect(parsePluginOperationRecord(record)).toEqual(record)
++})
+diff --git a/packages/boot/plugin-manager/tests/manager.spec.ts b/packages/boot/plugin-manager/tests/manager.spec.ts
+index da58379..606a698 100644
+--- a/packages/boot/plugin-manager/tests/manager.spec.ts
++++ b/packages/boot/plugin-manager/tests/manager.spec.ts
+@@ -15,7 +15,7 @@ import {
+   reconcileProfilePatches, OPTIONAL_BUNDLES, OFFICIAL_ON_DEMAND_CATALOG, PluginPackages, readPluginMeta, getDshRuntimeVersion,
+   type ProfileContext, type RuntimeResolution,
+ } from '@deepseek-ai/dsh-app-boot'
+-import PluginManager, { type Config, type PluginChange, type PluginInstallLogChunk, type PluginInstallProgress, type PluginInstallRequestId } from '../src/index.ts'
++import PluginManager, { type Config, type PluginChange, type PluginOperation, type PluginEntryId, type PluginInstallLogChunk, type PluginInstallProgress, type PluginInstallRequestId } from '../src/index.ts'
+ import Hmr from '@deepseek-ai/dsh-hmr'
+ import Timer from '@deepseek-ai/cordis-plugin-timer'
+ import type { PatchOptions } from '@deepseek-ai/cordis-plugin-include'
+@@ -1685,3 +1685,128 @@ it.each(['absent', 'bundle', 'not-bundle', 'unreadable'])('keeps a missing sourc
+   expect((await manager.listBundles()).find(item => item.name === name)?.error?.diagnostic).toContain('restore the checkout')
+   expect((await manager.listBundles()).find(item => item.name === name)?.installTarget).toBeUndefined()
+ })
++
++it('correlates diagnostic operation starts with persisted toggle results', async () => {
++  const { manager, ctx, dir } = await fixture('startup')
++  const facts: PluginOperation[] = []
++  ctx.on('plugin-manager/operation', (event) => { facts.push(event) })
++  await manager.setBundleEnabled('extra', false)
++  expect(readProfileManifest('test', dir).dsh?.profile?.bundles).not.toContain('extra')
++  expect(facts).toHaveLength(2)
++  expect(facts[0]).toMatchObject({ phase: 'started', reason: 'bundle', target: 'extra', enabled: false, version: '1.0.0' })
++  expect(facts[1]).toMatchObject({ id: facts[0]!.id, phase: 'settled', changed: true, application: 'restart-required', version: '1.0.0' })
++  await manager.setBundleEnabled('extra', true)
++  expect(facts[2]!.id).not.toBe(facts[0]!.id)
++})
++
++it.each(['{', ...[null, 12, {}, 'x'.repeat(129)].map(version => JSON.stringify({ version, dsh: { bundle: { patch: './cordis.patch.yml' } } }))])('retains an observed version for a refused removal and leaves damaged metadata unknown: %s', async (manifest) => {
++  const { manager, ctx, dir } = await fixture('startup')
++  const facts: PluginOperation[] = []
++  ctx.on('plugin-manager/operation', (event) => { facts.push(event) })
++  expect(await manager.removeBundle('extra')).toMatchObject({ application: 'failed', error: { code: 'stop-profile' } })
++  expect(facts).toEqual([
++    expect.objectContaining({ phase: 'started', reason: 'remove', version: '1.0.0' }),
++    expect.objectContaining({ phase: 'settled', reason: 'remove', version: '1.0.0', application: 'failed' }),
++  ])
++  writeFileSync(join(dir, 'node_modules', 'extra', 'package.json'), manifest)
++  expect(await manager.setBundleEnabled('extra', false)).toMatchObject({ changed: true, application: 'restart-required' })
++  expect(facts[2]).not.toHaveProperty('version')
++  expect(facts[3]).not.toHaveProperty('version')
++})
++
++it('excludes raw install specs and error diagnostics from operation facts', async () => {
++  const { manager, ctx } = await fixture('startup')
++  const facts: PluginOperation[] = []
++  ctx.on('plugin-manager/operation', (event) => { facts.push(event) })
++  await manager.installBundle('--https://user:secret@example.invalid/private?token=secret')
++  expect(facts).toHaveLength(2)
++  expect(facts[1]).toMatchObject({ phase: 'settled', target: null, application: 'failed', errorCode: 'invalid-spec' })
++  expect(JSON.stringify(facts)).not.toMatch(/secret|example|diagnostic|packageResult/)
++})
++
++it('keeps credential-bearing tarball addresses out of failed installation facts', async () => {
++  const { manager, ctx } = await fixture('startup')
++  const facts: PluginOperation[] = []
++  ctx.on('plugin-manager/operation', (event) => { facts.push(event) })
++  const install = vi.spyOn(operations, 'runProfilePnpm').mockRejectedValue(new Error('private download failed'))
++  onTestFinished(() => { install.mockRestore() })
++  expect(await manager.installBundle('https://user:secret@example.invalid/private/archive.tgz'))
++    .toMatchObject({ application: 'failed' })
++  expect(facts).toHaveLength(2)
++  expect(facts.map(event => event.target)).toEqual([null, null])
++  expect(JSON.stringify(facts)).not.toMatch(/user|secret|example|private|archive/)
++})
++
++it.each(['bundle', 'remove', 'plugin'] as const)('excludes credential-bearing targets from %s diagnostics', async (reason) => {
++  const { manager, ctx } = await fixture('startup')
++  const facts: PluginOperation[] = []
++  ctx.on('plugin-manager/operation', (event) => { facts.push(event) })
++  const target = 'https://user:secret@example.invalid/private?token=secret'
++  if (reason === 'bundle') await manager.setBundleEnabled(target, false)
++  else if (reason === 'remove') await manager.removeBundle(target)
++  else await manager.setPluginEnabled(target as PluginEntryId, false)
++  expect(facts).toHaveLength(2)
++  expect(facts.map(event => event.target)).toEqual([null, null])
++  expect(JSON.stringify(facts)).not.toMatch(/user|secret|example|private/)
++})
++
++it.each(['extra@9.9.9', ' extra', 'extra '])('does not attribute a non-name target %j to an installed bundle', async (target) => {
++  const { manager, ctx } = await fixture('startup')
++  const facts: PluginOperation[] = []
++  ctx.on('plugin-manager/operation', (event) => { facts.push(event) })
++  await manager.setBundleEnabled(target, false)
++  await manager.removeBundle(target)
++  expect(facts).toHaveLength(4)
++  for (const event of facts) {
++    expect(event.target).toBeNull()
++    expect(event).not.toHaveProperty('version')
++  }
++})
++
++it('reports unknown outcomes when profile inspection rejects before a result exists', async () => {
++  const { manager, ctx, dir } = await fixture('startup')
++  const facts: PluginOperation[] = []
++  ctx.on('plugin-manager/operation', (event) => { facts.push(event) })
++  const patch = join(dir, 'cordis.patch.yml')
++  rmSync(patch, { force: true })
++  mkdirSync(patch)
++  await expect(manager.setBundleEnabled('extra', false)).rejects.toThrow()
++  expect(facts.map(event => event.phase)).toEqual(['started', 'unknown'])
++  expect(facts[1]!.id).toBe(facts[0]!.id)
++  expect(facts[1]).not.toHaveProperty('changed')
++})
++
++it.each(['throw', 'reject'])('delivers diagnostics to later subscribers when an earlier subscriber fails: %s', async (failure) => {
++  const { manager, ctx, dir } = await fixture('startup')
++  const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
++  onTestFinished(() => { errors.mockRestore() })
++  ctx.on('plugin-manager/operation', () => {
++    if (failure === 'reject') return Promise.reject(new Error('diagnostic sink unavailable'))
++    throw new Error('diagnostic sink unavailable')
++  })
++  const facts: PluginOperation[] = []
++  ctx.on('plugin-manager/operation', (event) => { facts.push(event) })
++  expect(await manager.setBundleEnabled('extra', false)).toMatchObject({ changed: true, application: 'restart-required' })
++  expect(readProfileManifest('test', dir).dsh?.profile?.bundles).not.toContain('extra')
++  expect(facts.map(event => event.phase)).toEqual(['started', 'settled'])
++  await vi.waitFor(() => { expect(errors).toHaveBeenCalledWith('dsh plugin-manager: operation diagnostic delivery failed') })
++})
++
++
++it('projects exact version-exemption identities without retaining invalid requests', async () => {
++  const { manager, ctx } = await fixture('startup')
++  const facts: PluginOperation[] = []
++  ctx.on('plugin-manager/operation', (event) => { facts.push(event) })
++  const runtime = getDshRuntimeVersion()
++  await manager.setVersionExemption('extra@1.0.0', runtime, true, true)
++  await manager.setVersionExemption('extra@1.0.0', runtime, false)
++  expect(facts.map(({ phase, target, version }) => ({ phase, target, version }))).toEqual([
++    { phase: 'started', target: 'extra', version: '1.0.0' },
++    { phase: 'settled', target: 'extra', version: '1.0.0' },
++    { phase: 'started', target: 'extra', version: '1.0.0' },
++    { phase: 'settled', target: 'extra', version: '1.0.0' },
++  ])
++  await manager.setVersionExemption('https://user:secret@example.invalid/private', runtime, false)
++  expect(facts.slice(-2).map(record => record.target)).toEqual([null, null])
++  expect(JSON.stringify(facts)).not.toContain('secret')
++})
+diff --git a/packages/client/ui-settings-general/src/client/ScnetSettingsRow.tsx b/packages/client/ui-settings-general/src/client/ScnetSettingsRow.tsx
+index 071a708..e431b47 100644
+--- a/packages/client/ui-settings-general/src/client/ScnetSettingsRow.tsx
++++ b/packages/client/ui-settings-general/src/client/ScnetSettingsRow.tsx
+@@ -23,7 +23,7 @@ export function ScnetSettingsRow({ t }: Props) {
+   useEffect(() => {
+     if (bridge === undefined) return
+     let live = true
+-    void bridge.status().then(value => {
++    void bridge.status().then((value) => {
+       if (live) setSnapshot(value)
+     }, () => {
+       if (live) setFailed(true)
+diff --git a/packages/extensions/cordis-client-runner/src/client/slot-catalog.ts b/packages/extensions/cordis-client-runner/src/client/slot-catalog.ts
+index 1847635..8d780f0 100644
+--- a/packages/extensions/cordis-client-runner/src/client/slot-catalog.ts
++++ b/packages/extensions/cordis-client-runner/src/client/slot-catalog.ts
+@@ -2946,6 +2946,8 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
+       'client-ui-permission-presets PermissionRow id \'permission\'',
+       'client-ui-settings-general DeveloperToolsRow id \'developer-tools\'',
+       'client-ui-settings-general CurrentVersionRow id \'current-version\'',
++      'client-ui-settings-general DesktopUpdateSettingsRow id \'desktop-update\'',
++      'client-ui-settings-general ScnetSettingsRow id \'scnet\'',
+       'client-ui-settings-session-log UploadRow',
+       'client-ui-shortcuts ShortcutsRow id \'shortcuts\'',
+       'client-ui-theme AppearanceRow id \'appearance\'',
+@@ -4618,10 +4620,8 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
+     hookContext: '',
+     slotInject: '',
+     declaredBy: 'an entry in \'sidebar\' (client-ui-sidebar), so it exists while that entry is mounted',
+-    occupants: [
+-      'client-ui-settings-general DesktopUpdateBadge',
+-    ],
+-    replaceRisk: 'shadows-shipped-ui',
++    occupants: [],
++    replaceRisk: 'none',
+     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'sidebar.toggle.badge\', () => ctx.slots.register(\n      { name: \'sidebar.toggle.badge\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
+     source: 'packages/client/ui-sidebar/src/client/contract/slots.ts:20',
+   },
+diff --git a/packages/extensions/tool-cordis/src/api-catalog.ts b/packages/extensions/tool-cordis/src/api-catalog.ts
+index 03fdcaa..765dac7 100644
+--- a/packages/extensions/tool-cordis/src/api-catalog.ts
++++ b/packages/extensions/tool-cordis/src/api-catalog.ts
+@@ -4405,6 +4405,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
+     description: 'An installation moved between its Host phases. `installing` is announced once per registry the installation asks, with the attempt\'s registry and position; `cancelling` and `applying` once.',
+     parameters: [{ name: 'progress', description: 'the installation\'s request id and phase, with the attempt while installing.' }],
+   },
++  {
++    name: 'plugin-manager/operation',
++    mode: 'parallel',
++    signature: '\'plugin-manager/operation\'(operation: PluginOperation): void | Promise<void>',
++    summary: 'One manager invocation started or ended; subscribers run independently without delaying management.',
++    description: 'One manager invocation started or ended; subscribers run independently without delaying management.',
++    parameters: [{ name: 'operation', description: 'Correlated operation facts; a start without an end has an unknown outcome.' }],
++  },
+   {
+     name: 'plugin-market/changed',
+     mode: 'emit',
+@@ -6433,6 +6441,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
+     name: 'PluginLocalizedMeta',
+     declaration: 'export interface PluginLocalizedMeta {\n    readonly title?: LocalizedText;\n    readonly description?: LocalizedText;\n    readonly icon?: string;\n    readonly error?: string;\n}',
+   },
++  {
++    name: 'PluginOperation',
++    declaration: 'export type PluginOperation = {\n    readonly id: PluginOperationId;\n    readonly time: string;\n    readonly reason: PluginChange[\'reason\'];\n    readonly target: string | null;\n    readonly stage: ChangeResult[\'stage\'];\n    readonly enabled?: boolean | undefined;\n    readonly version?: string | undefined;\n} & ({\n    readonly phase: \'started\';\n} | {\n    readonly phase: \'settled\';\n    readonly application: ChangeResult[\'application\'];\n    readonly changed: boolean;\n    readonly errorCode?: ManagementError[\'code\'] | undefined;\n    readonly restartReason?: RestartReason | undefined;\n} | {\n    readonly phase: \'unknown\';\n});',
++  },
++  {
++    name: 'PluginOperationId',
++    declaration: 'export type PluginOperationId = Branded<\'PluginOperationId\'>;',
++  },
+   {
+     name: 'PluginOptions',
+     declaration: 'export type PluginOptions = Readonly<Record<string, PluginOptionValue>>;',
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index d6df9aa..081a62b 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -679,6 +679,12 @@ importers:
+         specifier: ^8.21.3
+         version: 8.21.3
+     devDependencies:
++      zod:
++        specifier: 4.4.3
++        version: 4.4.3
++      '@deepseek-ai/dsh-plugin-manager':
++        specifier: workspace:*
++        version: link:../../packages/boot/plugin-manager
+       '@deepseek-ai/dsh-app-boot':
+         specifier: workspace:*
+         version: link:../../packages/boot/app-boot
+@@ -772,6 +778,9 @@ importers:
+ 
+   apps/desktop-host:
+     dependencies:
++      '@deepseek-ai/dsh-plugin-manager':
++        specifier: workspace:*
++        version: link:../../packages/boot/plugin-manager
+       '@deepseek-ai/cordis':
+         specifier: workspace:~
+         version: link:../../vendor/cordis
+diff --git a/scripts/gen-cordis-catalog.ts b/scripts/gen-cordis-catalog.ts
+index ebd7527..99e417a 100644
+--- a/scripts/gen-cordis-catalog.ts
++++ b/scripts/gen-cordis-catalog.ts
+@@ -317,6 +317,7 @@ export const LINK_MAP: Readonly<Record<string, string>> = {
+   PluginInstallRequestId: 'boot.md',
+   PluginSpecInspection: 'boot.md',
+   PluginChange: 'boot.md',
++  PluginOperation: 'boot.md',
+   PluginInstallLogChunk: 'boot.md',
+   PluginInstallProgress: 'boot.md',
+   PluginRegistries: 'boot.md',
+diff --git a/scripts/verify-repository-references.spec.ts b/scripts/verify-repository-references.spec.ts
+index cb259bd..b1638f5 100644
+--- a/scripts/verify-repository-references.spec.ts
++++ b/scripts/verify-repository-references.spec.ts
+@@ -72,6 +72,21 @@ describe('unique object-name prefix search', () => {
+ })
+ 
+ describe('maintained repository reference policy', () => {
++  it('distinguishes uv.lock integers from quoted references without exempting source prose', () => {
++    const integer = String(6_344_383)
++    const commits = new Set([integer])
++    const artifact = `{ url = "https://files.pythonhosted.org/archive.whl", size = ${integer}, upload-time = "2026-07-01T00:00:00Z" }`
++    expect(findRepositoryReferences('python/sdk/uv.lock', artifact, commits)).toEqual([])
++    expect(findRepositoryReferences('uv.lock', `size = ${integer}`, commits)).toEqual([])
++    for (const source of [
++      `source = { git = "https://example.invalid/repo?rev=${integer}" }`,
++      `name = "package, size = ${integer},"`,
++      `# size = ${integer}`,
++      `revision = "${integer}"`,
++    ]) expect(findRepositoryReferences('python/sdk/uv.lock', source, commits)).toHaveLength(1)
++    expect(findRepositoryReferences('source.md', artifact, commits)).toHaveLength(1)
++  })
++
+   it('permits only the independent kit repository and its source URLs', () => {
+     for (const suffix of ['', '.git', '/tree/main/packages/entry']) {
+       expect(findRepositoryReferences('package.json', `${organizationUrl}/libreoffice-kit${suffix}`, new Set())).toEqual([])
+diff --git a/scripts/verify-repository-references.ts b/scripts/verify-repository-references.ts
+index 8e7dae8..c9da151 100644
+--- a/scripts/verify-repository-references.ts
++++ b/scripts/verify-repository-references.ts
+@@ -31,12 +31,29 @@ function isMaintained(file: string): boolean {
+   return !excludedPrefixes.some(prefix => file.startsWith(prefix))
+ }
+ 
++/** Bare TOML integers in uv.lock are metadata; quoted revisions and references still count. */
++function isUvLockInteger(file: string, line: string, offset: number, value: string): boolean {
++  if (!/(^|\/)uv\.lock$/.test(file) || !/^\d+$/.test(value)) return false
++  const prefix = line.slice(0, offset)
++  let quote: string | undefined
++  let escaped = false
++  for (const character of prefix) {
++    if (escaped) { escaped = false; continue }
++    if (quote === '"' && character === '\\') { escaped = true; continue }
++    if (character === quote) quote = undefined
++    else if (quote === undefined && (character === '"' || character === "'")) quote = character
++    else if (quote === undefined && character === '#') return false
++  }
++  return quote === undefined && /(?:^|[,{])\s*[\w-]+\s*=\s*$/.test(prefix)
++    && /^\s*(?:[,}]|$)/.test(line.slice(offset + value.length))
++}
++
+ /**
+  * Inspect a maintained source file against known commit identifiers.
+  * @param file - Repository-relative path used in diagnostics and exclusions.
+  * @param source - File text or a symlink's stored target.
+  * @param commits - Lowercase, unambiguous full or abbreviated commit identifiers.
+- * @returns One finding per line and reference kind; digests and other Git object types are accepted.
++ * @returns One finding per line and kind; digests, other Git object types and bare uv.lock integers are accepted.
+  */
+ export function findRepositoryReferences(
+   file: string,
+@@ -49,7 +66,8 @@ export function findRepositoryReferences(
+     if (organizationUrl.test(canonicalReferenceText(line).replace(kitRepositoryUrl, ''))) {
+       references.push({ file, line: index + 1, kind: 'organization-url' })
+     }
+-    if ([...line.matchAll(commitCandidate)].some(match => commits.has(match[0].toLowerCase()))) {
++    if ([...line.matchAll(commitCandidate)].some(match => commits.has(match[0].toLowerCase())
++      && !isUvLockInteger(file, line, match.index, match[0]))) {
+       references.push({ file, line: index + 1, kind: 'commit-hash' })
+     }
+   }
+diff --git a/tsconfig.base.json b/tsconfig.base.json
+index f083f9b..3365f12 100644
+--- a/tsconfig.base.json
++++ b/tsconfig.base.json
+@@ -228,6 +228,7 @@
+       "@deepseek-ai/dsh-host-frontend-static": ["./packages/host/frontend-static/src"],
+       "@deepseek-ai/dsh-plugin-manager": ["./packages/boot/plugin-manager/src"],
+       "@deepseek-ai/dsh-plugin-manager/types": ["./packages/boot/plugin-manager/src/types.ts"],
++      "@deepseek-ai/dsh-plugin-manager/diagnostic": ["./packages/boot/plugin-manager/src/diagnostic.ts"],
+       "@deepseek-ai/dsh-plugin-manager/registry": ["./packages/boot/plugin-manager/src/registry.ts"],
+       "@deepseek-ai/dsh-plugin-manager/operations": ["./packages/boot/plugin-manager/src/operations.ts"],
+       "@deepseek-ai/dsh-plugin-manager/tools": ["./packages/boot/plugin-manager/src/tools.ts"],
+diff --git a/docs/config-catalog.md b/docs/config-catalog.md
+index 875563ce39..ff4dc619f6 100644
+--- a/docs/config-catalog.md
++++ b/docs/config-catalog.md
+@@ -2413,7 +2413,7 @@ export interface PlanModeConfig {
+ ## `@deepseek-ai/dsh-plugin-manager`
+ 
+ - `inject`: `loader` · `profileContext`
+-- `source`: [`packages/boot/plugin-manager/src/index.ts:42`](../packages/boot/plugin-manager/src/index.ts)
++- `source`: [`packages/boot/plugin-manager/src/index.ts:43`](../packages/boot/plugin-manager/src/index.ts)
+ 
+ ```ts config-catalog
+ /** The pnpm executable, registries, and limits for diagnostics, lookups and connection checks. */
+diff --git a/docs/config-catalog.zh.md b/docs/config-catalog.zh.md
+index 52b98e69d8..8e9af225f1 100644
+--- a/docs/config-catalog.zh.md
++++ b/docs/config-catalog.zh.md
+@@ -2415,7 +2415,7 @@ export interface PlanModeConfig {
+ ## `@deepseek-ai/dsh-plugin-manager`
+ 
+ - `inject`: `loader` · `profileContext`
+-- `source`: [`packages/boot/plugin-manager/src/index.ts:42`](../packages/boot/plugin-manager/src/index.ts)
++- `source`: [`packages/boot/plugin-manager/src/index.ts:43`](../packages/boot/plugin-manager/src/index.ts)
+ 
+ ```ts config-catalog
+ /** The pnpm executable, registries, and limits for diagnostics, lookups and connection checks. */

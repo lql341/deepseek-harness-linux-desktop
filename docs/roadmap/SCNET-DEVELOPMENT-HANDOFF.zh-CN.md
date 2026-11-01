@@ -10,14 +10,14 @@
 | --- | --- |
 | 上游基线 | `dsh-v0.2.1-rc.5`，由 `ci/upstream-base-tag` 读取 |
 | Bundle | `dsh-scnet@0.6.13`，连接器词汇版本 `0.1.0` |
-| 最近合并的桌面回移 | PR #5，main 提交 `7a96e872bd2807a3dae72a7485c91d5289a4081f` |
-| PR 验证 | Run `41273560891`：八组/254 项测试、全仓类型、构建、deb 审计和安装后 Xvfb 会话通过 |
+| 最近合并的桌面回移 | PR #6，main 提交 `c23d3cb6c849307d6eaaa2640016ec9b26436c8c` |
+| PR 验证 | Run `41278271808`：十组/268 项测试、全仓类型、构建、deb 审计和安装后 Xvfb 会话通过 |
 | main 验证 | Run `41274912984`：通过 |
 | 已验证公开预发布 | `v0.2.1-rc.5-linux.1`，构建提交 `b860c05d4f771aa105290394e5d05fd2311e571f` |
 | 发布验证 | Run `41269979995`：通过 |
 | 已发 deb SHA-256 | `8ee9616ee40db44330c4b77dbae24173d0a48665a3478d075ff7c168422888c6` |
 
-公开预发布不包含补丁 0007/0008。补丁 0008 修复配置 SCNet，需要新的候选包/CI 证据，旧运行不能验证它。把本快照当作最新状态前必须查询 GitHub，见[发布页](https://github.com/lql341/deepseek-harness-linux-desktop/releases/tag/v0.2.1-rc.5-linux.1)和 [Actions](https://github.com/lql341/deepseek-harness-linux-desktop/actions)。
+公开预发布不包含补丁 0007/0008/0009。补丁 0008 修复配置 SCNet，已通过上述 PR 验证。补丁 0009 为新的本地插件操作历史候选版本，完整 CI 和随包管理器/Worker 验收仍待完成。把本快照当作最新状态前必须查询 GitHub，见[发布页](https://github.com/lql341/deepseek-harness-linux-desktop/releases/tag/v0.2.1-rc.5-linux.1)和 [Actions](https://github.com/lql341/deepseek-harness-linux-desktop/actions)。
 
 ## 已实现行为
 

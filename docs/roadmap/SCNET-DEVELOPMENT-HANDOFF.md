@@ -10,14 +10,14 @@ Updated 2026-11-01. Status: `in progress`. Repositories: Linux Desktop and `dsh-
 | --- | --- |
 | Upstream base | `dsh-v0.2.1-rc.5`, read from `ci/upstream-base-tag` |
 | Bundle | `dsh-scnet@0.6.13`; connector vocabulary `0.1.0` |
-| Last merged desktop backport | PR #5, main commit `7a96e872bd2807a3dae72a7485c91d5289a4081f` |
-| PR verification | Run `41273560891`: eight suites/254 tests, full typecheck, build, deb audit and installed Xvfb session passed |
+| Last merged desktop backport | PR #6, main commit `c23d3cb6c849307d6eaaa2640016ec9b26436c8c` |
+| PR verification | Run `41278271808`: ten suites/268 tests, full typecheck, build, deb audit and installed Xvfb session passed |
 | Main verification | Run `41274912984`: passed |
 | Verified public prerelease | `v0.2.1-rc.5-linux.1`, built from `b860c05d4f771aa105290394e5d05fd2311e571f` |
 | Publish verification | Run `41269979995`: passed |
 | Released deb SHA-256 | `8ee9616ee40db44330c4b77dbae24173d0a48665a3478d075ff7c168422888c6` |
 
-The published prerelease does not contain patches 0007/0008. Patch 0008 repairs Configure SCNet and requires new candidate/CI evidence; earlier runs do not validate it. Query GitHub before treating this snapshot as latest. Use the [release page](https://github.com/lql341/deepseek-harness-linux-desktop/releases/tag/v0.2.1-rc.5-linux.1) and [Actions](https://github.com/lql341/deepseek-harness-linux-desktop/actions).
+The published prerelease does not contain patches 0007/0008/0009. Patch 0008 repairs Configure SCNet and passed the PR verification above. Patch 0009 adds local plugin operation history as a new candidate; its full CI and packaged producer/Worker acceptance remain pending. Query GitHub before treating this snapshot as latest. Use the [release page](https://github.com/lql341/deepseek-harness-linux-desktop/releases/tag/v0.2.1-rc.5-linux.1) and [Actions](https://github.com/lql341/deepseek-harness-linux-desktop/actions).
 
 ## Implemented behavior
 
