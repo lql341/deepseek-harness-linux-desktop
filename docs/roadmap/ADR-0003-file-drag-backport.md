@@ -2,7 +2,7 @@ English | [中文](ADR-0003-file-drag-backport.zh-CN.md)
 
 # ADR-0003: Backport native file drag as a staged Linux feature
 
-- Status: `proposed`
+- Status: `superseded` — native file drag ships in the pinned `dsh-v0.2.2-rc.1` base, so no backport is needed
 - Date: 2026-11-01
 - Owner: Linux Desktop maintainers
 - Scope: `apps/desktop`, `apps/desktop-host`, `packages/util/file-drag`, `packages/client/ui-file-drag`, packaging and acceptance
@@ -15,7 +15,7 @@ If the spike shows `startDrag` works on X11 and either works or has an honest fa
 
 ## Context
 
-The pinned base `dsh-v0.2.1-rc.5` has no native file drag. Upstream `dsh-v0.2.2-alpha.2` adds it across four areas:
+This decision targeted the previous base `dsh-v0.2.1-rc.5`, which had no native file drag. The pinned base is now `dsh-v0.2.2-rc.1`, where the upstream work described below is already present, so the backport stages are no longer work items; the drag gesture itself still needs a real-desktop pass. Upstream added it across four areas:
 
 | Area | Files in the development line | Lines |
 | --- | --- | --- |

@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs'
 import { dirname, basename, resolve, relative, extname } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -11,6 +12,15 @@ const slug = text => text.toLowerCase().replace(/<[^>]+>/g, '').replace(/[^\p{L}
 const executableBlocks = text => [...text.matchAll(/^```([^\n]*)\n([\s\S]*?)^```\s*$/gm)]
   .filter(match => match[1].trim() !== 'text').map(match => match[1] + '\n' + match[2])
 const facts = text => [...new Set(text.match(/\b(?:dsh-v|v)?\d+\.\d+\.\d+(?:[-.][\w.]+)*|\b[a-f0-9]{40,64}\b|\b\d{10,}\b/g) ?? [])].sort()
+
+/** List ignored paths so a local upstream checkout is not mistaken for repository documentation. */
+export function gitIgnoredPaths(root) {
+  try {
+    const output = execFileSync('git', ['-C', root, 'ls-files', '--others', '--ignored', '--exclude-standard', '--directory'], { encoding: 'utf8' })
+    return new Set(output.split('\n').filter(Boolean).map(line => line.replace(/\/$/u, '')))
+  }
+  catch { return new Set() }
+}
 
 /** Check the repository-owned Markdown inventory; throws on every detected inconsistency. */
 export function checkDocs(root) {
@@ -27,13 +37,16 @@ export function checkDocs(root) {
     }
     if (/\.zh(?:-CN)?\.md$/.test(pair.en) || !/\.zh(?:-CN)?\.md$/.test(pair.zh)) fail(`default must be English: ${pair.en}`)
   }
+  // A local `apply.sh` checkout and other ignored build output are not repository Markdown.
+  const ignored = gitIgnoredPaths(root)
   const walk = directory => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       if (['.git', 'node_modules'].includes(entry.name)) continue
       const path = resolve(directory, entry.name)
+      const name = relative(root, path).replaceAll('\\', '/')
+      if (ignored.has(name)) continue
       if (entry.isDirectory()) walk(path)
       else if (entry.isFile() && entry.name.endsWith('.md')) {
-        const name = relative(root, path).replaceAll('\\', '/')
         if (!owned.has(name)) fail(`unpaired Markdown: ${name}`)
       }
     }

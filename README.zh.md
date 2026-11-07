@@ -4,11 +4,11 @@
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的非官方 Linux x64 桌面移植。本仓库维护按序应用的补丁，以及 Linux 构建、验证和发布工具。项目与 DeepSeek 无隶属关系，未获其背书。
 
-默认上游基线由 [ci/upstream-base-tag](ci/upstream-base-tag) 提供。本文记录的验证基线是 **`dsh-v0.2.1-rc.5`**。Linux 包固定携带 **`dsh-scnet@0.6.13`**。请在 [Actions](https://github.com/lql341/deepseek-harness-linux-desktop/actions) 查看具体提交的检查结果。
+默认上游基线由 [ci/upstream-base-tag](ci/upstream-base-tag) 提供。本文记录的验证基线是 **`dsh-v0.2.2-rc.1`**。Linux 包固定携带 **`dsh-scnet@0.6.13`**。请在 [Actions](https://github.com/lql341/deepseek-harness-linux-desktop/actions) 查看具体提交的检查结果。
 
 ## 安装已发布的包
 
-当前预发布版是 [v0.2.1-rc.5-linux.2](https://github.com/lql341/deepseek-harness-linux-desktop/releases/tag/v0.2.1-rc.5-linux.2)，第一个由完整补丁系列构建、也是第一个带签名清单的版本。可下载 deb、`SHA256SUMS` 和 `SHA256SUMS.sig`，或使用下方安装器。它校验 checksum 和 amd64 架构后，调用 apt 重新安装；安装主机需要 curl、Node、sha256sum、dpkg 和 sudo/apt。可用 `node ci/verify-release-signature.mjs --manifest SHA256SUMS` 校验签名清单。
+当前预发布版是 [v0.2.1-rc.5-linux.2](https://github.com/lql341/deepseek-harness-linux-desktop/releases/tag/v0.2.1-rc.5-linux.2)。`patches/` 中的 `dsh-v0.2.2-rc.1` 系列是下一个基线，发布运行变绿后会作为独立预发布版发布。可下载 deb、`SHA256SUMS` 和 `SHA256SUMS.sig`，或使用下方安装器。它校验 checksum 和 amd64 架构后，调用 apt 重新安装；安装主机需要 curl、Node、sha256sum、dpkg 和 sudo/apt。可用 `node ci/verify-release-signature.mjs --manifest SHA256SUMS` 校验签名清单。
 
 ```sh
 git clone https://github.com/lql341/deepseek-harness-linux-desktop.git
@@ -16,7 +16,7 @@ cd deepseek-harness-linux-desktop
 bash ci/install-latest-linux.sh --tag v0.2.1-rc.5-linux.2
 ```
 
-不传 `--tag` 时，脚本使用 GitHub 的最新非预发布版本接口，因此可能选到较旧的稳定版。main 源码、CI 产物和公开 release 是不同交付物。上述 release 包含补丁 0001 到 0011，包括 SCNet 配置修复、插件操作历史和签名更新链。
+不传 `--tag` 时，脚本使用 GitHub 的最新非预发布版本接口，因此可能选到较旧的稳定版。main 源码、CI 产物和公开 release 是不同交付物。`patches/` 中的系列已重新基于 `dsh-v0.2.2-rc.1`，收敛为五个补丁：Linux 移植、更新门禁、SCNet 配置动作、设置页拥有的更新与 SCNet 动作，以及签名发布信任链。插件操作历史、崩溃恢复菜单和更新视图在该基线中已由上游提供，不再作为回移携带。
 
 ## 桌面能力
 
@@ -39,7 +39,7 @@ bash ci/install-latest-linux.sh --tag v0.2.1-rc.5-linux.2
 
 ## 从源码构建
 
-构建主机必须是 **Linux x86_64**，具备 Node `^22.19.0 || >=24.0.0`、pnpm `11.7.0`、Git、构建所需网络和至少 15 GB 空闲磁盘。上游工作区可能通过包管理器管理机制选择其自身固定的 pnpm。本补丁线不支持在 macOS 上交叉构建该 Linux 目标，也不发布 `linux-arm64`。
+构建主机必须是 **Linux x86_64**，具备 Node `>=24.9.0`、pnpm `11.28.5`、Git、构建所需网络和至少 15 GB 空闲磁盘。上游工作区可能通过包管理器管理机制选择其自身固定的 pnpm。本补丁线不支持在 macOS 上交叉构建该 Linux 目标，也不发布 `linux-arm64`。
 
 ```sh
 export PATCH_REPO="$HOME/src/deepseek-harness-linux-desktop"
@@ -61,7 +61,7 @@ pnpm --dir apps/desktop run package:linux:x64
 
 PR 和相关 main push 会应用补丁、检查全仓类型、运行定向桌面回归、构建 deb、审计 SCNet 内容，再在 Ubuntu 24.04 的 Xvfb 中安装并启动同一个候选包。草稿 PR 不启动该 job，同 PR 的新推送会取消正在运行的旧 job，因此未完成的工作不会为已被替换的提交发送失败邮件。普通第二次启动的窗口断言在无头会话中跳过，需要真实桌面验证。已发布字节、升级、AppArmor、Wayland 和 Debian 13 是单独的手动 job；跳过不等于平台检查通过。
 
-[PR #5](https://github.com/lql341/deepseek-harness-linux-desktop/pull/5) 在 [Run 41273560891](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41273560891) 通过 254 项桌面回归、全仓类型检查、打包和安装会话检查；合并后的 main 也在 [Run 41274912984](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41274912984) 通过。随后 SCNet 配置修复和双语文档在 [Run 41278271808](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41278271808) 通过 268 项桌面测试，并通过[文档 Run 41278271805](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41278271805)。插件操作历史是新的候选版本，仍需自己的 CI 证据。
+[PR #5](https://github.com/lql341/deepseek-harness-linux-desktop/pull/5) 在 [Run 41273560891](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41273560891) 通过 254 项桌面回归、全仓类型检查、打包和安装会话检查；合并后的 main 也在 [Run 41274912984](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41274912984) 通过。随后 SCNet 配置修复和双语文档在 [Run 41278271808](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41278271808) 通过 268 项桌面测试，并通过[文档 Run 41278271805](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41278271805)。`dsh-v0.2.2-rc.1` 系列需要自己的发布运行变绿才能成为 release；目前记录的证据见[桌面功能跟进](docs/DESKTOP-FOLLOWUP.zh-CN.md)。
 
 发布由 [publish-linux-desktop.yml](.github/workflows/publish-linux-desktop.yml) 手动触发：固定构建提交、记录暂存区补丁树、审计并安装构建字节，用发布密钥签名 checksum 清单，然后发布 deb、签名清单、支持策略和 checksum。可用 `node ci/verify-release-signature.mjs --manifest SHA256SUMS` 校验已发布字节。上游同步只创建可审查 PR，不会合并或发布；新的上游补丁冲突会登记为 issue，不再让定时任务失败。见[同步操作](ci/UPSTREAM-SYNC.zh-CN.md)。
 

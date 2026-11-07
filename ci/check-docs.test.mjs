@@ -1,15 +1,20 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { cpSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { checkDocs } from './check-docs.mjs'
+import { checkDocs, gitIgnoredPaths } from './check-docs.mjs'
 
 const source = resolve(fileURLToPath(new URL('..', import.meta.url)))
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'bilingual-docs-'))
-  cpSync(source, root, { recursive: true, filter: path => !relative(source, path).split(sep).some(part => ['.git', 'node_modules'].includes(part)) })
+  const ignored = gitIgnoredPaths(source)
+  cpSync(source, root, {
+    recursive: true,
+    filter: path => !relative(source, path).split(sep).some(part => ['.git', 'node_modules'].includes(part))
+      && !ignored.has(relative(source, path).split(sep).join('/')),
+  })
   t.after(() => rmSync(root, { recursive: true, force: true }))
   return root
 }
@@ -19,6 +24,14 @@ function edit(root, path, before, after) {
   assert.ok(content.includes(before), `missing fixture target: ${before}`)
   writeFileSync(file, content.replace(before, after))
 }
+
+test('ignores build output that git already ignores', t => {
+  const root = fixture(t)
+  mkdirSync(join(root, 'ignored-output'), { recursive: true })
+  writeFileSync(join(root, '.gitignore'), 'ignored.txt\n')
+  writeFileSync(join(root, 'ignored.txt'), '# Ignored\n')
+  assert.doesNotThrow(() => checkDocs(root))
+})
 
 test('the complete repository has paired English defaults and Chinese pages', () => {
   assert.deepEqual(checkDocs(source), { pairs: 17, pages: 34 })

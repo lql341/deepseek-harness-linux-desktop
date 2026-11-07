@@ -10,7 +10,15 @@ Reviewed against upstream `dsh-v0.2.1-rc.5` and development commit `ce7073d51254
 
 `v0.2.1-rc.5-linux.2` is the first release built from the full series and the first signed one; `v0.2.1-rc.5-linux.1` precedes patches 0007 to 0011. Source, CI candidate and release status must be checked separately.
 
-## Implemented in the active source series
+## Base migration to dsh-v0.2.2-rc.1
+
+The pinned base moved from `dsh-v0.2.1-rc.5` to `dsh-v0.2.2-rc.1`, 2623 upstream commits later; `apps/desktop` alone changes 229 files. The series re-applies to that base as five patches (0001 to 0005) and produces patched tree `7fa80b8b0c53456fcb53c8322a114fb4f3a72ca1`; `git apply --3way` of the whole series on the pinned tag reproduces it locally.
+
+The newer base already ships what three earlier patches carried as backports, so they are gone: the plugin operation history (previously patch 0009), the recovery menus and update views (previously patch 0007), and the update-presentation split. What remains is Linux-specific work: the port itself, the update gates, the SCNet setup actions, the settings-owned update and SCNet actions, and the signed release trust path.
+
+Local evidence for this series, recorded before any publish run: full `pnpm run typecheck` passes all five gates; `vitest run apps/desktop packages/client/ui-settings-general` reports 2181 passing tests with two failures that also fail on the unpatched base on this host (`macos-notarization-proxy` and `prepare-runtime-patches`, both environment-dependent); the deb builds as `deepseek-harness-0.2.2-rc.1-linux-amd64.deb` at 290989204 bytes with the Linux dependency set and the `dsh://` desktop entry. A publish run for `v0.2.2-rc.1-linux.1` is the gate that turns this evidence into a release.
+
+## Implemented in the published series
 
 | Patch | Capability | Validation |
 | --- | --- | --- |

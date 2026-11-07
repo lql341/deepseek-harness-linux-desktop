@@ -26,16 +26,16 @@ need git || { echo "错误：缺少 git。" >&2; exit 1; }
 
 if need node; then
   node -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit((a===22&&b>=19)||a>=24?0:1)' \
-    || warn "Node $(node -v) 不在 ^22.19 || >=24 范围内，构建可能失败。"
+    || warn "Node $(node -v) 不在 >=24.9 范围内，构建可能失败。"
 else
-  warn "未找到 node。构建需要 Node ^22.19 || >=24 与 pnpm 11.7.0。"
+  warn "未找到 node。构建需要 Node >=24.9 与 pnpm 11.28.5。"
 fi
 
 if need pnpm; then
   warn_pnpm=$(pnpm --version 2>/dev/null || echo unknown)
-  [ "$warn_pnpm" = "11.7.0" ] || warn "pnpm 版本是 ${warn_pnpm}，仓库声明的是 11.7.0（建议 corepack enable）。"
+  [ "$warn_pnpm" = "11.28.5" ] || warn "pnpm 版本是 ${warn_pnpm}，仓库声明的是 11.28.5（建议 corepack enable）。"
 else
-  warn "未找到 pnpm。建议 corepack enable，或 npm i -g pnpm@11.7.0。"
+  warn "未找到 pnpm。建议 corepack enable，或 npm i -g pnpm@11.28.5。"
 fi
 
 # --- 克隆并切到工作分支 -------------------------------------------------------

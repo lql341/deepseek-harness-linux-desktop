@@ -10,7 +10,15 @@
 
 `v0.2.1-rc.5-linux.2` 是第一个由完整补丁系列构建并签名的版本；`v0.2.1-rc.5-linux.1` 早于补丁 0007 到 0011。
 
-## 当前源码补丁已实现
+## 基线迁移到 dsh-v0.2.2-rc.1
+
+固定基线从 `dsh-v0.2.1-rc.5` 迁到 `dsh-v0.2.2-rc.1`，两者相隔 2623 个上游提交；仅 `apps/desktop` 就改动了 229 个文件。系列以五个补丁（0001 到 0005）重新应用到该基线，产出补丁树 `7fa80b8b0c53456fcb53c8322a114fb4f3a72ca1`；在固定 tag 上对整套系列执行 `git apply --3way` 可在本地复现该树。
+
+新基线已自带原先由三个补丁回移的能力，因此它们被移除：插件操作历史（原 0009）、崩溃恢复菜单与更新视图（原 0007），以及更新呈现的拆分。保留下来的是 Linux 专有工作：移植本体、更新门禁、SCNet 配置动作、设置页拥有的更新与 SCNet 动作，以及签名发布信任链。
+
+本系列在任何发布运行之前的本地证据：完整 `pnpm run typecheck` 五道 gate 全部通过；`vitest run apps/desktop packages/client/ui-settings-general` 通过 2181 项测试，另有 2 项在本机未打补丁的基线上同样失败（`macos-notarization-proxy` 与 `prepare-runtime-patches`，均依赖环境）；deb 构建为 `deepseek-harness-0.2.2-rc.1-linux-amd64.deb`，290989204 字节，包含 Linux 依赖集和 `dsh://` 桌面项。`v0.2.2-rc.1-linux.1` 的发布运行是把这些证据变成 release 的关口。
+
+## 已发布系列中实现
 
 | 补丁 | 能力 | 验证 |
 | --- | --- | --- |

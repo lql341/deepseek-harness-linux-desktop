@@ -6,11 +6,11 @@ This page compares the desktop capabilities of the official macOS release with t
 
 ## Scope and evidence
 
-The official baseline is upstream `dsh-v0.2.1-rc.5`, the release that ships the macOS and Windows desktop shells. The Linux side is the active patch series in `patches/` plus the published `v0.2.1-rc.5-linux.2` package, which is built from that series. The published tree hash matches the current series, so source and release are not separate states. Upstream `dsh-v0.2.2-alpha.2` is the development line, and its features are not part of the official release.
+The official baseline is upstream `dsh-v0.2.2-rc.1`, the release that ships the macOS and Windows desktop shells. The Linux side is the active five-patch series in `patches/`; the published `v0.2.1-rc.5-linux.2` package keeps the previous series and the previous base. Each series is recorded with its own patched tree hash, so source and release states are never mixed.
 
 ## Verdict against the official release
 
-Every desktop-shell capability in `dsh-v0.2.1-rc.5` has a Linux implementation or an explicit platform-specific counterpart, and `v0.2.1-rc.5-linux.2` is built from the same patch tree as the current series (patched tree `0fef55a99edf4a7f857ab0365c98644bce9d7fff`). The rows left in the gap table are outside that release-parity scope by an explicit project decision: platform-intrinsic integrations (Dock, vibrancy, notarization and the official mandatory-update identity), the experimental CUA provider, distribution breadth, and features that exist only in the upstream development line. Interactive confirmation on real desktops is verification work, not missing functionality.
+Every desktop-shell capability in `dsh-v0.2.2-rc.1` has a Linux implementation or an explicit platform-specific counterpart; the active series applies to that base and produces patched tree `7fa80b8b0c53456fcb53c8322a114fb4f3a72ca1`. The rows left in the gap table are outside that release-parity scope by an explicit project decision: platform-intrinsic integrations (Dock, vibrancy, notarization and the official mandatory-update identity), the experimental CUA provider, distribution breadth, and features that exist only in the upstream development line. Interactive confirmation on real desktops is verification work, not missing functionality.
 
 Evidence for each row comes from the pinned upstream tree and the patched tree produced by `apply.sh`. The most useful files are `apps/desktop/src/main.ts`, `apps/desktop/src/windows-layout.ts`, `apps/desktop/src/platform-view.ts`, `apps/desktop/src/update-attention.ts`, `apps/desktop/src/command-management.ts`, `apps/desktop/scripts/electron-builder-config.mjs` and the focused desktop suites the verification workflow runs. A capability is only claimed when a test or a release gate exercises it; typecheck and a copied menu item are not platform evidence.
 
@@ -38,8 +38,8 @@ Evidence for each row comes from the pinned upstream tree and the patched tree p
 | Developer tools | Command+Option+I and a hidden menu item | F12, Ctrl+Shift+I, a visible localized menu entry and native accelerators | Covered by focused keyboard and menu tests |
 | Crash recovery | Reports under the macOS logs directory, with a native dialog | Reports under the userData logs directory, plus retrieval of a saved report from the Settings-owned menu | Real-desktop check of the reveal action and the ten-report retention |
 | Computer use | The dedicated macOS provider uses Accessibility and Screen Recording | No Linux provider exists | Needs X11 and Wayland control, accessibility trees, capture and approval tests |
-| Native file drag and new file actions | Present in the development line, not in the official baseline | Absent from the pinned baseline | Staged backport per [ADR-0003](roadmap/ADR-0003-file-drag-backport.md), starting with a Wayland/X11 spike |
-| Plugin operation history | Present in the development line, not in the official baseline | Shipped in `v0.2.1-rc.5-linux.2`; the publish job audits the packaged manager and report Worker | Real-desktop inspection of a retrieved report |
+| Native file drag and new file actions | Native drag from the desktop shell | Present in the pinned `dsh-v0.2.2-rc.1` base, so the port no longer carries it | [ADR-0003](roadmap/ADR-0003-file-drag-backport.md) records that the staged backport is no longer needed; the drag interaction still needs a real-desktop pass |
+| Plugin operation history | Manager lifecycle events, a bounded journal and an isolated report Worker | Present in the pinned `dsh-v0.2.2-rc.1` base; the publish job audits the packaged manager and report Worker | Real-desktop inspection of a retrieved report |
 
 ## Gaps that need development
 
@@ -47,19 +47,17 @@ Evidence for each row comes from the pinned upstream tree and the patched tree p
 | --- | --- | --- | --- |
 | P1 | Mandatory updates are not enforced | A Linux client identity and a policy service contract, or an explicit exemption | The policy either blocks an outdated client or the exemption is documented and tested |
 | P1 | No real desktop acceptance | Physical or virtual X11 and Wayland sessions | Focus, dragging, resizing, overlays, notifications, tray, deep links and updater prompts are recorded |
-| P2 | File drag and new file actions are missing | Shared file-drag and Host resource APIs from the development line | A drag from the workspace creates a verifiable temporary file and cleans it up |
+| P3 | File drag has no Linux acceptance record | The implementation ships in the pinned base | A drag from the workspace creates a verifiable temporary file and cleans it up on a real desktop |
 | P2 | Computer use is missing | A Linux control and accessibility implementation | Observation and input work under X11 and Wayland with explicit permission refusal and revocation |
 | P2 | Distribution coverage is narrow | Packaging and runtime work per target | Linux arm64 and one non-deb format pass their own installation gates |
 
 ## Development line not in the official release
 
-The official `dsh-v0.2.1-rc.5` baseline is not the newest source. Upstream `dsh-v0.2.2-alpha.2` adds desktop files the port does not carry yet. Treat them as planned backports rather than missing features of the official release.
+The pinned `dsh-v0.2.2-rc.1` baseline is the newest non-alpha source. Upstream development tags continue beyond it, and anything only present there is a planned future migration rather than a missing feature of the current release.
 
 | Development feature | What it adds | Port status |
 | --- | --- | --- |
-| Plugin operation history | Manager lifecycle events, a bounded journal and an isolated report Worker | Shipped in `v0.2.1-rc.5-linux.2` |
-| Native file drag | Verified copy drags scoped to the product main frame and the active Host | Not backported |
-| Update window | A dedicated update window and revised overlay behavior | Partially present through the owner-attached dialogs from patch 0007 |
+| Recovery and update views | Owner-attached dialogs, isolated update views and revised overlay behavior | Present in the pinned base |
 | Locale cache | A cached desktop locale with change notification | Not backported |
 
 The file-drag and operation-history work both depend on shared Host and client APIs, so backporting only the desktop half would produce dead code. Either rebase the port onto a newer non-alpha tag or carry the provider, consumer and lifecycle together.
