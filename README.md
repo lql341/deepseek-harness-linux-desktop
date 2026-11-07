@@ -16,7 +16,7 @@ cd deepseek-harness-linux-desktop
 bash ci/install-latest-linux.sh --tag v0.2.1-rc.5-linux.2
 ```
 
-Without `--tag`, the script uses GitHub's latest non-prerelease endpoint; it may select an older stable release. Source changes on main and CI artifacts are separate from published releases. The series in `patches/` is re-based on `dsh-v0.2.2-rc.1` and reduces to five patches: the Linux port, the update gates, the SCNet setup actions, the settings-owned update and SCNet actions, and the signed release trust path. The plugin operation history, the recovery menus and the update views are upstream in that base and no longer carried as backports.
+Without `--tag`, the script uses GitHub's latest non-prerelease endpoint; it may select an older stable release. Source changes on main and CI artifacts are separate from published releases. The series in `patches/` is re-based on `dsh-v0.2.2-rc.1` and reduces to six patches: the Linux port, the update gates, the SCNet setup actions, the settings-owned update and SCNet actions, the signed release trust path, and the packaged operation-report worker fix. The plugin operation history, the recovery menus and the update views are upstream in that base and no longer carried as backports.
 
 ## Desktop capabilities
 

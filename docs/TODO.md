@@ -27,11 +27,11 @@ The table above describes the published package; its series is archived in git h
 | Item | Value |
 | --- | --- |
 | Pinned base | `dsh-v0.2.2-rc.1` |
-| Patch series | 0001 to 0005 |
+| Patch series | 0001 to 0006 |
 | Patched tree | `7fa80b8b0c53456fcb53c8322a114fb4f3a72ca1` |
 | Next release tag | `v0.2.2-rc.1-linux.1` (pending) |
 
-The active series re-applies the Linux port to the newer base. Five topics remain because the newer base already ships the plugin operation history, the recovery menus and the update views that the previous series carried as backports. A local `apply.sh` plus `git write-tree` reproduces the tree above.
+The active series re-applies the Linux port to the newer base. Six topics remain because the newer base already ships the plugin operation history, the recovery menus and the update views that the previous series carried as backports, and the newest base packs the operation-report worker, which patch 0006 unpacks again before it loads. A local `apply.sh` plus `git write-tree` reproduces the tree above.
 
 ## Open items
 

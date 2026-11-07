@@ -1,0 +1,39 @@
+diff --git a/apps/desktop/src/operation-report-job.ts b/apps/desktop/src/operation-report-job.ts
+index b78259df78..04b7ec4505 100644
+--- a/apps/desktop/src/operation-report-job.ts
++++ b/apps/desktop/src/operation-report-job.ts
+@@ -45,7 +45,10 @@ export async function runOperationReportJob(
+   const terminationDeadline = performance.now() + timeoutMs
+   let worker: Worker
+   try {
+-    worker = new Worker(new URL('./operation-report-worker.js', import.meta.url), {
++    const entry = new URL('./operation-report-worker.js', import.meta.url)
++    // Native Worker loading needs the physical file, independent of Electron's ASAR fs hooks.
++    entry.pathname = entry.pathname.replace(/(^|\/)([^/]+\.asar)(?=\/|$)/u, '$1$2.unpacked')
++    worker = new Worker(entry, {
+       workerData: input,
+       resourceLimits: {
+         maxOldGenerationSizeMb: 32,
+diff --git a/apps/desktop/tests/operation-report-job.spec.ts b/apps/desktop/tests/operation-report-job.spec.ts
+index 82ea02fcd8..3ad90893c6 100644
+--- a/apps/desktop/tests/operation-report-job.spec.ts
++++ b/apps/desktop/tests/operation-report-job.spec.ts
+@@ -8,6 +8,18 @@ afterEach(() => { vi.useRealTimers(); create.mockReset() })
+ const input = { reportPath: 'saved.log', directory: 'history',
+   limits: { bytes: 65536, recordBytes: 4096, records: 100, outputBytes: 65536 }, journal: null }
+ 
++it('loads the worker from the physical file beside a packaged archive', async () => {
++  const worker = Object.assign(new EventEmitter(), { postMessage: vi.fn(), terminate: vi.fn(async () => 1) })
++  create.mockReturnValue(worker)
++  const result = runOperationReportJob(input, { timeoutMs: 500, cancellationGraceMs: 100 }, new AbortController().signal)
++  const entry = create.mock.calls[0]?.[0] as URL
++  expect(entry.pathname).toMatch(/operation-report-worker\.js$/u)
++  expect(entry.pathname).not.toMatch(/\.asar\//u)
++  worker.emit('message', false)
++  worker.emit('exit', 0)
++  await result
++})
++
+ it('does not report cancellation complete until the terminated worker exits', async () => {
+   vi.useFakeTimers()
+   const worker = Object.assign(new EventEmitter(), { postMessage: vi.fn(), terminate: vi.fn(async () => 1) })

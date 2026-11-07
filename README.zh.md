@@ -16,7 +16,7 @@ cd deepseek-harness-linux-desktop
 bash ci/install-latest-linux.sh --tag v0.2.1-rc.5-linux.2
 ```
 
-不传 `--tag` 时，脚本使用 GitHub 的最新非预发布版本接口，因此可能选到较旧的稳定版。main 源码、CI 产物和公开 release 是不同交付物。`patches/` 中的系列已重新基于 `dsh-v0.2.2-rc.1`，收敛为五个补丁：Linux 移植、更新门禁、SCNet 配置动作、设置页拥有的更新与 SCNet 动作，以及签名发布信任链。插件操作历史、崩溃恢复菜单和更新视图在该基线中已由上游提供，不再作为回移携带。
+不传 `--tag` 时，脚本使用 GitHub 的最新非预发布版本接口，因此可能选到较旧的稳定版。main 源码、CI 产物和公开 release 是不同交付物。`patches/` 中的系列已重新基于 `dsh-v0.2.2-rc.1`，收敛为六个补丁：Linux 移植、更新门禁、SCNet 配置动作、设置页拥有的更新与 SCNet 动作、签名发布信任链，以及随包报告 Worker 修复。插件操作历史、崩溃恢复菜单和更新视图在该基线中已由上游提供，不再作为回移携带。
 
 ## 桌面能力
 

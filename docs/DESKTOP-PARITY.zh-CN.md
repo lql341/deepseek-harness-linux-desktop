@@ -10,7 +10,7 @@
 
 ## 对正式版的结论
 
-`dsh-v0.2.2-rc.1` 的每一项桌面外壳能力在 Linux 上都有实现或明确的平台对应实现；活动系列应用在该基线上，补丁树为 `7fa80b8b0c53456fcb53c8322a114fb4f3a72ca1`。缺口表中剩余的行按明确的项目决定不属于正式版对齐范围：平台固有集成（Dock、毛玻璃、公证和官方强制更新身份）、实验性 CUA provider、发行面广度，以及只存在于上游开发线的功能。真实桌面上的交互确认属于验证工作，而不是缺失功能。
+`dsh-v0.2.2-rc.1` 的每一项桌面外壳能力在 Linux 上都有实现或明确的平台对应实现；活动系列应用在该基线上，补丁树为 `a4e88988c1e53eb87d1ba392f0a9bb1c9f731f6b`。缺口表中剩余的行按明确的项目决定不属于正式版对齐范围：平台固有集成（Dock、毛玻璃、公证和官方强制更新身份）、实验性 CUA provider、发行面广度，以及只存在于上游开发线的功能。真实桌面上的交互确认属于验证工作，而不是缺失功能。
 
 每一行的证据来自固定上游树和 `apply.sh` 生成的补丁树。最有用的文件是 `apps/desktop/src/main.ts`、`apps/desktop/src/windows-layout.ts`、`apps/desktop/src/platform-view.ts`、`apps/desktop/src/update-attention.ts`、`apps/desktop/src/command-management.ts`、`apps/desktop/scripts/electron-builder-config.mjs`，以及验证 workflow 运行的定向桌面测试。只有测试或发布门禁实际执行过的能力才算已具备；类型检查和照抄一个菜单项不能作为平台证据。
 
