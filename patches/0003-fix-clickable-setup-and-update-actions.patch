@@ -74,7 +74,7 @@ index 0000000000..da0d645a4c
 +}
 diff --git a/apps/desktop/tests/scnet-setup.spec.ts b/apps/desktop/tests/scnet-setup.spec.ts
 new file mode 100644
-index 0000000000..730ed7e6fc
+index 0000000000..45e9881eff
 --- /dev/null
 +++ b/apps/desktop/tests/scnet-setup.spec.ts
 @@ -0,0 +1,70 @@
@@ -101,7 +101,7 @@ index 0000000000..730ed7e6fc
 +}
 +
 +describe('SCNet setup launcher', () => {
-+  it.each([false, true])('launches a real filesystem script with a visible completion prompt (packaged=%s)', async packaged => {
++  it.each([false, true])('launches a real filesystem script with a visible completion prompt (packaged=%s)', async (packaged) => {
 +    const f = fixture(packaged)
 +    await openScnetSetup(f.options)
 +    const [terminal, args] = f.launch.mock.calls[0]!

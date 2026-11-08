@@ -12,11 +12,11 @@
 
 ## 基线迁移到 dsh-v0.2.2-rc.1
 
-固定基线从 `dsh-v0.2.1-rc.5` 迁到 `dsh-v0.2.2-rc.1`，两者相隔 2623 个上游提交；仅 `apps/desktop` 就改动了 229 个文件。系列以六个补丁（0001 到 0006）重新应用到该基线，产出补丁树 `a4e88988c1e53eb87d1ba392f0a9bb1c9f731f6b`；在固定 tag 上对整套系列执行 `git apply --3way` 可在本地复现该树。
+固定基线从 `dsh-v0.2.1-rc.5` 迁到 `dsh-v0.2.2-rc.1`，两者相隔 2623 个上游提交；仅 `apps/desktop` 就改动了 229 个文件。系列以六个补丁（0001 到 0006）重新应用到该基线，产出补丁树 `78bf58ead789275add065db28511e9ef675ada89`；在固定 tag 上对整套系列执行 `git apply --3way` 可在本地复现该树。
 
 新基线已自带原先由三个补丁回移的能力，因此它们被移除：插件操作历史（原 0009）、崩溃恢复菜单与更新视图（原 0007），以及更新呈现的拆分。保留下来的是 Linux 专有工作：移植本体、更新门禁、SCNet 配置动作、设置页拥有的更新与 SCNet 动作、签名发布信任链，以及一处打包修复：新基线把 `lib/operation-report-worker.js` 留在 `app.asar` 内，而原生 Worker 线程需要物理文件，因此补丁 0006 解包它并改写入口路径。
 
-本系列在任何发布运行之前的本地证据：完整 `pnpm run typecheck` 五道 gate 全部通过；`vitest run apps/desktop packages/client/ui-settings-general` 通过 2181 项测试，另有 2 项在本机未打补丁的基线上同样失败（`macos-notarization-proxy` 与 `prepare-runtime-patches`，均依赖环境）；deb 构建为 `deepseek-harness-0.2.2-rc.1-linux-amd64.deb`，290989204 字节，包含 Linux 依赖集和 `dsh://` 桌面项。`v0.2.2-rc.1-linux.1` 的发布运行是把这些证据变成 release 的关口。
+本系列在任何发布运行之前的本地证据：完整 `pnpm run typecheck` 五道 gate 全部通过；`vitest run apps/desktop packages/client/ui-settings-general` 通过 2181 项测试，另有 2 项在本机未打补丁的基线上同样失败（`macos-notarization-proxy` 与 `prepare-runtime-patches`，均依赖环境）；deb 构建为 `deepseek-harness-0.2.2-rc.1-linux-amd64.deb`，290989204 字节，包含 Linux 依赖集和 `dsh://` 桌面项。之后工作区 lint（`pnpm run lint`）以及本系列涉及文件的聚焦用例均通过。`v0.2.2-rc.1-linux.1` 的发布运行是把这些证据变成 release 的关口。
 
 ## 已发布系列中实现
 

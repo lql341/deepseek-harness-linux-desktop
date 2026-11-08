@@ -6150,7 +6150,7 @@ index 1e438dedf4..8d9424e666 100644
      const { readdirSync, readFileSync } = await import('node:fs')
      const sourceDirectory = new URL('../src/', import.meta.url)
 diff --git a/apps/desktop/tests/main-startup.spec.ts b/apps/desktop/tests/main-startup.spec.ts
-index 3b1e63e00c..7ad830ebfb 100644
+index 3b1e63e00c..994aaa85b8 100644
 --- a/apps/desktop/tests/main-startup.spec.ts
 +++ b/apps/desktop/tests/main-startup.spec.ts
 @@ -183,6 +183,7 @@ const harness = await vi.hoisted(async () => {
@@ -6202,21 +6202,24 @@ index 3b1e63e00c..7ad830ebfb 100644
        ...platform === 'darwin' ? [messages.hideApplication, messages.hideOtherApplications, messages.showAllApplications, 'separator'] : [],
        'quit',
      ])
-@@ -589,8 +599,12 @@ describe('desktop main startup', () => {
+@@ -589,8 +599,14 @@ describe('desktop main startup', () => {
      harness.ipcOn.mock.calls.find(([channel]) => channel === DESKTOP_IPC.localeChanged)![1](
        { sender, senderFrame: sender.mainFrame }, nextLocale,
      )
+-    const refreshed = platform === 'win32' ? applicationMenuItems()
+-      : harness.menu.mock.lastCall![0][0]!.submenu as MenuItemConstructorOptions[]
 +    // The locale change rebuilds the application menu last; popups and tray relabels reuse the
 +    // same mock, so the freshest template is the last call whose first entry owns a submenu.
-     const refreshed = platform === 'win32' ? applicationMenuItems()
--      : harness.menu.mock.lastCall![0][0]!.submenu as MenuItemConstructorOptions[]
-+      : [...harness.menu.mock.calls].reverse()
-+        .map(call => call[0] as MenuItemConstructorOptions[])
-+        .find(items => Array.isArray(items[0]?.submenu))![0]!.submenu as MenuItemConstructorOptions[]
++    const templates = [...harness.menu.mock.calls]
++      .map(call => call[0])
++      .filter(items => Array.isArray(items[0]?.submenu))
++    const refreshed: MenuItemConstructorOptions[] = platform === 'win32'
++      ? applicationMenuItems()
++      : templates.at(-1)![0]!.submenu!
      expect(refreshed.filter(item => item.role === 'toggleDevTools' && item.visible !== false)).toEqual([
        { role: 'toggleDevTools', label: nextLocale === 'en' ? en.toggleDevToolsMenu : zh.toggleDevToolsMenu },
      ])
-@@ -890,7 +904,7 @@ describe('desktop main startup', () => {
+@@ -890,7 +906,7 @@ describe('desktop main startup', () => {
      }
    })
  
@@ -6225,7 +6228,7 @@ index 3b1e63e00c..7ad830ebfb 100644
      vi.spyOn(process, 'platform', 'get').mockReturnValue(platform)
      await import('../src/main.ts')
      await harness.preparing.promise
-@@ -906,12 +920,28 @@ describe('desktop main startup', () => {
+@@ -906,12 +922,28 @@ describe('desktop main startup', () => {
          { role: 'toggleDevTools', visible: false, accelerator: 'F12' },
        ])
      } else {
@@ -6255,7 +6258,7 @@ index 3b1e63e00c..7ad830ebfb 100644
    it('serves packaged shell documents instead of rejecting the shell origin', async () => {
      const { serveWebDocument } = await import('../src/web-document.ts')
      vi.mocked(serveWebDocument).mockResolvedValue(new Response('shell document'))
-@@ -947,14 +977,18 @@ describe('desktop main startup', () => {
+@@ -947,14 +979,18 @@ describe('desktop main startup', () => {
      expect(sent()).toHaveLength(relayed)
    })
  
@@ -6276,7 +6279,7 @@ index 3b1e63e00c..7ad830ebfb 100644
    })
  
    it('covers the macOS vibrancy reattach gap with an opaque base while minimized or hidden', async () => {
-@@ -1068,7 +1102,7 @@ describe('desktop main startup', () => {
+@@ -1068,7 +1104,7 @@ describe('desktop main startup', () => {
      expect(() => handler(event, 'application', NaN, 34)).toThrow('invalid popup request')
      const application = handler(event, 'application', 48, 34)
      expect(harness.menu.buildFromTemplate.mock.lastCall![0].map(item => item.label ?? item.type)).toEqual([
@@ -6285,7 +6288,7 @@ index 3b1e63e00c..7ad830ebfb 100644
      ])
      expect(harness.popup.mock.lastCall![0]).toMatchObject({ window, x: 48, y: 34 })
      expect(harness.popup.mock.lastCall![0].callback).toBeTypeOf('function')
-@@ -1105,8 +1139,11 @@ describe('desktop main startup', () => {
+@@ -1105,8 +1141,11 @@ describe('desktop main startup', () => {
        : ['Application', 'editMenu'])
      const application = template[0]!.submenu as MenuItemConstructorOptions[]
      expect(application.filter(item => item.visible !== false).map(describeItem)).toEqual(platform === 'darwin'
@@ -6299,7 +6302,7 @@ index 3b1e63e00c..7ad830ebfb 100644
      expect(harness.menu.setApplicationMenu).toHaveBeenCalledOnce()
    })
  
-@@ -1348,6 +1385,26 @@ describe('desktop main startup', () => {
+@@ -1348,6 +1387,26 @@ describe('desktop main startup', () => {
      expect(harness.trays[0]!.destroy).toHaveBeenCalledOnce()
    })
  
@@ -6326,7 +6329,7 @@ index 3b1e63e00c..7ad830ebfb 100644
    it('routes closing through the tray confirmation and keeps the Host running', async () => {
      const host = await readyWorkspace()
      const window = harness.windows[0]!
-@@ -1433,6 +1490,131 @@ describe('desktop main startup', () => {
+@@ -1433,6 +1492,131 @@ describe('desktop main startup', () => {
      expect(window.show).toHaveBeenCalledOnce()
    })
  

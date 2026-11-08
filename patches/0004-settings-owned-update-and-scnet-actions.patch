@@ -135,7 +135,7 @@ index 0000000000..a704b86649
 +}
 diff --git a/packages/client/ui-settings-general/src/client/ScnetSettingsRow.tsx b/packages/client/ui-settings-general/src/client/ScnetSettingsRow.tsx
 new file mode 100644
-index 0000000000..071a7080ca
+index 0000000000..e431b47ff7
 --- /dev/null
 +++ b/packages/client/ui-settings-general/src/client/ScnetSettingsRow.tsx
 @@ -0,0 +1,61 @@
@@ -164,7 +164,7 @@ index 0000000000..071a7080ca
 +  useEffect(() => {
 +    if (bridge === undefined) return
 +    let live = true
-+    void bridge.status().then(value => {
++    void bridge.status().then((value) => {
 +      if (live) setSnapshot(value)
 +    }, () => {
 +      if (live) setFailed(true)
