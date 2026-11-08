@@ -273,7 +273,24 @@ jobs:
 
       - name: Build deb
         working-directory: ${{ env.UPSTREAM_DIR }}
-        run: pnpm --dir apps/desktop run package:linux:x64
+        # Runtime preparation downloads Electron, Node and the Python distribution from GitHub and
+        # its release assets; a 5xx from those hosts is not a defect in this tree. Retry the whole
+        # packaging run, which reuses the verified download cache instead of refetching it.
+        run: |
+          set -o pipefail
+          for attempt in 1 2 3; do
+            echo '::group::packaging attempt '$attempt
+            if pnpm --dir apps/desktop run package:linux:x64; then
+              echo '::endgroup::'
+              exit 0
+            fi
+            echo '::endgroup::'
+            if [ "$attempt" = 3 ]; then break; fi
+            echo '::warning::packaging attempt '$attempt' failed; retrying in 30s'
+            sleep 30
+          done
+          echo '::error::packaging failed after 3 attempts'
+          exit 1
         env:
           DSH_DESKTOP_TARGET_PLATFORM: linux
           DSH_DESKTOP_TARGET_ARCH: x64
