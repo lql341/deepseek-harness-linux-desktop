@@ -232,7 +232,9 @@ jobs:
           ARGS=(--title "DeepSeek Harness Linux Desktop $RELEASE_TAG"
                 --notes-file "$GITHUB_WORKSPACE/RELEASE_NOTES.md")
           [ "${{ inputs.draft }}" = "true" ] && ARGS+=(--draft)
-          case "$RELEASE_TAG" in *-rc.*|*-alpha.*|*-beta.*) ARGS+=(--prerelease);; esac
+          # Every release becomes GitHub's "latest": this repository ships one Linux line, so the
+          # newest build is the one the installer should find. The tag still names the upstream
+          # base, and a tag carrying -rc. only means that base is a release candidate upstream.
           gh release create "$RELEASE_TAG" "$UPSTREAM_DIR"/publish/* \
             -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" "${ARGS[@]}"
 

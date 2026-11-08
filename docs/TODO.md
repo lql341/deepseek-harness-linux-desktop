@@ -18,6 +18,7 @@ The tracked goal is parity with the official `dsh-v0.2.2-rc.1` desktop release o
 | Build commit | `1915bd4f9a97b0b74a75ea82e4fb8c0297a45518` |
 | Patched tree | `58d63c11500bdbeef6f3221756b0c307a65a5bf6` |
 | Release run | 42448101556 |
+| Latest | Yes; every release in this repository becomes latest, and this one replaced `v0.2.1-rc.2-linux.4` |
 | Verification run | Pending: the gate re-run stops at the Electron download (GitHub 504); its earlier steps pass |
 | Acceptance run | Not run for this release yet |
 

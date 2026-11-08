@@ -8,7 +8,7 @@ The default upstream base is read from [ci/upstream-base-tag](ci/upstream-base-t
 
 ## Install a published package
 
-The current prerelease is [v0.2.1-rc.5-linux.2](https://github.com/lql341/deepseek-harness-linux-desktop/releases/tag/v0.2.1-rc.5-linux.2). The `dsh-v0.2.2-rc.1` series in `patches/` is the next base and is published as its own prerelease once the release run is green. Download its deb, `SHA256SUMS` and `SHA256SUMS.sig`, or use the installer below. The installer checks the checksum and amd64 architecture before asking apt to reinstall the package. It needs curl, Node, sha256sum, dpkg and sudo/apt on the installation host. Verify the signed manifest with `node ci/verify-release-signature.mjs --manifest SHA256SUMS`.
+The current release is [v0.2.2-rc.1-linux.1](https://github.com/lql341/deepseek-harness-linux-desktop/releases/tag/v0.2.2-rc.1-linux.1), built from this repository's six patches against upstream `dsh-v0.2.2-rc.1`. Every release here becomes GitHub's latest, because this repository publishes one Linux line; a tag that carries `-rc.` only means its upstream base is a release candidate. Download its deb, `SHA256SUMS` and `SHA256SUMS.sig`, or use the installer below. The installer checks the checksum and amd64 architecture before asking apt to reinstall the package. It needs curl, Node, sha256sum, dpkg and sudo/apt on the installation host. Verify the signed manifest with `node ci/verify-release-signature.mjs --manifest SHA256SUMS`.
 
 ```sh
 git clone https://github.com/lql341/deepseek-harness-linux-desktop.git
@@ -16,7 +16,7 @@ cd deepseek-harness-linux-desktop
 bash ci/install-latest-linux.sh --tag v0.2.1-rc.5-linux.2
 ```
 
-Without `--tag`, the script uses GitHub's latest non-prerelease endpoint; it may select an older stable release. Source changes on main and CI artifacts are separate from published releases. The series in `patches/` is re-based on `dsh-v0.2.2-rc.1` and reduces to six patches: the Linux port, the update gates, the SCNet setup actions, the settings-owned update and SCNet actions, the signed release trust path, and the packaged operation-report worker fix. The plugin operation history, the recovery menus and the update views are upstream in that base and no longer carried as backports.
+Without `--tag`, the script installs GitHub's latest release, which is the newest build here. Source changes on main and CI artifacts are separate from published releases. The series in `patches/` is re-based on `dsh-v0.2.2-rc.1` and reduces to six patches: the Linux port, the update gates, the SCNet setup actions, the settings-owned update and SCNet actions, the signed release trust path, and the packaged operation-report worker fix. The plugin operation history, the recovery menus and the update views are upstream in that base and no longer carried as backports.
 
 ## Desktop capabilities
 

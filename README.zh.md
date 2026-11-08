@@ -8,7 +8,7 @@
 
 ## 安装已发布的包
 
-当前预发布版是 [v0.2.1-rc.5-linux.2](https://github.com/lql341/deepseek-harness-linux-desktop/releases/tag/v0.2.1-rc.5-linux.2)。`patches/` 中的 `dsh-v0.2.2-rc.1` 系列是下一个基线，发布运行变绿后会作为独立预发布版发布。可下载 deb、`SHA256SUMS` 和 `SHA256SUMS.sig`，或使用下方安装器。它校验 checksum 和 amd64 架构后，调用 apt 重新安装；安装主机需要 curl、Node、sha256sum、dpkg 和 sudo/apt。可用 `node ci/verify-release-signature.mjs --manifest SHA256SUMS` 校验签名清单。
+当前发布版是 [v0.2.2-rc.1-linux.1](https://github.com/lql341/deepseek-harness-linux-desktop/releases/tag/v0.2.2-rc.1-linux.1)，由本仓库的六个补丁基于上游 `dsh-v0.2.2-rc.1` 构建。本仓库只维护一条 Linux 发布线，因此每次发布都会成为 GitHub 的 latest；tag 里的 `-rc.` 只表示上游基线是候选版。可下载 deb、`SHA256SUMS` 和 `SHA256SUMS.sig`，或使用下方安装器。它校验 checksum 和 amd64 架构后，调用 apt 重新安装；安装主机需要 curl、Node、sha256sum、dpkg 和 sudo/apt。可用 `node ci/verify-release-signature.mjs --manifest SHA256SUMS` 校验签名清单。
 
 ```sh
 git clone https://github.com/lql341/deepseek-harness-linux-desktop.git
@@ -16,7 +16,7 @@ cd deepseek-harness-linux-desktop
 bash ci/install-latest-linux.sh --tag v0.2.1-rc.5-linux.2
 ```
 
-不传 `--tag` 时，脚本使用 GitHub 的最新非预发布版本接口，因此可能选到较旧的稳定版。main 源码、CI 产物和公开 release 是不同交付物。`patches/` 中的系列已重新基于 `dsh-v0.2.2-rc.1`，收敛为六个补丁：Linux 移植、更新门禁、SCNet 配置动作、设置页拥有的更新与 SCNet 动作、签名发布信任链，以及随包报告 Worker 修复。插件操作历史、崩溃恢复菜单和更新视图在该基线中已由上游提供，不再作为回移携带。
+不传 `--tag` 时，脚本安装 GitHub 的 latest 版本，即这里最新的构建。main 源码、CI 产物和公开 release 是不同交付物。`patches/` 中的系列已重新基于 `dsh-v0.2.2-rc.1`，收敛为六个补丁：Linux 移植、更新门禁、SCNet 配置动作、设置页拥有的更新与 SCNet 动作、签名发布信任链，以及随包报告 Worker 修复。插件操作历史、崩溃恢复菜单和更新视图在该基线中已由上游提供，不再作为回移携带。
 
 ## 桌面能力
 
