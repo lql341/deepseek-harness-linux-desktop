@@ -12,7 +12,7 @@ Reviewed against upstream `dsh-v0.2.1-rc.5` and development commit `ce7073d51254
 
 ## Base migration to dsh-v0.2.2-rc.1
 
-The pinned base moved from `dsh-v0.2.1-rc.5` to `dsh-v0.2.2-rc.1`, 2623 upstream commits later; `apps/desktop` alone changes 229 files. The series re-applies to that base as six patches (0001 to 0006) and produces patched tree `78bf58ead789275add065db28511e9ef675ada89`; `git apply --3way` of the whole series on the pinned tag reproduces it locally.
+The pinned base moved from `dsh-v0.2.1-rc.5` to `dsh-v0.2.2-rc.1`, 2623 upstream commits later; `apps/desktop` alone changes 229 files. The series re-applies to that base as six patches (0001 to 0006) and produces patched tree `58d63c11500bdbeef6f3221756b0c307a65a5bf6`; `git apply --3way` of the whole series on the pinned tag reproduces it locally.
 
 The newer base already ships what three earlier patches carried as backports, so they are gone: the plugin operation history (previously patch 0009), the recovery menus and update views (previously patch 0007), and the update-presentation split. What remains is Linux-specific work: the port itself, the update gates, the SCNet setup actions, the settings-owned update and SCNet actions, and the signed release trust path, plus one packaging fix: the newer base keeps `lib/operation-report-worker.js` inside `app.asar`, and a native Worker thread needs the physical file, so patch 0006 unpacks it and rewrites the entry path.
 
