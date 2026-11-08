@@ -12,15 +12,16 @@ The tracked goal is parity with the official `dsh-v0.2.2-rc.1` desktop release o
 
 | Item | Value |
 | --- | --- |
-| Release | `v0.2.1-rc.5-linux.2` |
-| Patch series | 0001 to 0011 |
-| Build commit | `32a509c6e5db91d6210f4fe23d4f9290c0df310a` |
-| Patched tree | `0fef55a99edf4a7f857ab0365c98644bce9d7fff` |
-| Release run | 41311729795 |
-| Verification run | 41309525902 (19 suites, 486 tests) |
-| Acceptance run | 41317916316 |
+| Release | `v0.2.2-rc.1-linux.1` |
+| Upstream base | `dsh-v0.2.2-rc.1` |
+| Patch series | 0001 to 0006 |
+| Build commit | `1915bd4f9a97b0b74a75ea82e4fb8c0297a45518` |
+| Patched tree | `58d63c11500bdbeef6f3221756b0c307a65a5bf6` |
+| Release run | 42448101556 |
+| Verification run | Pending: the gate re-run stops at the Electron download (GitHub 504); its earlier steps pass |
+| Acceptance run | Not run for this release yet |
 
-The table above describes the published package; its series is archived in git history and is not the active one.
+The table above describes the published package. The previous release `v0.2.1-rc.5-linux.2` and its eleven-patch series stay archived in git history.
 
 ## Current series
 
@@ -28,16 +29,15 @@ The table above describes the published package; its series is archived in git h
 | --- | --- |
 | Pinned base | `dsh-v0.2.2-rc.1` |
 | Patch series | 0001 to 0006 |
-| Patched tree | `7fa80b8b0c53456fcb53c8322a114fb4f3a72ca1` |
-| Next release tag | `v0.2.2-rc.1-linux.1` (pending) |
+| Patched tree | `d2d3f5c4c9a7e83a7cf5b2bbb230fdc982fc2786` |
+| Next release tag | None; a new tag is needed only when a patch changes |
 
-The active series re-applies the Linux port to the newer base. Six topics remain because the newer base already ships the plugin operation history, the recovery menus and the update views that the previous series carried as backports, and the newest base packs the operation-report worker, which patch 0006 unpacks again before it loads. A local `apply.sh` plus `git write-tree` reproduces the tree above.
+The active series re-applies the Linux port to the newer base. Six topics remain because the newer base already ships the plugin operation history, the recovery menus and the update views that the previous series carried as backports, and the newest base packs the operation-report worker, which patch 0006 unpacks again before it loads. A local `apply.sh` plus `git write-tree` reproduces the tree above; it differs from the released tree only by documentation records added after the release run.
 
 ## Open items
 
 | Item | State | Owner | Exit gate |
 | --- | --- | --- | --- |
-| `dsh-v0.2.2-rc.1` release | Open | Release owner | A green publish run for `v0.2.2-rc.1-linux.1`; record its run IDs here afterwards |
 | Real-desktop interactive pass | Open and optional | Desktop owner | `ci/real-desktop-acceptance.sh` tarballs from one X11 and one Wayland session recorded in the follow-up |
 
 Nothing else is open inside the tracked scope. Items that would extend the scope need a new decision before they become work.
