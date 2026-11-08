@@ -19,8 +19,8 @@ The tracked goal is parity with the official `dsh-v0.2.2-rc.1` desktop release o
 | Patched tree | `58d63c11500bdbeef6f3221756b0c307a65a5bf6` |
 | Release run | 42448101556 |
 | Latest | Yes; every release in this repository becomes latest, and this one replaced `v0.2.1-rc.2-linux.4` |
-| Verification run | Green on source but not on infrastructure: five attempts reach `Build deb` and stop at a GitHub 504 for the Electron archive; every step before it passes. The build step now retries instead of failing the gate |
-| Acceptance run | Not run for this release yet |
+| Verification run | Every step up to `Build deb` passes; the gate then stops at a GitHub 504 for the Electron archive. The packaging step now retries, so the next run records the real result |
+| Acceptance run | None recorded through `ci/real-desktop-acceptance.sh`; the release owner installed the published deb on a real Linux desktop and confirmed it runs |
 
 The table above describes the published package. The previous release `v0.2.1-rc.5-linux.2` and its eleven-patch series stay archived in git history.
 
@@ -39,7 +39,9 @@ The active series re-applies the Linux port to the newer base. Six topics remain
 
 | Item | State | Owner | Exit gate |
 | --- | --- | --- | --- |
-| Real-desktop interactive pass | Open and optional | Desktop owner | `ci/real-desktop-acceptance.sh` tarballs from one X11 and one Wayland session recorded in the follow-up |
+| Green verification run for this release | Open | Release owner | A `Linux desktop verification` run for the released series finishes green, and its ID replaces the note above |
+| Recorded acceptance tarballs | Open and optional | Desktop owner | `ci/real-desktop-acceptance.sh` tarballs from one X11 and one Wayland session recorded in the follow-up |
+| Silent-breakage checks | Open | Desktop owner | A packaged-artifact assertion that `lib/operation-report-worker.js` exists unpacked beside `app.asar`, so the next base cannot reintroduce the failure the release audit caught |
 
 Nothing else is open inside the tracked scope. Items that would extend the scope need a new decision before they become work.
 
@@ -62,7 +64,7 @@ Nothing else is open inside the tracked scope. Items that would extend the scope
 
 ## References
 
-- [Release v0.2.1-rc.5-linux.2](https://github.com/lql341/deepseek-harness-linux-desktop/releases/tag/v0.2.1-rc.5-linux.2)
+- [Release v0.2.2-rc.1-linux.1](https://github.com/lql341/deepseek-harness-linux-desktop/releases/tag/v0.2.2-rc.1-linux.1)
 - [Desktop platform parity](DESKTOP-PARITY.md)
 - [Desktop follow-up](DESKTOP-FOLLOWUP.md)
 - [Pinned upstream base](../ci/upstream-base-tag)

@@ -2,14 +2,14 @@ English | [中文](SCNET-PLATFORM-DEVELOPMENT-PLAN.zh-CN.md)
 
 # SCNet integration and platform development plan
 
-Status: `in progress`. Updated 2026-11-01. Scope: Linux x64 Desktop first, then mobile clients and additional distributions. This current-state plan supersedes earlier snapshots; historical commits and run IDs remain in Git history and the [handoff](SCNET-DEVELOPMENT-HANDOFF.md).
+Status: `in progress`. Updated 2026-11-08. Scope: Linux x64 Desktop first, then mobile clients and additional distributions. This current-state plan supersedes earlier snapshots; historical commits and run IDs remain in Git history and the [handoff](SCNET-DEVELOPMENT-HANDOFF.md).
 
 ## Progress
 
 | Milestone | Complete | Remaining |
 | --- | --- | --- |
 | M0 | Unpublished server handoff manual reviewed separately from OAuth2 | Formal OAuth2/API/security agreement, issuer/endpoints/scopes/callbacks, client registration and sandbox credentials |
-| M1 | Fixed `dsh-scnet@0.6.13`, offline Bundle/Skill, default activation, preserved disable/custom profiles, local diagnostics and package audit | Verify SCNet setup repair in candidate bytes and record current canonical synchronization evidence |
+| M1 | Fixed `dsh-scnet@0.6.13`, offline Bundle/Skill, default activation, preserved disable/custom profiles, local diagnostics and package audit; the setup repair is verified in the published `v0.2.2-rc.1-linux.1` bytes | Record current canonical synchronization evidence |
 | M2 | Offline PKCE, callback validation/one-time consumption, structured errors, credential adapters and loopback listener | Real login, refresh, revocation, account linking and read-only OpenAPI against the formal sandbox |
 | M3 | Local readiness, Secret Service interface, offline `dsh://auth/scnet` parsing and single-instance forwarding | Login/refresh/logout/link/unlink UI/IPC, locked or absent keyring and credential cleanup acceptance |
 | M4–M6 | Contract-first Android/HarmonyOS scaffold with offline conformance | Native applications, additional CPU/distribution matrix, security response and stable release evidence |
@@ -45,6 +45,8 @@ Version operations `login`, `status`, `refresh`, `logout`, `listRegions`, `listS
 ## D. Linux Desktop
 
 **Entry:** fixed Bundle plus accepted connector. **Deliverable:** settings/IPC integration and Debian package. **Exit:** Ubuntu 24.04/Debian 13 install/upgrade/uninstall, no-credential startup, Bundle loading, real login/refresh/logout, keyring and callback tests.
+
+The port tracks the newest non-alpha upstream base, currently `dsh-v0.2.2-rc.1`, and ships it as `v0.2.2-rc.1-linux.1`: install, no-credential startup, Bundle loading and the SCNet diagnostics surface were confirmed on a real desktop, while real login still waits on M0. Upstream moves the desktop shell and its packaging on its own schedule, so each base migration re-verifies the same behaviours instead of assuming a clean patch application proves them.
 
 Keep user profiles, credentials and custom clusters during upgrades. Bind `dsh://auth/scnet` or loopback `127.0.0.1` callbacks to the current user's one-time session; reject cross-profile token writes. Offline callback parsing currently does not exchange tokens.
 

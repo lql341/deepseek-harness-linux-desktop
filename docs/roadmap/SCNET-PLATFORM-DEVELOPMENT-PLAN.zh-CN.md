@@ -2,14 +2,14 @@
 
 # SCNet 集成与平台开发计划
 
-状态：`in progress`。更新于 2026-11-01。范围：先 Linux x64 Desktop，再移动端和更多发行版。本当前状态计划替代旧快照，历史提交和 run 保留在 Git 历史及[交接文档](SCNET-DEVELOPMENT-HANDOFF.zh-CN.md)。
+状态：`in progress`。更新于 2026-11-08。范围：先 Linux x64 Desktop，再移动端和更多发行版。本当前状态计划替代旧快照，历史提交和 run 保留在 Git 历史及[交接文档](SCNET-DEVELOPMENT-HANDOFF.zh-CN.md)。
 
 ## 进度
 
 | 里程碑 | 已完成 | 剩余 |
 | --- | --- | --- |
 | M0 | 未发布的服务端 handoff 手册已独立于 OAuth2 审阅 | 正式 OAuth2/API/安全合同、issuer/endpoint/scope/回调、client 注册和沙盒凭证 |
-| M1 | 固定 `dsh-scnet@0.6.13`、离线 Bundle/Skill、默认激活、保留禁用/自定义 profile、本地诊断和包审计 | 在候选字节验证 SCNet 配置修复，并记录当前 canonical 同步证据 |
+| M1 | 固定 `dsh-scnet@0.6.13`、离线 Bundle/Skill、默认激活、保留禁用/自定义 profile、本地诊断和包审计；配置修复已在发布的 `v0.2.2-rc.1-linux.1` 字节中验证 | 记录当前 canonical 同步证据 |
 | M2 | 离线 PKCE、回调校验/一次性消费、结构化错误、凭据适配和 loopback listener | 在正式沙盒完成真实登录、刷新、撤销、账户关联和只读 OpenAPI |
 | M3 | 本地就绪、Secret Service 接口、离线 `dsh://auth/scnet` 解析和单实例转发 | login/refresh/logout/link/unlink UI/IPC，锁定/缺失 keyring 和凭据清理验收 |
 | M4–M6 | Android/HarmonyOS 协议优先骨架及离线合规 | 原生应用、更多 CPU/发行版矩阵、安全响应和稳定版证据 |
@@ -45,6 +45,8 @@ Desktop 初始化固定 Bundle，跨升级保留显式禁用/自定义 profile�
 ## D. Linux Desktop
 
 **入口：**固定 Bundle 和已验收连接器。**交付：**设置/IPC 集成和 Debian 包。**出口：**Ubuntu 24.04/Debian 13 安装/升级/卸载、无凭据启动、Bundle 加载、真实登录/刷新/退出、keyring 和回调测试。
+
+移植版跟踪最新的非 alpha 上游基线，当前为 `dsh-v0.2.2-rc.1`，并以 `v0.2.2-rc.1-linux.1` 发布：安装、无凭据启动、Bundle 加载和 SCNet 诊断页已在真实桌面确认，而真实登录仍等待 M0。上游按自己的节奏改动桌面壳与打包层，因此每次基线迁移都要重新验证同一组行为，而不是把补丁干净应用当作验证。
 
 升级保留用户 profile、凭据和自定义集群。将 `dsh://auth/scnet` 或 loopback `127.0.0.1` 回调绑定当前用户的一次性会话，拒绝跨 profile 写 token。当前离线回调解析不交换 token。
 

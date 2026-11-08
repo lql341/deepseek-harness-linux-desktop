@@ -19,8 +19,8 @@
 | 补丁树 | `58d63c11500bdbeef6f3221756b0c307a65a5bf6` |
 | 发布运行 | 42448101556 |
 | Latest | 是；本仓库每次发布都会成为 latest，本次替换了 `v0.2.1-rc.2-linux.4` |
-| 验证运行 | 源码侧已绿但受基础设施阻塞：多次运行都走到 `Build deb` 后因 GitHub 对 Electron 归档返回 504 而停止，其前面的步骤全部通过。构建步骤现已改为重试，不再直接判红 |
-| 验收运行 | 本版本尚未运行 |
+| 验证运行 | 直到 `Build deb` 之前的每一步都通过；门禁随后因 GitHub 对 Electron 归档返回 504 而停止。打包步骤现已改为重试，下一次运行会记录真实结果 |
+| 验收运行 | 尚未通过 `ci/real-desktop-acceptance.sh` 记录；发布负责人已在真实 Linux 桌面安装该发布包并确认可运行 |
 
 上表描述的是已发布的包。上一个发布 `v0.2.1-rc.5-linux.2` 及其十一个补丁的系列保留在 git 历史中。
 
@@ -39,7 +39,9 @@
 
 | 项目 | 状态 | 负责人 | 出口条件 |
 | --- | --- | --- | --- |
-| 真实桌面交互验收 | 未完成，可选 | 桌面负责人 | 用 `ci/real-desktop-acceptance.sh` 在 X11 和 Wayland 各跑一次，tarball 记录到功能跟进 |
+| 本版本的验证运行变绿 | 未完成 | 发布负责人 | 对应已发布系列的 `Linux desktop verification` 运行变绿，并用其 ID 替换上面的说明 |
+| 记录的验收 tarball | 未完成，可选 | 桌面负责人 | 用 `ci/real-desktop-acceptance.sh` 在 X11 和 Wayland 各跑一次，tarball 记录到功能跟进 |
+| 静默失效检查 | 未完成 | 桌面负责人 | 增加打包产物断言：`lib/operation-report-worker.js` 必须解包存在于 `app.asar` 旁，避免下一个基线重新引入发布审计已捕获的故障 |
 
 跟踪范围内没有其他未完成项。会扩大范围的条目必须先有新的决定，才会成为工作。
 
@@ -62,7 +64,7 @@
 
 ## 参考资料
 
-- [发布 v0.2.1-rc.5-linux.2](https://github.com/lql341/deepseek-harness-linux-desktop/releases/tag/v0.2.1-rc.5-linux.2)
+- [发布 v0.2.2-rc.1-linux.1](https://github.com/lql341/deepseek-harness-linux-desktop/releases/tag/v0.2.2-rc.1-linux.1)
 - [桌面平台能力对齐](DESKTOP-PARITY.zh-CN.md)
 - [桌面功能跟进](DESKTOP-FOLLOWUP.zh-CN.md)
 - [固定的上游基线](../ci/upstream-base-tag)
