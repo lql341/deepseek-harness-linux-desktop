@@ -4,11 +4,11 @@
 
 ## 0. 范围
 
-本文记录 `dsh-v0.2.1-rc.5` 上的验证，固定携带 `dsh-scnet@0.6.13`；实际构建始终从 ci/upstream-base-tag 读取当前固定 tag。[README](README.zh.md)区分源码能力和已发布的 `v0.2.1-rc.5-linux.1` 预发布包。历史 0.2.0 主题补丁已归档，不得混入当前补丁线。
+本文记录固定基线（当前为 `dsh-v0.2.2-rc.1`）的构建与验收流程，固定携带 `dsh-scnet@0.6.13`；实际构建始终从 ci/upstream-base-tag 读取当前固定 tag。[README](README.zh.md)区分源码能力和已发布的 `v0.2.1-rc.5-linux.1` 预发布包。历史 0.2.0 主题补丁已归档，不得混入当前补丁线。
 
 ## 1. 构建前置
 
-使用 Linux x86_64、Node `^22.19.0 || >=24.0.0`、pnpm `11.7.0`、Git 和至少 15 GB 空闲磁盘。上游工作区有自己的包管理器固定版本；打包命令会检查 Linux x64 主机。依赖下载需要 npm、GitHub/Electron、Node 和 Python 分发网络；不可达时应配置合适代理或获准镜像。
+使用 Linux x86_64、Node `>=24.9.0`、pnpm `11.28.5`、Git 和至少 15 GB 空闲磁盘。上游工作区有自己的包管理器固定版本；打包命令会检查 Linux x64 主机。依赖下载需要 npm、GitHub/Electron、Node 和 Python 分发网络；不可达时应配置合适代理或获准镜像。
 
 桌面验收需要真实 X11/Wayland 会话。Xvfb、Openbox、xdotool 和 dbus-x11 用于自动无头会话。应用通过内置 WASM LibreOffice 转换文档，该路径不要求系统 LibreOffice。
 

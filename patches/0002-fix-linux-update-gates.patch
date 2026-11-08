@@ -1,0 +1,30 @@
+diff --git a/apps/desktop/README.i18n.yaml b/apps/desktop/README.i18n.yaml
+index 3dfceaccd1..428c0d514e 100644
+--- a/apps/desktop/README.i18n.yaml
++++ b/apps/desktop/README.i18n.yaml
+@@ -15,8 +15,8 @@
+   en: 127ea90553cb6af7
+   zh: 7b1c5aec8558c684
+ /deepseek-harness-desktop/application-overview:
+-  en: 1667e3d6ffddea4a
+-  zh: 4661a42b9ef4f673
++  en: bd15a71274bdb75c
++  zh: df3e11fa40c96768
+ /deepseek-harness-desktop/terminal-command:
+   en: 5f2d25a1d8472647
+   zh: 2acb5c5d7d1917e2
+diff --git a/scripts/optional-bundles.spec.ts b/scripts/optional-bundles.spec.ts
+index e5c30c6c84..e7daa52026 100644
+--- a/scripts/optional-bundles.spec.ts
++++ b/scripts/optional-bundles.spec.ts
+@@ -56,7 +56,9 @@ function profileLayers(surface: 'web' | 'desktop'): ReturnType<typeof loadOverla
+   else initProfile(directory, PROFILE_TEMPLATES.web!.bundles)
+   const names = readProfileManifest('test', directory).dsh?.profile?.bundles
+   if (names === undefined) throw new Error(`${surface} profile has no bundle list`)
+-  return names.map(name => bundle(name).patches)
++  return names
++    .filter(name => bundles.get(name)?.manifest.dsh?.bundle !== undefined)
++    .map(name => bundle(name).patches)
+ }
+ 
+ describe.each(['web', 'desktop'] as const)('%s optional bundle overrides', (surface) => {

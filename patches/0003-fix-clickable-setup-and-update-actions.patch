@@ -1,0 +1,150 @@
+diff --git a/apps/desktop/src/scnet-setup.ts b/apps/desktop/src/scnet-setup.ts
+new file mode 100644
+index 0000000000..da0d645a4c
+--- /dev/null
++++ b/apps/desktop/src/scnet-setup.ts
+@@ -0,0 +1,68 @@
++/** Launch the bundled SCNet setup wizard in a visible local terminal. */
++
++import { accessSync, constants, existsSync, statSync } from 'node:fs'
++import { spawn } from 'node:child_process'
++import { delimiter, isAbsolute, join } from 'node:path'
++
++export interface ScnetSetupDependencies {
++  readonly dshRoot: string
++  readonly environment?: NodeJS.ProcessEnv
++  readonly failureMessage: string
++  readonly closeMessage: string
++  readonly commandExists?: (command: string) => boolean
++  readonly launch?: (command: string, args: readonly string[]) => void | Promise<void>
++}
++
++function defaultCommandExists(command: string, environment: NodeJS.ProcessEnv): boolean {
++  const candidates = isAbsolute(command) ? [command] : (environment.PATH ?? '').split(delimiter)
++    .filter(directory => directory.length > 0).map(directory => join(directory, command))
++  return candidates.some((path) => {
++    try { accessSync(path, constants.X_OK); return statSync(path).isFile() }
++    catch (_error) { return false /* Unavailable PATH entries are not launch candidates. */ }
++  })
++}
++
++function scriptPath(dshRoot: string): string {
++  const physicalRoot = dshRoot.replace(/(^|[\\/])([^\\/]+\.asar)(?=[\\/]|$)/u, '$1$2.unpacked')
++  return join(physicalRoot, 'node_modules', 'dsh-scnet', 'skills', 'scnet-hpc', 'scripts', 'scnet.py')
++}
++
++/**
++ * Open the interactive setup wizard without placing secrets in an Electron renderer.
++ * The wizard stores credentials in Secret Service when available and otherwise explains
++ * the supported environment-variable fallback.
++ * @param dependencies - Runtime location, inherited environment, localized terminal copy and optional launch adapters.
++ * @returns Resolution when the terminal process starts; rejects when prerequisites or spawning fail.
++ */
++export function openScnetSetup(dependencies: ScnetSetupDependencies): Promise<void> {
++  const environment = dependencies.environment ?? process.env
++  const script = scriptPath(dependencies.dshRoot)
++  if (!existsSync(script)) throw new Error('SCNet setup: bundled setup wizard is unavailable')
++  const python = environment.DSH_SCNET_PYTHON?.trim() || environment.SCNET_PYTHON?.trim() || 'python3'
++  const commandExists = dependencies.commandExists ?? (command => defaultCommandExists(command, environment))
++  if (!commandExists(python)) throw new Error('SCNet setup: Python interpreter is unavailable')
++  const launch = dependencies.launch ?? ((command, args) => new Promise<void>((resolve, reject) => {
++    const child = spawn(command, args, { detached: true, stdio: 'ignore', env: environment })
++    child.once('error', reject)
++    child.once('spawn', () => { child.unref(); resolve() })
++  }))
++  // All values are positional arguments; user paths and localized text never become shell source.
++  const wrapper = 'failure=$1; close=$2; shift 2; "$@"; status=$?; '
++    + 'if [ "$status" -ne 0 ]; then printf "\\n%s (%s)\\n" "$failure" "$status"; fi; '
++    + 'printf "\\n%s\\n" "$close"; IFS= read -r answer; exit "$status"'
++  const command = ['/bin/sh', '-c', wrapper, 'scnet-setup', dependencies.failureMessage, dependencies.closeMessage,
++    python, script, 'setup', 'auto', '--mode', 'openapi']
++  const terminals: readonly (readonly [string, readonly string[]])[] = [
++    ['x-terminal-emulator', ['-e', ...command]],
++    ['gnome-terminal', ['--', ...command]],
++    ['konsole', ['-e', ...command]],
++    ['xfce4-terminal', ['--command', command.map(value => "'" + value.replaceAll("'", "'\\''") + "'").join(' ')]],
++    ['kitty', command],
++    ['foot', command],
++  ]
++  const terminal = terminals.find(([name]) => commandExists(name))
++  if (terminal === undefined) {
++    throw new Error('SCNet setup: no supported terminal emulator was found')
++  }
++  return Promise.resolve(launch(terminal[0], terminal[1]))
++}
+diff --git a/apps/desktop/tests/scnet-setup.spec.ts b/apps/desktop/tests/scnet-setup.spec.ts
+new file mode 100644
+index 0000000000..45e9881eff
+--- /dev/null
++++ b/apps/desktop/tests/scnet-setup.spec.ts
+@@ -0,0 +1,70 @@
++import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
++import { spawnSync } from 'node:child_process'
++import { tmpdir } from 'node:os'
++import { join } from 'node:path'
++import { describe, expect, it, onTestFinished, vi } from 'vitest'
++import { openScnetSetup } from '../src/scnet-setup.ts'
++
++function fixture(packaged = false) {
++  const root = mkdtempSync(join(tmpdir(), "dsh-scnet-setup-'$-"))
++  onTestFinished(() => { rmSync(root, { recursive: true, force: true }) })
++  const dshRoot = packaged ? join(root, 'app.asar', 'dsh') : join(root, 'dsh')
++  const physicalRoot = packaged ? join(root, 'app.asar.unpacked', 'dsh') : dshRoot
++  const scripts = join(physicalRoot, 'node_modules', 'dsh-scnet', 'skills', 'scnet-hpc', 'scripts')
++  mkdirSync(scripts, { recursive: true })
++  const script = join(scripts, 'scnet.py')
++  writeFileSync(script, '')
++  const launch = vi.fn<(command: string, args: readonly string[]) => void>()
++  const options = { dshRoot, environment: {}, failureMessage: 'Setup failed', closeMessage: 'Press Enter',
++    commandExists: (command: string) => command === 'python3' || command === 'gnome-terminal', launch }
++  return { root, script, launch, options }
++}
++
++describe('SCNet setup launcher', () => {
++  it.each([false, true])('launches a real filesystem script with a visible completion prompt (packaged=%s)', async (packaged) => {
++    const f = fixture(packaged)
++    await openScnetSetup(f.options)
++    const [terminal, args] = f.launch.mock.calls[0]!
++    expect(terminal).toBe('gnome-terminal')
++    expect(args.slice(0, 3)).toEqual(['--', '/bin/sh', '-c'])
++    expect(args.slice(4)).toEqual(['scnet-setup', 'Setup failed', 'Press Enter', 'python3', f.script, 'setup', 'auto', '--mode', 'openapi'])
++    expect(f.script).not.toContain('app.asar/')
++  })
++
++  it('refuses an archived-only wizard before starting a terminal', () => {
++    const f = fixture(true)
++    rmSync(f.script)
++    const archived = f.script.replace('app.asar.unpacked', 'app.asar')
++    mkdirSync(join(archived, '..'), { recursive: true }); writeFileSync(archived, '')
++    expect(() => openScnetSetup(f.options)).toThrow(/bundled setup wizard is unavailable/u)
++    expect(f.launch).not.toHaveBeenCalled()
++  })
++
++  it('reports missing Python and missing terminal separately', () => {
++    const f = fixture()
++    expect(() => openScnetSetup({ ...f.options, commandExists: () => false })).toThrow(/Python interpreter/u)
++    expect(() => openScnetSetup({ ...f.options, commandExists: name => name === 'python3' })).toThrow(/terminal emulator/u)
++    expect(f.launch).not.toHaveBeenCalled()
++  })
++
++  it('rejects asynchronous spawn errors instead of reporting launch success', async () => {
++    const f = fixture()
++    await expect(openScnetSetup({ dshRoot: f.options.dshRoot,
++      failureMessage: f.options.failureMessage, closeMessage: f.options.closeMessage,
++      environment: { PATH: '' }, commandExists: () => true }))
++      .rejects.toThrow(/ENOENT/u)
++  })
++
++  it('keeps wizard failures visible and preserves arguments containing shell metacharacters', async () => {
++    const f = fixture(true)
++    writeFileSync(f.script, 'console.log(JSON.stringify(process.argv.slice(2))); process.exit(17)')
++    await openScnetSetup({ ...f.options, environment: { DSH_SCNET_PYTHON: process.execPath },
++      commandExists: name => name === process.execPath || name === 'gnome-terminal' })
++    const args = f.launch.mock.calls[0]![1].slice(1)
++    const result = spawnSync(args[0]!, args.slice(1), { input: '\n', encoding: 'utf8' })
++    expect(result.status).toBe(17)
++    expect(result.stdout).toContain('["setup","auto","--mode","openapi"]')
++    expect(result.stdout).toContain('Setup failed (17)')
++    expect(result.stdout).toContain('Press Enter')
++  })
++})

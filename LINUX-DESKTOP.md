@@ -4,11 +4,11 @@ English | [中文](LINUX-DESKTOP.zh-CN.md)
 
 ## 0. Scope
 
-This guide records verification on `dsh-v0.2.1-rc.5`, including fixed `dsh-scnet@0.6.13`. Builds always read the current pinned tag from ci/upstream-base-tag. [README](README.md) distinguishes source capabilities from the published `v0.2.1-rc.5-linux.1` prerelease. Historical 0.2.0 topic patches are archived and must not be mixed into the active series.
+This guide records the build and acceptance flow for the pinned base, currently `dsh-v0.2.2-rc.1`, including fixed `dsh-scnet@0.6.13`. Builds always read the current pinned tag from ci/upstream-base-tag. [README](README.md) distinguishes source capabilities from the published `v0.2.1-rc.5-linux.1` prerelease. Historical 0.2.0 topic patches are archived and must not be mixed into the active series.
 
 ## 1. Build prerequisites
 
-Use Linux x86_64, Node `^22.19.0 || >=24.0.0`, pnpm `11.7.0`, Git and at least 15 GB free disk. The upstream workspace has its own package-manager pin. Package commands enforce a Linux x64 host. Dependencies require npm registries, GitHub/Electron, Node and Python distribution downloads. Set an appropriate proxy or approved mirror if those downloads are unavailable.
+Use Linux x86_64, Node `>=24.9.0`, pnpm `11.28.5`, Git and at least 15 GB free disk. The upstream workspace has its own package-manager pin. Package commands enforce a Linux x64 host. Dependencies require npm registries, GitHub/Electron, Node and Python distribution downloads. Set an appropriate proxy or approved mirror if those downloads are unavailable.
 
 A real X11/Wayland session is needed for desktop acceptance. Xvfb, Openbox, xdotool and dbus-x11 provide the automated headless session. The app uses bundled WASM LibreOffice; system LibreOffice is not required for that conversion path.
 

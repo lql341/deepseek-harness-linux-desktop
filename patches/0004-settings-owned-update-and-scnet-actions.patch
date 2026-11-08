@@ -1,76 +1,6 @@
-diff --git a/apps/desktop/src/ipc.ts b/apps/desktop/src/ipc.ts
-index 9d20506a69f2040020af42415e9a58f294005c4b..efecf4e13fb299ec13de53efb51e1a25239a4471 100644
---- a/apps/desktop/src/ipc.ts
-+++ b/apps/desktop/src/ipc.ts
-@@ -91,6 +91,14 @@ export interface HarnessUpdatePresentation {
-   readonly error?: 'network' | 'invalid' | 'install'
- }
- 
-+export interface ScnetStatusSnapshot {
-+  readonly locale: 'en' | 'zh-CN'
-+  readonly diagnostics: {
-+    readonly overall: 'ready' | 'needs-setup' | 'unavailable' | 'disabled'
-+    readonly bundle: { readonly detail: string }
-+  }
-+}
-+
- /** Product documents cannot supply update versions, package URLs, or installation authorization. */
- export interface DshDesktopProductApi {
-   readonly protocolVersion: 1
-@@ -113,6 +121,10 @@ export interface DshDesktopProductApi {
-     install(): Promise<HarnessUpdatePresentation>
-     subscribe(listener: (state: HarnessUpdatePresentation) => void): () => void
-   }
-+  readonly scnet: {
-+    status(): Promise<ScnetStatusSnapshot>
-+    setup(): Promise<void>
-+  }
- }
- 
- /** Scheme of Desktop-owned application documents. */
-diff --git a/apps/desktop/src/preload-app.ts b/apps/desktop/src/preload-app.ts
-index 99082da19addb160bd76866c96ca094ee988c165..3313421b35616abcc37ebfb4d8a8d77f5ac4f3f4 100644
---- a/apps/desktop/src/preload-app.ts
-+++ b/apps/desktop/src/preload-app.ts
-@@ -2,7 +2,7 @@
- 
- import type { DesktopShortcutInput, ShortcutConfigSnapshot, ShortcutSaveResult } from '@deepseek-ai/dsh-client-shortcuts/protocol'
- import { contextBridge, ipcRenderer, webUtils } from 'electron'
--import { DESKTOP_IPC, SCHEME, type DshDesktopProductApi, type DesktopUpdatePresentation } from './ipc.ts'
-+import { DESKTOP_IPC, SCHEME, type DshDesktopProductApi, type DesktopUpdatePresentation, type ScnetStatusSnapshot } from './ipc.ts'
- import type { HarnessUpdatePresentation } from './ipc.ts'
- import { PLATFORM_IPC } from './platform-ipc.ts'
- import { markDocumentPlatform, syncWindowFullscreen } from './preload-platform.ts'
-@@ -10,8 +10,6 @@ import { syncNativeTheme } from './preload-theme.ts'
- import { syncWindowsAppearance } from './preload-windows.ts'
- import { installMandatoryUpdateOverlay } from './preload-mandatory-overlay.ts'
- import { createDesktopBrowserBridge } from './preload-browser.ts'
--import { installScnetStatusSurface } from './preload-scnet-status.ts'
--import { installUpdateStatusSurface } from './preload-update-status.ts'
- 
- function createProductApi(): DshDesktopProductApi {
-   return {
-@@ -68,6 +66,10 @@ function createProductApi(): DshDesktopProductApi {
-         return () => { ipcRenderer.off(DESKTOP_IPC.harnessUpdatesPresentation, handle) }
-       },
-     },
-+    scnet: {
-+      status: () => ipcRenderer.invoke(DESKTOP_IPC.scnetStatus) as Promise<ScnetStatusSnapshot>,
-+      setup: () => ipcRenderer.invoke(DESKTOP_IPC.scnetSetup) as Promise<void>,
-+    },
-   }
- }
- 
-@@ -117,6 +119,4 @@ if (location.protocol === `${SCHEME}:` && location.hostname === 'app') {
-     read: () => ipcRenderer.invoke(DESKTOP_IPC.localeBootstrap),
-     onChange: (locale: string) => { ipcRenderer.send(DESKTOP_IPC.localeChanged, locale) },
-   })
--  installScnetStatusSurface()
--  installUpdateStatusSurface()
- }
 diff --git a/packages/client/ui-settings-general/src/client/DesktopUpdateSettingsRow.module.css b/packages/client/ui-settings-general/src/client/DesktopUpdateSettingsRow.module.css
 new file mode 100644
-index 0000000000000000000000000000000000000000..a704b8664971fa0f4632a50d643d00e25745f33e
+index 0000000000..a704b86649
 --- /dev/null
 +++ b/packages/client/ui-settings-general/src/client/DesktopUpdateSettingsRow.module.css
 @@ -0,0 +1,31 @@
@@ -107,7 +37,7 @@ index 0000000000000000000000000000000000000000..a704b8664971fa0f4632a50d643d00e2
 +}
 diff --git a/packages/client/ui-settings-general/src/client/DesktopUpdateSettingsRow.tsx b/packages/client/ui-settings-general/src/client/DesktopUpdateSettingsRow.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..a4239c18e7e1ee5cb7919f47b4e499251e9c308a
+index 0000000000..a4239c18e7
 --- /dev/null
 +++ b/packages/client/ui-settings-general/src/client/DesktopUpdateSettingsRow.tsx
 @@ -0,0 +1,55 @@
@@ -168,7 +98,7 @@ index 0000000000000000000000000000000000000000..a4239c18e7e1ee5cb7919f47b4e49925
 +}
 diff --git a/packages/client/ui-settings-general/src/client/ScnetSettingsRow.module.css b/packages/client/ui-settings-general/src/client/ScnetSettingsRow.module.css
 new file mode 100644
-index 0000000000000000000000000000000000000000..a704b8664971fa0f4632a50d643d00e25745f33e
+index 0000000000..a704b86649
 --- /dev/null
 +++ b/packages/client/ui-settings-general/src/client/ScnetSettingsRow.module.css
 @@ -0,0 +1,31 @@
@@ -205,7 +135,7 @@ index 0000000000000000000000000000000000000000..a704b8664971fa0f4632a50d643d00e2
 +}
 diff --git a/packages/client/ui-settings-general/src/client/ScnetSettingsRow.tsx b/packages/client/ui-settings-general/src/client/ScnetSettingsRow.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..071a7080cafa64410f3a15dd4144a62094860fc0
+index 0000000000..e431b47ff7
 --- /dev/null
 +++ b/packages/client/ui-settings-general/src/client/ScnetSettingsRow.tsx
 @@ -0,0 +1,61 @@
@@ -234,7 +164,7 @@ index 0000000000000000000000000000000000000000..071a7080cafa64410f3a15dd4144a620
 +  useEffect(() => {
 +    if (bridge === undefined) return
 +    let live = true
-+    void bridge.status().then(value => {
++    void bridge.status().then((value) => {
 +      if (live) setSnapshot(value)
 +    }, () => {
 +      if (live) setFailed(true)
@@ -271,10 +201,10 @@ index 0000000000000000000000000000000000000000..071a7080cafa64410f3a15dd4144a620
 +  </div>
 +}
 diff --git a/packages/client/ui-settings-general/src/client/SettingsRoot.tsx b/packages/client/ui-settings-general/src/client/SettingsRoot.tsx
-index 761ae2dc0f19318cb9e7856501639d49598a5832..063f7e8419546239d006924269c89c9a34967112 100644
+index 980e59a06d..2132f87d8c 100644
 --- a/packages/client/ui-settings-general/src/client/SettingsRoot.tsx
 +++ b/packages/client/ui-settings-general/src/client/SettingsRoot.tsx
-@@ -21,7 +21,6 @@ import {
+@@ -24,7 +24,6 @@ import {
  import type { ConnectionIndicatorState } from '@deepseek-ai/dsh-client-ui-primitives'
  import type { SettingsRootComponentProps, SettingsSectionRow } from './shell-contract.ts'
  import css from './SettingsRoot.module.css'
@@ -282,7 +212,7 @@ index 761ae2dc0f19318cb9e7856501639d49598a5832..063f7e8419546239d006924269c89c9a
  
  const RECOVERY_CONFIRMATION_MS = 2_000
  
-@@ -112,7 +111,7 @@ function SettingsPanel({ rows, renderSlot, activeId, onSelect, onClose }: PanelP
+@@ -121,7 +120,7 @@ function SettingsPanel({ rows, renderSlot, activeId, onSelect, onClose }: PanelP
  export function SettingsRoot(props: SettingsRootComponentProps) {
    const {
      wide, reconnect, useConnectionState, useSections, useOnboardingSteps, useSessions, renderSlot, t,
@@ -291,7 +221,7 @@ index 761ae2dc0f19318cb9e7856501639d49598a5832..063f7e8419546239d006924269c89c9a
    } = props
    const { open, activeId } = useStore(state => state)
    const shortcut = useShortcuts(rows => rows.find(row => row.id === 'settings.open'))
-@@ -127,7 +126,6 @@ export function SettingsRoot(props: SettingsRootComponentProps) {
+@@ -136,7 +135,6 @@ export function SettingsRoot(props: SettingsRootComponentProps) {
    // freshly localized text on locale change, and the trigger/header/close
    // seats re-render through their own outlets' subscriptions.
    const rows = useSections(s => s)
@@ -299,7 +229,7 @@ index 761ae2dc0f19318cb9e7856501639d49598a5832..063f7e8419546239d006924269c89c9a
    const connectionState = useConnectionState(state => state)
    const previousConnectionState = useRef(connectionState)
    const onboardingSteps = useOnboardingSteps(s => s)
-@@ -232,7 +230,7 @@ export function SettingsRoot(props: SettingsRootComponentProps) {
+@@ -241,7 +239,7 @@ export function SettingsRoot(props: SettingsRootComponentProps) {
            </button>
          </Tooltip> })}
          <ConnectionIndicator
@@ -308,7 +238,7 @@ index 761ae2dc0f19318cb9e7856501639d49598a5832..063f7e8419546239d006924269c89c9a
            disconnectedLabel={t('connection.error')}
            connectingLabel={t('connection.connecting')}
            recoveredLabel={t('connection.connected')}
-@@ -240,8 +238,6 @@ export function SettingsRoot(props: SettingsRootComponentProps) {
+@@ -249,8 +247,6 @@ export function SettingsRoot(props: SettingsRootComponentProps) {
            restartActionLabel={t('connection.restart')}
            onReconnect={reconnect}
          />
@@ -318,10 +248,10 @@ index 761ae2dc0f19318cb9e7856501639d49598a5832..063f7e8419546239d006924269c89c9a
        {open && (
          <SettingsPanel
 diff --git a/packages/client/ui-settings-general/src/client/index.ts b/packages/client/ui-settings-general/src/client/index.ts
-index 561174f90be2d053f7d9a30195a3c2097935d31f..400d51ea04df2d78f5779eac535e31c8f674b821 100644
+index 0e6fae5e58..239cdd347d 100644
 --- a/packages/client/ui-settings-general/src/client/index.ts
 +++ b/packages/client/ui-settings-general/src/client/index.ts
-@@ -30,12 +30,13 @@ import type {
+@@ -33,12 +33,13 @@ import type {
  import type { ShortcutCommandId } from '@deepseek-ai/dsh-client-shortcuts/client'
  import { createSettingsShellStore } from './shell-store.ts'
  import { SettingsRoot } from './SettingsRoot.tsx'
@@ -336,7 +266,7 @@ index 561174f90be2d053f7d9a30195a3c2097935d31f..400d51ea04df2d78f5779eac535e31c8
  import { DeveloperToolsRow, type DeveloperToolsRowInjected } from './DeveloperToolsRow.tsx'
  import { SettingsDocumentAction } from './SettingsDocumentAction.tsx'
  import type { SettingsDocumentActionInjected } from './SettingsDocumentAction.tsx'
-@@ -92,12 +93,18 @@ export function apply(ctx: ClientContext): void {
+@@ -103,12 +104,18 @@ export function apply(ctx: ClientContext): void {
    const connection = ctx.get('connection') as ConnectionHandle
    const carrier = (globalThis as typeof globalThis & { dshDesktop?: { protocolVersion: number; updates?: DesktopUpdateBridge } }).dshDesktop
    const desktopUpdate = new DesktopUpdateSource(carrier?.protocolVersion === 1 ? carrier.updates : undefined)
@@ -361,10 +291,10 @@ index 561174f90be2d053f7d9a30195a3c2097935d31f..400d51ea04df2d78f5779eac535e31c8
    // seat, and the nav label is a thunk the owner resolves per render — no
    // locale/change re-registration wiring.
 diff --git a/packages/client/ui-settings-general/src/client/locales.ts b/packages/client/ui-settings-general/src/client/locales.ts
-index f12d407a74b4db1cf92e3a90e82cb02c9b6de828..8f34eb569adf7e99b3aef89006020378a17e7286 100644
+index 58afc6bba7..9291bf0b14 100644
 --- a/packages/client/ui-settings-general/src/client/locales.ts
 +++ b/packages/client/ui-settings-general/src/client/locales.ts
-@@ -22,6 +22,24 @@ export const zh = {
+@@ -23,6 +23,24 @@ export const zh = {
    'desktop.update.stopFailed': '未能安全停止任务，更新尚未安装，请稍后重试。',
    'desktop.update.tasksChanged': '有新任务开始运行，请重新确认是否停止任务并更新。',
    'desktop.update.tasksUnavailable': '无法确认任务状态，请在工作区就绪后重试更新。',
@@ -389,7 +319,7 @@ index f12d407a74b4db1cf92e3a90e82cb02c9b6de828..8f34eb569adf7e99b3aef89006020378
    'title': '设置',
    'close': '关闭',
    'openDocument': '打开配置文件',
-@@ -70,6 +88,24 @@ export const en = {
+@@ -72,6 +90,24 @@ export const en = {
    'desktop.update.stopFailed': 'Could not safely stop the tasks. The update has not been installed. Please try again later.',
    'desktop.update.tasksChanged': 'New tasks have started. Confirm again to stop the tasks and update.',
    'desktop.update.tasksUnavailable': 'Task status is unavailable. Try updating again when the workspace is ready.',
@@ -414,11 +344,159 @@ index f12d407a74b4db1cf92e3a90e82cb02c9b6de828..8f34eb569adf7e99b3aef89006020378
    'title': 'Settings',
    'close': 'Close',
    'openDocument': 'Open configuration file',
+@@ -139,6 +175,24 @@ export const ja = {
+   'hostRelease.unknown': '不明',
+   'hostRelease.reload': '再読み込みして新しいバージョンを読み込む',
+   'hostRelease.later': '後で',
++  'desktop.update.title': 'アップデート',
++  'desktop.update.description': 'クライアントと Harness の更新を確認してインストールします。',
++  'desktop.update.check': 'アップデートを確認',
++  'desktop.update.availableDetail': 'バージョン {version} を利用できます',
++  'desktop.update.installAction': 'インストールして再起動',
++  'desktop.update.installingAction': '処理中…',
++  'desktop.update.current': '最新の状態です',
++  'desktop.update.error': 'アップデートを確認できませんでした。もう一度お試しください。',
++  'scnet.title': 'SCNet',
++  'scnet.description': 'OpenAPI 接続とローカル認証を設定します',
++  'scnet.checking': '状態を読み込み中…',
++  'scnet.ready': '準備完了',
++  'scnet.needsSetup': '設定が必要',
++  'scnet.unavailable': 'ローカルの依存関係を利用できません',
++  'scnet.disabled': '無効',
++  'scnet.configure': 'SCNet を設定',
++  'scnet.opening': '開いています…',
++  'scnet.error': 'SCNet の状態を読み取れませんでした。もう一度お試しください。',
+ } satisfies Record<keyof typeof en, string>
+ 
+ /** Spanish dictionary, checked against the English keys. */
+@@ -185,6 +239,24 @@ export const es = {
+   'hostRelease.unknown': 'Desconocido',
+   'hostRelease.reload': 'Recargar para cargar la nueva versión.',
+   'hostRelease.later': 'Ahora no',
++  'desktop.update.title': 'Actualizaciones',
++  'desktop.update.description': 'Compruebe e instale las actualizaciones del cliente y de Harness.',
++  'desktop.update.check': 'Buscar actualizaciones',
++  'desktop.update.availableDetail': 'La versión {version} está disponible',
++  'desktop.update.installAction': 'Instalar y reiniciar',
++  'desktop.update.installingAction': 'Procesando…',
++  'desktop.update.current': 'Está actualizado',
++  'desktop.update.error': 'No se pudieron buscar actualizaciones. Inténtelo de nuevo.',
++  'scnet.title': 'SCNet',
++  'scnet.description': 'Configure la conexión OpenAPI y la autorización local',
++  'scnet.checking': 'Leyendo el estado…',
++  'scnet.ready': 'Listo',
++  'scnet.needsSetup': 'Requiere configuración',
++  'scnet.unavailable': 'Dependencia local no disponible',
++  'scnet.disabled': 'Deshabilitado',
++  'scnet.configure': 'Configurar SCNet',
++  'scnet.opening': 'Abriendo…',
++  'scnet.error': 'No se pudo leer el estado de SCNet. Inténtelo de nuevo.',
+ } satisfies Record<keyof typeof en, string>
+ 
+ /** French dictionary, checked against the English keys. */
+@@ -231,6 +303,24 @@ export const fr = {
+   'hostRelease.unknown': 'Inconnu',
+   'hostRelease.reload': 'Recharger pour charger la nouvelle version',
+   'hostRelease.later': 'Pas maintenant',
++  'desktop.update.title': 'Mises à jour',
++  'desktop.update.description': 'Vérifiez et installez les mises à jour du client et de Harness.',
++  'desktop.update.check': 'Rechercher des mises à jour',
++  'desktop.update.availableDetail': 'La version {version} est disponible',
++  'desktop.update.installAction': 'Installer et redémarrer',
++  'desktop.update.installingAction': 'Traitement…',
++  'desktop.update.current': 'Vous êtes à jour',
++  'desktop.update.error': 'Impossible de rechercher des mises à jour. Veuillez réessayer.',
++  'scnet.title': 'SCNet',
++  'scnet.description': 'Configurez la connexion OpenAPI et l’autorisation locale',
++  'scnet.checking': 'Lecture de l’état…',
++  'scnet.ready': 'Prêt',
++  'scnet.needsSetup': 'Configuration requise',
++  'scnet.unavailable': 'Dépendance locale indisponible',
++  'scnet.disabled': 'Désactivé',
++  'scnet.configure': 'Configurer SCNet',
++  'scnet.opening': 'Ouverture…',
++  'scnet.error': 'Impossible de lire l’état de SCNet. Veuillez réessayer.',
+ } satisfies Record<keyof typeof en, string>
+ 
+ /** German dictionary, checked against the English keys. */
+@@ -277,6 +367,24 @@ export const de = {
+   'hostRelease.unknown': 'Unbekannt',
+   'hostRelease.reload': 'Neu laden, um die neue Version zu laden',
+   'hostRelease.later': 'Nicht jetzt',
++  'desktop.update.title': 'Updates',
++  'desktop.update.description': 'Client- und Harness-Updates prüfen und installieren.',
++  'desktop.update.check': 'Nach Updates suchen',
++  'desktop.update.availableDetail': 'Version {version} ist verfügbar',
++  'desktop.update.installAction': 'Installieren und neu starten',
++  'desktop.update.installingAction': 'Wird ausgeführt…',
++  'desktop.update.current': 'Sie sind auf dem neuesten Stand',
++  'desktop.update.error': 'Updates konnten nicht geprüft werden. Bitte erneut versuchen.',
++  'scnet.title': 'SCNet',
++  'scnet.description': 'OpenAPI-Verbindung und lokale Autorisierung konfigurieren',
++  'scnet.checking': 'Status wird gelesen…',
++  'scnet.ready': 'Bereit',
++  'scnet.needsSetup': 'Einrichtung erforderlich',
++  'scnet.unavailable': 'Lokale Abhängigkeit nicht verfügbar',
++  'scnet.disabled': 'Deaktiviert',
++  'scnet.configure': 'SCNet konfigurieren',
++  'scnet.opening': 'Wird geöffnet…',
++  'scnet.error': 'SCNet-Status konnte nicht gelesen werden. Bitte erneut versuchen.',
+ } satisfies Record<keyof typeof en, string>
+ 
+ /** Russian dictionary, checked against the English keys. */
+@@ -323,6 +431,24 @@ export const ru = {
+   'hostRelease.unknown': 'Неизвестно',
+   'hostRelease.reload': 'Перезагрузите, чтобы загрузить новую версию',
+   'hostRelease.later': 'Не сейчас',
++  'desktop.update.title': 'Обновления',
++  'desktop.update.description': 'Проверка и установка обновлений клиента и Harness.',
++  'desktop.update.check': 'Проверить обновления',
++  'desktop.update.availableDetail': 'Доступна версия {version}',
++  'desktop.update.installAction': 'Установить и перезапустить',
++  'desktop.update.installingAction': 'Выполняется…',
++  'desktop.update.current': 'Установлена последняя версия',
++  'desktop.update.error': 'Не удалось проверить обновления. Повторите попытку.',
++  'scnet.title': 'SCNet',
++  'scnet.description': 'Настройте подключение OpenAPI и локальную авторизацию',
++  'scnet.checking': 'Чтение состояния…',
++  'scnet.ready': 'Готово',
++  'scnet.needsSetup': 'Требуется настройка',
++  'scnet.unavailable': 'Локальная зависимость недоступна',
++  'scnet.disabled': 'Отключено',
++  'scnet.configure': 'Настроить SCNet',
++  'scnet.opening': 'Открытие…',
++  'scnet.error': 'Не удалось прочитать состояние SCNet. Повторите попытку.',
+ } satisfies Record<keyof typeof en, string>
+ 
+ /** Portuguese dictionary, checked against the English keys. */
+@@ -369,4 +495,22 @@ export const pt = {
+   'hostRelease.unknown': 'Desconhecido',
+   'hostRelease.reload': 'Recarregue para carregar a nova versão',
+   'hostRelease.later': 'Agora não',
++  'desktop.update.title': 'Atualizações',
++  'desktop.update.description': 'Verifique e instale atualizações do cliente e do Harness.',
++  'desktop.update.check': 'Verificar atualizações',
++  'desktop.update.availableDetail': 'A versão {version} está disponível',
++  'desktop.update.installAction': 'Instalar e reiniciar',
++  'desktop.update.installingAction': 'Processando…',
++  'desktop.update.current': 'Você está atualizado',
++  'desktop.update.error': 'Não foi possível verificar atualizações. Tente novamente.',
++  'scnet.title': 'SCNet',
++  'scnet.description': 'Configure a conexão OpenAPI e a autorização local',
++  'scnet.checking': 'Lendo o status…',
++  'scnet.ready': 'Pronto',
++  'scnet.needsSetup': 'Precisa de configuração',
++  'scnet.unavailable': 'Dependência local indisponível',
++  'scnet.disabled': 'Desativado',
++  'scnet.configure': 'Configurar SCNet',
++  'scnet.opening': 'Abrindo…',
++  'scnet.error': 'Não foi possível ler o status do SCNet. Tente novamente.',
+ } satisfies Record<keyof typeof en, string>
 diff --git a/packages/client/ui-settings-general/src/types.ts b/packages/client/ui-settings-general/src/types.ts
-index f9dae34f87cfbbc0e45e136082fb8f2e0fbf674e..e0031b402d50fafc11b038fb6aa17faec21c912a 100644
+index 9aa0ea95e3..d0f684ead9 100644
 --- a/packages/client/ui-settings-general/src/types.ts
 +++ b/packages/client/ui-settings-general/src/types.ts
-@@ -33,3 +33,18 @@ export interface DesktopUpdateView {
+@@ -34,3 +34,18 @@ export interface DesktopUpdateView {
    readonly failed: boolean
    readonly opening: boolean
  }
@@ -438,10 +516,10 @@ index f9dae34f87cfbbc0e45e136082fb8f2e0fbf674e..e0031b402d50fafc11b038fb6aa17fae
 +  setup(): Promise<void>
 +}
 diff --git a/packages/client/ui-settings-general/tests/apply.client.spec.ts b/packages/client/ui-settings-general/tests/apply.client.spec.ts
-index 303022f0b42bb6cf48e437151de21a692a217d28..0d73bb4987b64f7b7dec85e51f9be6448971b55b 100644
+index 2b3a09a468..b6f61a279b 100644
 --- a/packages/client/ui-settings-general/tests/apply.client.spec.ts
 +++ b/packages/client/ui-settings-general/tests/apply.client.spec.ts
-@@ -104,7 +104,9 @@ describe('ui-settings-general apply', () => {
+@@ -109,7 +109,9 @@ describe('ui-settings-general apply', () => {
      expect(generalLabel(c)).toBe('通用设置')
      expect(c.ctx.slots.spec('settings.general.item')).toEqual({ kind: 'list', scope: 'root' })
      // The shared developer-tool control belongs to General; onboarding remains feature-owned.
@@ -450,9 +528,9 @@ index 303022f0b42bb6cf48e437151de21a692a217d28..0d73bb4987b64f7b7dec85e51f9be644
 +      'developer-tools', 'desktop-update', 'scnet', 'current-version',
 +    ])
      expect(c.ctx.slots.entries('settings.onboarding').filter(row => row.locale === NS)).toEqual([])
-     const developerRow = c.ctx.slots.entries('settings.general.item').find(row => row.options.id === 'developer-tools')!
-     const developer = (developerRow.inject as unknown as () => DeveloperToolsRowInjected)()
-@@ -253,7 +255,9 @@ describe('ui-settings-general apply', () => {
+     const developer = developerToolsRowOf(c)
+     expect(developer.hooks.developerTools).toBe(c.ctx.configForms.developerTools.enabled)
+@@ -313,7 +315,9 @@ describe('ui-settings-general apply', () => {
        expect(ownEntries(c, name)[0]).not.toBe(before[index])
      })
      expect(c.ctx.slots.spec('settings.general.item')).toEqual({ kind: 'list', scope: 'root' })
@@ -464,10 +542,10 @@ index 303022f0b42bb6cf48e437151de21a692a217d28..0d73bb4987b64f7b7dec85e51f9be644
      const english = localeView('en', 1)
      const chinese = localeView('zh', 2)
 diff --git a/packages/client/ui-settings-general/tests/settings-root.client.spec.tsx b/packages/client/ui-settings-general/tests/settings-root.client.spec.tsx
-index 2f46ad2057eda508261c0ae68e7fe7be4fb13195..9eb2590acd5f94dc0ad745a0cd3093517a670747 100644
+index 094ef4787a..eba955daca 100644
 --- a/packages/client/ui-settings-general/tests/settings-root.client.spec.tsx
 +++ b/packages/client/ui-settings-general/tests/settings-root.client.spec.tsx
-@@ -170,12 +170,12 @@ function openPanel() {
+@@ -183,12 +183,12 @@ function openPanel() {
  }
  
  describe('SettingsRoot trigger', () => {
@@ -484,10 +562,10 @@ index 2f46ad2057eda508261c0ae68e7fe7be4fb13195..9eb2590acd5f94dc0ad745a0cd309351
        presentation: { phase: 'error', version: presentation.version, failure: 'install' } })
      expect(screen.queryByRole('button', { name: '重试更新' })).toBeNull()
 diff --git a/packages/client/ui-settings-general/tests/shell.client.spec.ts b/packages/client/ui-settings-general/tests/shell.client.spec.ts
-index 47b7460e2c5df40762c7e7d6d55091a3def7f6c9..98c8a8e651a230f1fb819d9490ba82defd3edc32 100644
+index 4b5776de36..6caa4250c0 100644
 --- a/packages/client/ui-settings-general/tests/shell.client.spec.ts
 +++ b/packages/client/ui-settings-general/tests/shell.client.spec.ts
-@@ -59,8 +59,7 @@ describe('ui-settings-general shell', () => {
+@@ -61,8 +61,7 @@ describe('ui-settings-general shell', () => {
      onTestFinished(() => { vi.unstubAllGlobals(); initial.resolve({ phase: 'idle' }) })
      const c = await start()
      const row = injectedOf(c)

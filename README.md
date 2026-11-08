@@ -4,11 +4,11 @@ English | [中文](README.zh.md)
 
 Unofficial Linux x64 desktop port of [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). This repository maintains an ordered patch series and Linux build, verification and release tools. It is not affiliated with or endorsed by DeepSeek.
 
-The default upstream base is read from [ci/upstream-base-tag](ci/upstream-base-tag). The recorded verification baseline here is **`dsh-v0.2.1-rc.5`**. Linux packages bundle **`dsh-scnet@0.6.13`**. Use [Actions](https://github.com/lql341/deepseek-harness-linux-desktop/actions) to check the result for an exact commit.
+The default upstream base is read from [ci/upstream-base-tag](ci/upstream-base-tag). The recorded verification baseline here is **`dsh-v0.2.2-rc.1`**. Linux packages bundle **`dsh-scnet@0.6.13`**. Use [Actions](https://github.com/lql341/deepseek-harness-linux-desktop/actions) to check the result for an exact commit.
 
 ## Install a published package
 
-The current prerelease is [v0.2.1-rc.5-linux.2](https://github.com/lql341/deepseek-harness-linux-desktop/releases/tag/v0.2.1-rc.5-linux.2), the first release built from the full patch series and the first with a signed manifest. Download its deb, `SHA256SUMS` and `SHA256SUMS.sig`, or use the installer below. The installer checks the checksum and amd64 architecture before asking apt to reinstall the package. It needs curl, Node, sha256sum, dpkg and sudo/apt on the installation host. Verify the signed manifest with `node ci/verify-release-signature.mjs --manifest SHA256SUMS`.
+The current prerelease is [v0.2.1-rc.5-linux.2](https://github.com/lql341/deepseek-harness-linux-desktop/releases/tag/v0.2.1-rc.5-linux.2). The `dsh-v0.2.2-rc.1` series in `patches/` is the next base and is published as its own prerelease once the release run is green. Download its deb, `SHA256SUMS` and `SHA256SUMS.sig`, or use the installer below. The installer checks the checksum and amd64 architecture before asking apt to reinstall the package. It needs curl, Node, sha256sum, dpkg and sudo/apt on the installation host. Verify the signed manifest with `node ci/verify-release-signature.mjs --manifest SHA256SUMS`.
 
 ```sh
 git clone https://github.com/lql341/deepseek-harness-linux-desktop.git
@@ -16,7 +16,7 @@ cd deepseek-harness-linux-desktop
 bash ci/install-latest-linux.sh --tag v0.2.1-rc.5-linux.2
 ```
 
-Without `--tag`, the script uses GitHub's latest non-prerelease endpoint; it may select an older stable release. Source changes on main and CI artifacts are separate from published releases. The release above contains patches 0001 to 0011, including the SCNet setup repair, the plugin operation history and the signed update path.
+Without `--tag`, the script uses GitHub's latest non-prerelease endpoint; it may select an older stable release. Source changes on main and CI artifacts are separate from published releases. The series in `patches/` is re-based on `dsh-v0.2.2-rc.1` and reduces to six patches: the Linux port, the update gates, the SCNet setup actions, the settings-owned update and SCNet actions, the signed release trust path, and the packaged operation-report worker fix. The plugin operation history, the recovery menus and the update views are upstream in that base and no longer carried as backports.
 
 ## Desktop capabilities
 
@@ -39,7 +39,7 @@ The final seven rows describe the source patch series. See [desktop follow-up](d
 
 ## Build from source
 
-Build on **Linux x86_64**, with Node `^22.19.0 || >=24.0.0`, pnpm `11.7.0`, Git, build-network access and at least 15 GB free disk. The current upstream workspace may select its own pinned pnpm via package-manager management. Cross-building this Linux target from macOS and `linux-arm64` releases are not supported by this series.
+Build on **Linux x86_64**, with Node `>=24.9.0`, pnpm `11.28.5`, Git, build-network access and at least 15 GB free disk. The current upstream workspace may select its own pinned pnpm via package-manager management. Cross-building this Linux target from macOS and `linux-arm64` releases are not supported by this series.
 
 ```sh
 export PATCH_REPO="$HOME/src/deepseek-harness-linux-desktop"
@@ -61,7 +61,7 @@ Use a fresh `$SRC`. `apply.sh` checks out the pinned upstream tag, creates the L
 
 PRs and relevant main pushes apply the series, typecheck the full workspace, run focused desktop regressions, build the deb, audit the SCNet payload, and install/start that same candidate on Ubuntu 24.04 under Xvfb. Draft pull requests do not start that job, and a newer push cancels an in-flight pull-request run, so work in progress cannot mail a failure for a commit that was already replaced. The ordinary second-launch window assertion is skipped in this headless session; it needs a real desktop. Published-byte verification, upgrades, AppArmor, Wayland and Debian 13 are separate manual jobs. A skipped job is not a passed platform check.
 
-[PR #5](https://github.com/lql341/deepseek-harness-linux-desktop/pull/5) passed 254 desktop regressions, full typecheck, packaging and installed-session checks in [run 41273560891](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41273560891); the merged main was also verified in [run 41274912984](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41274912984). The SCNet setup repair and bilingual docs then passed [run 41278271808](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41278271808) with 268 desktop tests and [documentation run 41278271805](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41278271805). Plugin operation history is a new candidate requiring its own CI evidence.
+[PR #5](https://github.com/lql341/deepseek-harness-linux-desktop/pull/5) passed 254 desktop regressions, full typecheck, packaging and installed-session checks in [run 41273560891](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41273560891); the merged main was also verified in [run 41274912984](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41274912984). The SCNet setup repair and bilingual docs then passed [run 41278271808](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41278271808) with 268 desktop tests and [documentation run 41278271805](https://github.com/lql341/deepseek-harness-linux-desktop/actions/runs/41278271805). The `dsh-v0.2.2-rc.1` series needs its own green publish run before it becomes a release; the evidence recorded so far is in the [desktop follow-up](docs/DESKTOP-FOLLOWUP.md).
 
 Publishing is manual through [publish-linux-desktop.yml](.github/workflows/publish-linux-desktop.yml). It pins the build commit, records the staged patched tree, audits and installs the built bytes, signs the checksum manifest with the release key and publishes the deb, the signed manifest, the support policy and the checksums. Verify published bytes with `node ci/verify-release-signature.mjs --manifest SHA256SUMS`. Upstream synchronization creates reviewable PRs and never merges or publishes; a fresh upstream patch conflict is recorded as an issue instead of a failed scheduled run. See [sync operations](ci/UPSTREAM-SYNC.md).
 

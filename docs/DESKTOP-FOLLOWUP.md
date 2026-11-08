@@ -10,7 +10,15 @@ Reviewed against upstream `dsh-v0.2.1-rc.5` and development commit `ce7073d51254
 
 `v0.2.1-rc.5-linux.2` is the first release built from the full series and the first signed one; `v0.2.1-rc.5-linux.1` precedes patches 0007 to 0011. Source, CI candidate and release status must be checked separately.
 
-## Implemented in the active source series
+## Base migration to dsh-v0.2.2-rc.1
+
+The pinned base moved from `dsh-v0.2.1-rc.5` to `dsh-v0.2.2-rc.1`, 2623 upstream commits later; `apps/desktop` alone changes 229 files. The series re-applies to that base as six patches (0001 to 0006) and produces patched tree `d2d3f5c4c9a7e83a7cf5b2bbb230fdc982fc2786`; `git apply --3way` of the whole series on the pinned tag reproduces it locally.
+
+The newer base already ships what three earlier patches carried as backports, so they are gone: the plugin operation history (previously patch 0009), the recovery menus and update views (previously patch 0007), and the update-presentation split. What remains is Linux-specific work: the port itself, the update gates, the SCNet setup actions, the settings-owned update and SCNet actions, and the signed release trust path, plus one packaging fix: the newer base keeps `lib/operation-report-worker.js` inside `app.asar`, and a native Worker thread needs the physical file, so patch 0006 unpacks it and rewrites the entry path.
+
+Local evidence for this series, recorded before any publish run: full `pnpm run typecheck` passes all five gates; `vitest run apps/desktop packages/client/ui-settings-general` reports 2181 passing tests with two failures that also fail on the unpatched base on this host (`macos-notarization-proxy` and `prepare-runtime-patches`, both environment-dependent); the deb builds as `deepseek-harness-0.2.2-rc.1-linux-amd64.deb` at 290989204 bytes with the Linux dependency set and the `dsh://` desktop entry. The workspace lint (`pnpm run lint`) and the focused suites for the files this series touches pass afterwards. A publish run for `v0.2.2-rc.1-linux.1` is the gate that turns this evidence into a release.
+
+## Implemented in the published series
 
 | Patch | Capability | Validation |
 | --- | --- | --- |

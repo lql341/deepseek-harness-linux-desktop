@@ -1,0 +1,41 @@
+diff --git a/apps/desktop/src/release-trust.ts b/apps/desktop/src/release-trust.ts
+new file mode 100644
+index 0000000000..ac32d39a04
+--- /dev/null
++++ b/apps/desktop/src/release-trust.ts
+@@ -0,0 +1,35 @@
++/**
++ * Pinned release-signing key and the detached-signature check used before an update installs.
++ *
++ * The matching private key exists only in the release workflow's secret, so a pull request cannot
++ * produce a package that this application accepts as an update. The public key is duplicated in
++ * `ci/release-signing-key.pub.pem`, where `ci/verify-release-signature.mjs` checks published bytes.
++ */
++import { createPublicKey, verify as verifyDetached } from 'node:crypto'
++
++/** Ed25519 public key (SPKI PEM) that signs every Linux release checksum manifest. */
++export const RELEASE_SIGNING_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
++MCowBQYDK2VwAyEAp3JZM+9reecs1wtptmWJeVRdizY3E88WHuDWH2KWXT0=
++-----END PUBLIC KEY-----`
++
++/**
++ * Verify a detached Ed25519 signature over the exact manifest bytes.
++ * @param manifest - checksum manifest as published, without any normalisation.
++ * @param signature - base64 detached signature file content.
++ * @param publicKey - trusted SPKI PEM, defaulting to the pinned release key.
++ * @returns true only when the signature was produced by the matching private key.
++ */
++export function verifyReleaseManifest(
++  manifest: Uint8Array,
++  signature: string,
++  publicKey: string = RELEASE_SIGNING_PUBLIC_KEY,
++): boolean {
++  const detached = Buffer.from(signature.trim(), 'base64')
++  if (detached.length === 0) return false
++  try {
++    return verifyDetached(null, manifest, createPublicKey(publicKey), detached)
++  } catch {
++    // An unusable key or signature is an untrusted release, not a crash in the update path.
++    return false
++  }
++}

@@ -159,7 +159,7 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: 11.7.0
+          version: 11.28.5
 
       - uses: actions/setup-node@v4
         with:
@@ -238,7 +238,16 @@ jobs:
             packages/boot/plugin-manager/tests/manager.spec.ts \
             scripts/verify-repository-references.spec.ts \
             apps/desktop/tests/harness-update.spec.ts \
-            apps/desktop/tests/scnet-diagnostics-window.spec.ts
+            apps/desktop/tests/scnet-diagnostics-window.spec.ts \
+            apps/desktop/tests/scnet-diagnostics.spec.ts \
+            apps/desktop/tests/preload-app.spec.ts \
+            apps/desktop/tests/locale.spec.ts \
+            apps/desktop/tests/desktop-build-paths.spec.ts \
+            apps/desktop/tests/desktop-auto-update-environment.spec.ts \
+            apps/desktop/tests/prepare-package-set.spec.ts \
+            packages/client/ui-settings-general/tests/apply.client.spec.ts \
+            packages/client/ui-settings-general/tests/settings-root.client.spec.tsx \
+            packages/client/ui-settings-general/tests/shell.client.spec.ts
 
       - name: Validate upstream documentation and lint
         working-directory: ${{ env.UPSTREAM_DIR }}
@@ -483,7 +492,7 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: 11.7.0
+          version: 11.28.5
 
       - uses: actions/setup-node@v4
         with:
